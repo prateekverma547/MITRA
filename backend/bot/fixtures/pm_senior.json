@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "blueprint_id": "fixture-pm-senior-v1",
+  "evaluation_spec": {
+    "schema_version": 1,
+    "role_title": "Senior Product Manager",
+    "seniority": "Senior",
+    "experience_expectation": "10-11 years in product management",
+    "duration_minutes": 40,
+    "language": "en",
+    "tone": "warm, professional, conversational",
+    "competencies": [
+      {
+        "id": "product_strategy",
+        "name": "Product strategy and vision",
+        "description": "Can articulate where a product should go and why, connect it to market and business context, and defend the reasoning under challenge.",
+        "weight": 0.2
+      },
+      {
+        "id": "prioritization",
+        "name": "Prioritization and trade-offs",
+        "description": "Makes explicit, defensible calls about what not to build, and can name what was given up and why.",
+        "weight": 0.2
+      },
+      {
+        "id": "stakeholders",
+        "name": "Stakeholder and conflict management",
+        "description": "Navigates disagreement with engineering, design, sales and leadership without either steamrolling or capitulating.",
+        "weight": 0.15
+      },
+      {
+        "id": "metrics",
+        "name": "Metrics and experimentation fluency",
+        "description": "Chooses the right measures, understands what an experiment can and cannot prove, and reads results honestly including negative ones.",
+        "weight": 0.15
+      },
+      {
+        "id": "execution",
+        "name": "Execution and shipping track record",
+        "description": "Has actually shipped meaningful product, and can describe the messy middle rather than only the outcome.",
+        "weight": 0.2
+      },
+      {
+        "id": "leadership",
+        "name": "Leadership without authority",
+        "description": "Moves an organisation that does not report to them, through influence, clarity and credibility.",
+        "weight": 0.1
+      }
+    ],
+    "red_flags": [
+      "Describes frameworks and process but cannot name a single concrete decision they personally made.",
+      "Claims credit in 'we' terms throughout and cannot separate their own contribution from the team's.",
+      "Cannot name a product bet that failed, or what they learned from it.",
+      "Metrics talk stays at vanity level (signups, page views) with no connection to business outcome.",
+      "Describes conflict only as other people being unreasonable."
+    ],
+    "overrun_grace_minutes": 5
+  },
+  "candidate_name": null,
+  "candidate_summary": null,
+  "claims_to_verify": [],
+  "suggested_opening": "Greet the candidate warmly, introduce yourself as an AI interviewer, and state clearly that this is an interview for a Senior Product Manager role at around ten to eleven years of experience. Then ask them to walk you through their product background.",
+  "interviewing_guidance": [
+    "This is a candidate with roughly a decade of experience. Calibrate accordingly: surface-level or textbook answers are not sufficient at this seniority.",
+    "Always push from the general to the specific. If the candidate describes a framework or a process, ask what decision they actually made, on which product, and what happened as a result.",
+    "Ask for concrete examples from products that genuinely shipped. Prefer 'tell me about a specific time' over 'how would you approach'.",
+    "When a candidate says 'we', find out what they personally did.",
+    "Probe trade-offs by asking what they chose NOT to do, and what it cost them.",
+    "One question at a time. Let silence sit; a candidate at this level is often composing a real answer.",
+    "Do not evaluate, score, or praise the candidate's answers out loud. Gather evidence; a human decides later.",
+    "Stay on this role. If the conversation drifts to unrelated topics, acknowledge briefly and steer back to the competency you were exploring.",
+    "Never suggest, imply or accept that this interview is for any role other than Senior Product Manager."
+  ],
+  "competency_plans": [
+    {
+      "competency_id": "product_strategy",
+      "name": "Product strategy and vision",
+      "target_depth": "Can describe a strategy they personally set or materially shaped, the market reasoning behind it, what alternatives they rejected, and how it held up over time.",
+      "time_budget_minutes": 7.5,
+      "seed_questions": [
+        "Tell me about a product strategy you personally set or substantially shaped. What was the bet?",
+        "What did you believe about the market that others on your team did not?",
+        "Looking back at that strategy now, what part of it turned out to be wrong?",
+        "How did you decide what your product was deliberately not going to be?"
+      ]
+    },
+    {
+      "competency_id": "prioritization",
+      "name": "Prioritization and trade-offs",
+      "target_depth": "Can name a specific hard call, the options on the table, the reasoning, who disagreed, and what was sacrificed \u2014 not just a prioritization framework.",
+      "time_budget_minutes": 7.0,
+      "seed_questions": [
+        "Walk me through the hardest prioritization call you have made. What were the options?",
+        "Tell me about something significant you decided not to build. What did that cost you?",
+        "How did you handle a quarter where you could not deliver everything that had been promised?",
+        "When you and your engineering lead disagreed on sequencing, how did that get resolved?"
+      ]
+    },
+    {
+      "competency_id": "stakeholders",
+      "name": "Stakeholder and conflict management",
+      "target_depth": "Describes a real disagreement with a named kind of stakeholder, their own role in it, what they changed their mind about, and the outcome.",
+      "time_budget_minutes": 5.5,
+      "seed_questions": [
+        "Tell me about a serious disagreement with a senior stakeholder about product direction.",
+        "Describe a time you had to say no to a request from someone more senior than you.",
+        "When has a stakeholder changed your mind about something you were confident in?",
+        "How do you handle it when sales commits to a customer for something that is not on the roadmap?"
+      ]
+    },
+    {
+      "competency_id": "metrics",
+      "name": "Metrics and experimentation fluency",
+      "target_depth": "Names specific metrics and why they were the right ones, understands experiment limitations, and can describe a result that contradicted their expectation.",
+      "time_budget_minutes": 5.5,
+      "seed_questions": [
+        "What was the single metric you held yourself to in your last role, and why that one?",
+        "Tell me about an experiment whose result surprised you. What did you do about it?",
+        "How do you tell the difference between a metric moving and a product actually being better?",
+        "Describe a time you shipped something that moved the numbers in the wrong direction."
+      ]
+    },
+    {
+      "competency_id": "execution",
+      "name": "Execution and shipping track record",
+      "target_depth": "Can narrate the messy middle of a real launch \u2014 what slipped, what broke, what they personally did \u2014 not just the outcome.",
+      "time_budget_minutes": 7.0,
+      "seed_questions": [
+        "Take me through the product you are proudest of shipping. Start from where the idea came from.",
+        "What went wrong during that launch, and what did you personally do about it?",
+        "Tell me about a project that slipped badly. What was the real cause?",
+        "What was your role in the two weeks immediately before a major release?"
+      ]
+    },
+    {
+      "competency_id": "leadership",
+      "name": "Leadership without authority",
+      "target_depth": "Gives a concrete example of moving people who did not report to them, including what they tried that did not work.",
+      "time_budget_minutes": 3.5,
+      "seed_questions": [
+        "Tell me about a time you had to get a team to do something when you had no authority over them.",
+        "How have you built credibility with an engineering team that was sceptical of product?",
+        "Describe a time you influenced a decision well above your level.",
+        "Who have you mentored, and what changed for them?"
+      ]
+    }
+  ],
+  "opening_minutes": 2.0,
+  "closing_minutes": 2.0
+}

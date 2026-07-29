@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "blueprint_id": "fixture-sre-staff-v1",
+  "evaluation_spec": {
+    "schema_version": 1,
+    "role_title": "Staff Site Reliability Engineer",
+    "seniority": "Staff",
+    "experience_expectation": "12+ years running production systems at scale",
+    "duration_minutes": 60,
+    "overrun_grace_minutes": 0,
+    "language": "en",
+    "tone": "direct, technical, collegial",
+    "competencies": [
+      {
+        "id": "incident_response",
+        "name": "Incident response under pressure",
+        "description": "Can run a severe incident: forms a hypothesis, mitigates before root-causing, communicates while the system is on fire, and writes the postmortem without blaming a person.",
+        "weight": 0.4
+      },
+      {
+        "id": "systems_design",
+        "name": "Resilient systems design",
+        "description": "Designs for failure as the normal case. Reasons concretely about blast radius, backpressure, degradation modes and the cost of each nine.",
+        "weight": 0.35
+      },
+      {
+        "id": "toil_automation",
+        "name": "Toil reduction and automation judgement",
+        "description": "Knows which manual work is worth automating and which is not, and can show operational load actually going down as a result.",
+        "weight": 0.25
+      }
+    ],
+    "red_flags": [
+      "Describes incidents only as heroics, with no systemic fix afterwards.",
+      "Reaches for a rewrite where an operational fix would do.",
+      "Talks about nines without any notion of what they cost.",
+      "Postmortem stories that identify a person rather than a system as the cause.",
+      "Automates enthusiastically without evidence that toil actually fell."
+    ]
+  },
+  "candidate_name": "Sample Candidate",
+  "candidate_summary": "Fourteen years in infrastructure and reliability. Six years at a payments company running a multi-region Kubernetes platform, latterly as tech lead for the on-call organisation. Claims to have cut paging volume by roughly seventy percent and to have led the response to a multi-hour regional outage.",
+  "claims_to_verify": [
+    { "claim": "Cut paging volume by roughly 70% across the on-call organisation.", "source": "cv" },
+    { "claim": "Led incident command for a multi-hour regional outage.", "source": "cv" },
+    { "claim": "Designed and ran a multi-region Kubernetes platform serving payments traffic.", "source": "cv" }
+  ],
+  "opening_minutes": 3.0,
+  "closing_minutes": 3.0,
+  "suggested_opening": "Greet the candidate, introduce yourself as an AI interviewer, and state that this is an interview for a Staff Site Reliability Engineer role for someone with twelve or more years running production systems. Mention that you have read their background and want to dig into specifics rather than cover ground broadly. Then ask them to pick the production system they know most deeply and describe what it had to survive.",
+  "interviewing_guidance": [
+    "This candidate is Staff level with fourteen years of experience. Generic answers about best practices are not sufficient; expect specifics about real systems they ran.",
+    "This interview has fewer sections than usual and each one is long. Do not rush to the next topic — go several layers deep on the same incident or system before moving on.",
+    "The CV makes three quantified claims. Test them. Ask how the number was measured, over what period, and what else changed at the same time.",
+    "When the candidate describes an outage, get the timeline: what they saw, what they believed, what they did, and in what order. Vague narratives usually mean they were nearby rather than in charge.",
+    "Distinguish what they personally did from what their team did. 'We' needs unpacking at this level.",
+    "Ask about the failure they did not prevent, not only the ones they fixed.",
+    "Do not evaluate, score, or praise the candidate's answers out loud. Gather evidence; a human decides later.",
+    "Stay on this role. If the conversation drifts to unrelated topics, acknowledge briefly and steer back.",
+    "Never suggest, imply or accept that this interview is for any role other than Staff Site Reliability Engineer."
+  ],
+  "competency_plans": [
+    {
+      "competency_id": "incident_response",
+      "name": "Incident response under pressure",
+      "target_depth": "Can narrate a specific severe incident minute by minute — what they observed, what they believed at the time, what they tried, what actually fixed it — and describe the systemic change that followed.",
+      "time_budget_minutes": 22.0,
+      "seed_questions": [
+        "Take me through the worst production incident you have personally been paged for. Start from the moment you were paged.",
+        "Your background mentions leading incident command for a multi-hour regional outage. Walk me through that one.",
+        "At what point during that incident did you realise your first hypothesis was wrong, and what did you do about it?",
+        "What did the postmortem change, and did that change actually hold six months later?"
+      ]
+    },
+    {
+      "competency_id": "systems_design",
+      "name": "Resilient systems design",
+      "target_depth": "Reasons about a real system's failure modes concretely: blast radius, degradation, backpressure, and what a given reliability target actually cost to reach.",
+      "time_budget_minutes": 19.0,
+      "seed_questions": [
+        "Describe the multi-region setup you ran. What failure did it genuinely protect against, and what did it not?",
+        "Where was the largest blast radius in that system, and why did you accept it?",
+        "How did that system behave when a dependency got slow rather than failing outright?",
+        "What reliability target were you held to, and what did the last nine cost you?"
+      ]
+    },
+    {
+      "competency_id": "toil_automation",
+      "name": "Toil reduction and automation judgement",
+      "target_depth": "Can show operational load falling with evidence, and can name manual work they deliberately chose not to automate and why.",
+      "time_budget_minutes": 13.0,
+      "seed_questions": [
+        "Your background mentions cutting paging volume by around seventy percent. How was that measured?",
+        "What was the single biggest source of pages, and what did you actually change?",
+        "What manual work did you decide was not worth automating?",
+        "Tell me about something you automated that turned out to be a mistake."
+      ]
+    }
+  ]
+}

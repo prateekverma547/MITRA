@@ -1,0 +1,32 @@
+PRIYA RAGHAVAN
+London | priya.raghavan@example.com
+
+SUMMARY
+Product leader with 11 years building payments and marketplace products.
+Currently Senior Product Manager at Meridian Pay.
+
+EXPERIENCE
+
+Meridian Pay — Senior Product Manager (2019 - present)
+- Owned the merchant payouts platform processing GBP 4.2bn annually.
+- Led the migration from a single-processor setup to a multi-acquirer routing
+  layer, cutting payment failure rates by 38% and saving GBP 2.1m annually in
+  interchange.
+- Set the three-year platform strategy; presented it to the board twice.
+- Ran the response to a 2022 outage that stopped payouts for six hours.
+- Managed a team of fourteen engineers alongside two designers.
+- Mentored three PMs, two of whom were promoted.
+
+Kestrel Commerce — Product Manager (2016 - 2019)
+- Built the marketplace split-payments product from zero to 900 merchants.
+- Ran 40+ A/B tests on checkout; improved conversion by 12%.
+- Worked with compliance on PSD2 readiness ahead of the 2019 deadline.
+
+Tavistock Group — Associate Product Manager (2014 - 2016)
+- Supported the core billing product.
+
+EDUCATION
+BSc Computer Science, University of Bristol, 2014
+
+SKILLS
+Payments, marketplaces, SQL, experimentation, regulatory (PSD2, SCA)

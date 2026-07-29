@@ -1,0 +1,18 @@
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+
+# Local run artifacts and databases — never bake these into an image.
+sessions/
+*.db
+*.db-journal
+
+# Real CVs and JDs contain personal data and must not enter an image.
+../cv
+../jds
+../uploads
+
+.env
+.git

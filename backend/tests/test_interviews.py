@@ -1,0 +1,491 @@
+"""Interview lifecycle and join authentication.
+
+No Daily, no bot, no LLM — those are stubbed. What is under test is the glue
+that lets an interview exist at all, and the access control on joining one.
+
+The join endpoint is the only unauthenticated door into this system. A candidate
+types a meeting ID and a password and gets a token into a live room. It gets the
+most attention here.
+"""
+
+import os
+from datetime import UTC, datetime, timedelta
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.meeting import (
+    new_meeting_id,
+    new_password,
+    normalise_meeting_id,
+    passwords_match,
+)
+from shared.contracts import Competency, CompetencyPlan, EvaluationSpec, InterviewBlueprint
+
+FIXTURES = os.path.join(os.path.dirname(__file__), "fixtures", "documents")
+
+
+def blueprint_for(candidate_id: str) -> InterviewBlueprint:
+    return InterviewBlueprint(
+        blueprint_id=candidate_id,
+        evaluation_spec=EvaluationSpec(
+            role_title="Lead Product Manager — AI & Data Products",
+            seniority="Senior",
+            experience_expectation="10+ years",
+            duration_minutes=40,
+            competencies=[Competency(id="a", name="A", description="d", weight=1.0)],
+        ),
+        candidate_name="Prateek Verma",
+        candidate_summary="Twelve years in AI product.",
+        competency_plans=[
+            CompetencyPlan(
+                competency_id="a",
+                name="A",
+                target_depth="deep",
+                seed_questions=["q"],
+                time_budget_minutes=30.0,
+            )
+        ],
+        suggested_opening="Hello.",
+    )
+
+
+class FakeRoom:
+    def __init__(self):
+        self.name = "abc123"
+        self.url = "https://example.daily.co/abc123"
+        self.expires_at = 0
+
+
+@pytest.fixture
+async def client(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/int.db")
+    for key in ("OPENAI_API_KEY", "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID", "DAILY_API_KEY"):
+        monkeypatch.setenv(key, "test")
+
+    from app import db, interviews, main
+
+    await db.reset_engine()
+
+    spawned: list[dict] = []
+
+    async def fake_create_room(**kwargs):
+        return FakeRoom()
+
+    async def fake_create_token(**kwargs):
+        return f"token-for-{kwargs.get('room_name')}-owner={kwargs.get('is_owner')}"
+
+    async def fake_start_bot(**kwargs):
+        spawned.append(kwargs)
+        async with db.get_sessionmaker()() as session:
+            interview = await session.get(db.Interview, kwargs["interview_id"])
+            interview.status = db.InterviewStatus.IN_PROGRESS
+            interview.started_at = datetime.now(UTC)
+            await session.commit()
+
+    monkeypatch.setattr(interviews, "create_room", fake_create_room)
+    monkeypatch.setattr(interviews, "create_meeting_token", fake_create_token)
+    monkeypatch.setattr(interviews, "_start_bot", fake_start_bot)
+
+    with TestClient(main.app) as test_client:
+        test_client.spawned = spawned
+        yield test_client
+
+    await db.reset_engine()
+
+
+async def make_candidate(*, ready: bool = True) -> str:
+    """Insert a job and candidate directly — the upload path is tested elsewhere."""
+    from app import db
+
+    candidate_id = "cand_test1"
+    async with db.get_sessionmaker()() as session:
+        session.add(db.Job(id="job_1", jd_text="jd", spec_status=db.SpecStatus.READY))
+        await session.commit()
+    async with db.get_sessionmaker()() as session:
+        session.add(
+            db.Candidate(
+                id=candidate_id,
+                job_id="job_1",
+                name="Prateek Verma",
+                cv_text="cv",
+                blueprint=blueprint_for(candidate_id).model_dump(mode="json") if ready else None,
+                blueprint_status=(
+                    db.BlueprintStatus.READY if ready else db.BlueprintStatus.GENERATING
+                ),
+            )
+        )
+        await session.commit()
+    return candidate_id
+
+
+# -- credentials -------------------------------------------------------------
+
+
+def test_meeting_ids_are_readable_aloud():
+    for _ in range(20):
+        value = new_meeting_id()
+        assert len(value) == 11 and value.count("-") == 2
+        assert value.replace("-", "").isdigit()
+
+
+def test_password_alphabet_contains_no_confusable_pair():
+    """These get read out loud and typed by hand.
+
+    Asserts the property rather than a hand-written list of bad characters —
+    the first version of this test listed "0O1lI5S" while the alphabet still
+    contained both `5` and `s`.
+    """
+    from app.meeting import CONFUSABLE_PAIRS, PASSWORD_ALPHABET
+
+    for first, second in CONFUSABLE_PAIRS:
+        assert not (first in PASSWORD_ALPHABET and second in PASSWORD_ALPHABET), (
+            f"'{first}' and '{second}' are confusable but both are in the alphabet"
+        )
+
+
+def test_passwords_use_only_the_safe_alphabet():
+    from app.meeting import PASSWORD_ALPHABET
+
+    for _ in range(50):
+        assert set(new_password()) <= set(PASSWORD_ALPHABET)
+
+
+@pytest.mark.parametrize(
+    "typed",
+    ["428-193-756", "428193756", "428 193 756", " 428-193-756 ", "428.193.756"],
+)
+def test_meeting_ids_survive_how_people_actually_type_them(typed):
+    """Refusing a correct ID over a stray space is a pointless way to start
+    someone's interview."""
+    assert normalise_meeting_id(typed) == "428-193-756"
+
+
+@pytest.mark.parametrize("typed", ["", "42819375", "4281937560", "abc-def-ghi"])
+def test_malformed_meeting_ids_are_rejected(typed):
+    assert normalise_meeting_id(typed) == ""
+
+
+def test_password_comparison_is_case_insensitive():
+    assert passwords_match("Ab3Kd9Xy", "ab3kd9xy")
+    assert not passwords_match("ab3kd9xy", "ab3kd9xz")
+
+
+# -- creating an interview ---------------------------------------------------
+
+
+async def test_interview_is_created_with_credentials(client):
+    candidate_id = await make_candidate()
+
+    response = client.post(f"/candidates/{candidate_id}/interviews")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "scheduled"
+    assert normalise_meeting_id(body["meeting_id"]) == body["meeting_id"]
+    assert len(body["password"]) >= 8
+
+
+async def test_interview_cannot_be_created_without_a_ready_blueprint(client):
+    """An interview with no plan to run is not an interview."""
+    candidate_id = await make_candidate(ready=False)
+
+    response = client.post(f"/candidates/{candidate_id}/interviews")
+
+    assert response.status_code == 409
+    assert "not ready" in response.json()["detail"]
+
+
+async def test_scheduling_does_not_start_a_bot(client):
+    """Booking a week early must not park a bot in an empty room."""
+    candidate_id = await make_candidate()
+    client.post(f"/candidates/{candidate_id}/interviews")
+
+    assert client.spawned == []
+
+
+# -- joining -----------------------------------------------------------------
+
+
+async def test_correct_credentials_return_a_token_and_start_the_bot(client):
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    response = client.post(
+        "/interviews/join",
+        json={"meeting_id": created["meeting_id"], "password": created["password"], "consent": True},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["token"]
+    assert body["room_url"].startswith("https://")
+    assert body["candidate_name"] == "Prateek Verma"
+    assert len(client.spawned) == 1
+
+
+async def test_wrong_password_is_refused(client):
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    response = client.post(
+        "/interviews/join",
+        json={"meeting_id": created["meeting_id"], "password": "wrongpass", "consent": True},
+    )
+
+    assert response.status_code == 401
+    assert client.spawned == []
+
+
+async def test_unknown_and_wrong_password_are_indistinguishable(client):
+    """Different messages would let someone probe for valid meeting IDs."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    wrong_password = client.post(
+        "/interviews/join",
+        json={"meeting_id": created["meeting_id"], "password": "wrongpass", "consent": True},
+    )
+    no_such_meeting = client.post(
+        "/interviews/join", json={"meeting_id": "111-222-333", "password": "wrongpass", "consent": True}
+    )
+
+    assert wrong_password.status_code == no_such_meeting.status_code == 401
+    assert wrong_password.json()["detail"] == no_such_meeting.json()["detail"]
+
+
+async def test_rejoining_does_not_start_a_second_bot(client):
+    """A candidate refreshing the page must not put two interviewers in the room."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    payload = {
+        "meeting_id": created["meeting_id"],
+        "password": created["password"],
+        "consent": True,
+    }
+
+    client.post("/interviews/join", json=payload)
+    second = client.post("/interviews/join", json=payload)
+
+    assert second.status_code == 200
+    assert len(client.spawned) == 1
+
+
+async def test_expired_room_is_refused(client):
+    from app import db
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, created["interview_id"])
+        interview.room_expires_at = datetime.now(UTC) - timedelta(hours=1)
+        await session.commit()
+
+    response = client.post(
+        "/interviews/join",
+        json={"meeting_id": created["meeting_id"], "password": created["password"], "consent": True},
+    )
+
+    assert response.status_code == 410
+    assert "expired" in response.json()["detail"]
+
+
+async def test_completed_interview_cannot_be_rejoined(client):
+    from app import db
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, created["interview_id"])
+        interview.status = db.InterviewStatus.COMPLETED
+        await session.commit()
+
+    response = client.post(
+        "/interviews/join",
+        json={"meeting_id": created["meeting_id"], "password": created["password"], "consent": True},
+    )
+
+    assert response.status_code == 410
+
+
+async def test_join_response_tells_the_candidate_nothing_about_scoring(client):
+    """The candidate's page has no business knowing what it is being scored on."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    body = client.post(
+        "/interviews/join",
+        json={"meeting_id": created["meeting_id"], "password": created["password"], "consent": True},
+    ).json()
+
+    serialised = str(body).lower()
+    for leak in ("competenc", "weight", "red_flag", "target_depth", "seed_question"):
+        assert leak not in serialised
+
+
+# -- persistence -------------------------------------------------------------
+
+
+async def test_transcript_is_written_back_to_the_interview(client):
+    """The bot writes this on exit; here we check the record round-trips."""
+    from app import db
+    from bot.persistence import build_transcript, save_interview_result
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    interview_id = created["interview_id"]
+
+    transcript = build_transcript(
+        interview_id=interview_id,
+        turns=[
+            {"speaker": "pre_interview_audio", "text": "Enjoyment", "at_seconds": 1.0},
+            {"speaker": "interviewer", "text": "Good evening.", "at_seconds": 2.0},
+            {"speaker": "candidate", "text": "Hello there.", "at_seconds": 4.0},
+        ],
+        duration_seconds=310.0,
+    )
+    await save_interview_result(
+        interview_id=interview_id,
+        transcript=transcript,
+        section_outcomes=[{"section_id": "a"}],
+        session_metrics={"latency_summary": {"ttfa_median_ms": 2100.0}},
+    )
+
+    view = client.get(f"/interviews/{interview_id}").json()
+    assert view["status"] == "completed"
+    assert view["ended_at"]
+    speakers = [t["speaker"] for t in view["transcript"]["turns"]]
+    # Room noise never becomes part of the candidate's record.
+    assert speakers == ["interviewer", "candidate"]
+    assert view["section_outcomes"] == [{"section_id": "a"}]
+    # Telemetry must survive too: on Railway the session files are ephemeral,
+    # so the database is the only place latency data can live.
+    assert view["session_metrics"]["latency_summary"]["ttfa_median_ms"] == 2100.0
+
+
+async def test_saving_against_a_missing_interview_does_not_raise(client):
+    """A database problem must not lose the session on top of whatever already
+    went wrong."""
+    from bot.persistence import build_transcript, save_interview_result
+
+    await save_interview_result(
+        interview_id="int_nope",
+        transcript=build_transcript(interview_id="int_nope", turns=[], duration_seconds=0.0),
+        section_outcomes=[],
+    )
+
+
+async def test_interviews_are_listed_for_a_candidate(client):
+    candidate_id = await make_candidate()
+    client.post(f"/candidates/{candidate_id}/interviews")
+    client.post(f"/candidates/{candidate_id}/interviews")
+
+    rows = client.get(f"/candidates/{candidate_id}/interviews").json()
+
+    assert len(rows) == 2
+    assert all(r["status"] == "scheduled" for r in rows)
+
+
+async def test_unknown_interview_returns_404(client):
+    assert client.get("/interviews/int_nope").status_code == 404
+
+
+# -- consent -----------------------------------------------------------------
+
+
+async def test_no_bot_starts_without_consent(client):
+    """There must be no path where someone is recorded before agreeing to be."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    response = client.post(
+        "/interviews/join",
+        json={
+            "meeting_id": created["meeting_id"],
+            "password": created["password"],
+            "consent": False,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "recording notice" in response.json()["detail"]
+    assert client.spawned == []
+
+
+async def test_consent_is_timestamped_against_the_interview(client):
+    from app import db
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    client.post(
+        "/interviews/join",
+        json={
+            "meeting_id": created["meeting_id"],
+            "password": created["password"],
+            "consent": True,
+        },
+    )
+
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, created["interview_id"])
+        assert interview.consent_accepted_at is not None
+
+
+async def test_the_join_page_is_served(client):
+    """Candidates stay on our domain and never see a Daily URL."""
+    response = client.get("/join")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "AI interviewer" in body
+    assert "recorded and transcribed" in body
+    # The consent box must not be pre-ticked.
+    assert 'type="checkbox" checked' not in body
+    assert "daily.co" not in body.lower()
+    # Voice only: the candidate is told their camera is not used.
+    assert "voice only" in body.lower()
+
+
+async def test_the_bot_is_named_consistently_everywhere(client):
+    """The name reaches the candidate three ways — the spoken introduction, the
+    participant list, and this page. A bot that calls itself one thing and
+    appears as another is unsettling when someone is already nervous."""
+    from bot.brain.prompting import render_section_prompt
+    from bot.blueprint_source import load_blueprint
+    from bot.brain.state import build_sections
+    from bot.run_bot import BOT_NAME as call_name
+    from shared.branding import BOT_NAME
+
+    page = client.get("/join").text
+    assert BOT_NAME in page
+    assert "{{" not in page  # every placeholder substituted
+
+    assert call_name == BOT_NAME
+
+    blueprint = load_blueprint()
+    opening = render_section_prompt(
+        blueprint=blueprint,
+        section=build_sections(blueprint)[0],
+        carried_claims=[],
+        unprobed_contradictions=[],
+        remaining_seconds=120,
+        is_last_competency=False,
+        time_of_day="evening",
+    )
+    assert BOT_NAME in opening
+
+
+async def test_the_call_ui_is_ours_not_daily_prebuilt(client):
+    """Prebuilt gives a meeting app — participant grid, screen share, Daily
+    branding. A candidate should see an interview, not a conferencing tool."""
+    body = client.get("/join").text
+
+    assert "createCallObject" in body
+    assert "createFrame" not in body
+    # No embedded frame. (The SDK's global is named `DailyIframe` even for call
+    # objects, so checking for the substring "iframe" would be meaningless.)
+    assert "<iframe" not in body.lower()
+    # We own media playback with a call object; without this the bot is silent.
+    assert "track-started" in body

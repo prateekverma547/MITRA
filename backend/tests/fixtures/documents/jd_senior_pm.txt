@@ -1,0 +1,29 @@
+Senior Product Manager — Payments
+Northwind Financial | London (hybrid)
+
+About the role
+We are looking for a Senior Product Manager to own our payments platform. You
+will set the roadmap for how money moves through Northwind, working closely with
+engineering, risk, compliance and our largest merchant partners.
+
+What you will do
+- Own the strategy and roadmap for the payments platform end to end.
+- Make hard prioritisation calls across competing merchant, risk and internal
+  demands, and communicate the reasoning clearly.
+- Partner daily with a team of twelve engineers and two designers.
+- Define and track the metrics that tell us whether payments are getting better,
+  not just busier.
+- Work with compliance on regulatory change without letting it stall delivery.
+- Mentor two junior product managers.
+
+What we are looking for
+- 10+ years in product management, with meaningful time in fintech or payments.
+- A track record of shipping complex platform products, not just features.
+- Comfort with technical depth: you should be able to argue with an engineer
+  about idempotency and hold your own.
+- Experience influencing senior stakeholders who do not report to you.
+- Excellent communication skills and a bias for action.
+
+Nice to have
+- Experience with card scheme rules or PSD2.
+- Exposure to marketplace or multi-party payment flows.

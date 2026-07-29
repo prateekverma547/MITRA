@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{BOT_NAME}} — Interview</title>
+  <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
+  <style>
+    :root {
+      --ink: #12141a;
+      --muted: #5c6272;
+      --line: #e3e6ec;
+      --accent: #2f5bd7;
+      --bg: #f7f8fa;
+      --live: #1c8f5a;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    .hidden { display: none !important; }
+
+    /* ---- Step 1: credentials + consent. Narrow column is right here. ---- */
+    #entry-wrap {
+      min-height: 100%;
+      display: flex; justify-content: center; align-items: flex-start;
+      padding: 40px 20px;
+    }
+    .card {
+      width: 100%; max-width: 560px;
+      background: #fff; border: 1px solid var(--line);
+      border-radius: 14px; padding: 32px;
+    }
+    h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: -0.01em; }
+    p.sub { color: var(--muted); margin: 0 0 26px; }
+    label { display: block; font-weight: 600; font-size: 14px; margin: 18px 0 6px; }
+    input[type="text"] {
+      width: 100%; padding: 12px 14px; font-size: 16px;
+      border: 1px solid var(--line); border-radius: 9px; background: #fff;
+    }
+    input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+    button.primary {
+      width: 100%; margin-top: 24px; padding: 13px 18px;
+      font-size: 16px; font-weight: 600; color: #fff;
+      background: var(--accent); border: 0; border-radius: 9px; cursor: pointer;
+    }
+    button.primary:disabled { background: #a9b4cf; cursor: not-allowed; }
+    .notice {
+      background: #f4f6fb; border: 1px solid var(--line);
+      border-radius: 10px; padding: 18px; margin-top: 22px; font-size: 15px;
+    }
+    .notice h2 { font-size: 15px; margin: 0 0 10px; }
+    .notice ul { margin: 0; padding-left: 20px; color: var(--muted); }
+    .notice li { margin-bottom: 6px; }
+    .consent { display: flex; gap: 11px; align-items: flex-start; margin-top: 18px; font-size: 15px; }
+    .consent input { margin-top: 3px; width: 17px; height: 17px; flex: none; }
+    .error { color: #b3261e; margin-top: 16px; font-size: 15px; }
+
+    /* ---- Step 2: the interview itself. Full bleed, audio only. ---- */
+    #stage {
+      min-height: 100%;
+      display: flex; flex-direction: column;
+      background: #0f1117; color: #fff;
+    }
+    .bar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 18px 26px; border-bottom: 1px solid #232733;
+    }
+    .role { font-weight: 600; font-size: 15px; }
+    .timer { font-variant-numeric: tabular-nums; color: #9aa3b5; font-size: 15px; }
+    .centre {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 22px; padding: 40px 20px;
+    }
+    .orb {
+      width: 116px; height: 116px; border-radius: 50%;
+      background: #1b2030; border: 2px solid #2b3244;
+      display: flex; align-items: center; justify-content: center;
+      transition: transform .18s ease, border-color .18s ease, background .18s ease;
+    }
+    .orb.speaking {
+      border-color: var(--live); background: #16281f;
+      transform: scale(1.06);
+    }
+    .orb span { font-size: 30px; }
+    #speaker { font-size: 19px; font-weight: 600; }
+    #hint { color: #9aa3b5; font-size: 15px; text-align: center; max-width: 460px; }
+    .controls { display: flex; gap: 12px; padding: 22px; justify-content: center; border-top: 1px solid #232733; }
+    .controls button {
+      padding: 12px 22px; font-size: 15px; font-weight: 600;
+      border-radius: 9px; border: 1px solid #2b3244;
+      background: #1b2030; color: #fff; cursor: pointer;
+    }
+    .controls button.muted { background: #40202a; border-color: #6b2f3c; }
+    .controls button.leave { background: #b3261e; border-color: #b3261e; }
+
+    /* ---- Step 3: after ---- */
+    #done {
+      min-height: 100%; display: flex; align-items: center; justify-content: center;
+      padding: 40px 20px; text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Step 1 -->
+<div id="entry-wrap">
+  <section class="card">
+    <h1>Join your interview</h1>
+    <p class="sub">You will be interviewed by <strong>{{BOT_NAME}}</strong>. {{PRODUCT_TAGLINE}}</p>
+
+    <form id="form" autocomplete="off">
+      <label for="meeting">Meeting ID</label>
+      <input id="meeting" type="text" inputmode="numeric" placeholder="428-193-756" required />
+
+      <label for="password">Password</label>
+      <input id="password" type="text" autocapitalize="none" spellcheck="false" required />
+
+      <div class="notice">
+        <h2>Before you begin</h2>
+        <ul>
+          <li>This interview is conducted by <strong>{{BOT_NAME}}</strong>, an AI interviewer ({{BOT_FULL_NAME}}) — not a person.</li>
+          <li>It is <strong>voice only</strong> — your camera is not used.</li>
+          <li>The conversation is <strong>recorded and transcribed</strong>.</li>
+          <li>The recording and transcript are shared with the employer to help
+              them evaluate your application.</li>
+          <li>A person reviews the result. Nothing here decides the outcome on its own.</li>
+        </ul>
+        <label class="consent" for="consent">
+          <input id="consent" type="checkbox" />
+          <span>I understand and agree to take part on this basis.</span>
+        </label>
+      </div>
+
+      <button id="submit" class="primary" type="submit" disabled>Start interview</button>
+      <div id="error" class="error hidden"></div>
+    </form>
+  </section>
+</div>
+
+<!-- Step 2 -->
+<section id="stage" class="hidden">
+  <div class="bar">
+    <div class="role" id="role">{{BOT_NAME}}</div>
+    <div class="timer" id="timer">00:00</div>
+  </div>
+  <div class="centre">
+    <div class="orb" id="orb"><span id="orb-icon">🎙️</span></div>
+    <div id="speaker">Connecting…</div>
+    <div id="hint">Take your time. There is no rush, and pausing to think is fine.</div>
+  </div>
+  <div class="controls">
+    <button id="mute" type="button">Mute</button>
+    <button id="leave" class="leave" type="button">End interview</button>
+  </div>
+</section>
+
+<!-- Step 3 -->
+<section id="done" class="hidden">
+  <div>
+    <h1>Thank you for your time</h1>
+    <p class="sub" id="done-note">Your interview has ended. You can close this tab.</p>
+  </div>
+</section>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const consent = $("consent");
+  const submit = $("submit");
+
+  // No pre-ticked box, and the button stays dead until it is ticked.
+  consent.addEventListener("change", () => { submit.disabled = !consent.checked; });
+
+  function showError(message) {
+    $("error").textContent = message;
+    $("error").classList.remove("hidden");
+    submit.disabled = false;
+    submit.textContent = "Start interview";
+  }
+
+  function show(section) {
+    for (const id of ["entry-wrap", "stage", "done"]) {
+      $(id).classList.toggle("hidden", id !== section);
+    }
+  }
+
+  let call = null;
+  let timerHandle = null;
+
+  function startTimer() {
+    const began = Date.now();
+    timerHandle = setInterval(() => {
+      const seconds = Math.floor((Date.now() - began) / 1000);
+      const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
+      const ss = String(seconds % 60).padStart(2, "0");
+      $("timer").textContent = `${mm}:${ss}`;
+    }, 1000);
+  }
+
+  function finish(note) {
+    if (timerHandle) clearInterval(timerHandle);
+    if (note) $("done-note").textContent = note;
+    show("done");
+    if (call) { call.destroy(); call = null; }
+  }
+
+  $("form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    $("error").classList.add("hidden");
+    submit.disabled = true;
+    submit.textContent = "Connecting…";
+
+    let session;
+    try {
+      const response = await fetch("/interviews/join", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          meeting_id: $("meeting").value,
+          password: $("password").value,
+          consent: consent.checked,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) { showError(body.detail || "Could not join the interview."); return; }
+      session = body;
+    } catch (err) {
+      showError("Could not reach the server. Check your connection and try again.");
+      return;
+    }
+
+    $("role").textContent = "{{BOT_NAME}} · " + session.role_title;
+    show("stage");
+
+    // A call *object*, not Daily's prebuilt iframe. This is a voice interview:
+    // there is no video, no participant grid, no screen share, and no Daily
+    // branding — the candidate should see an interview, not a meeting app.
+    call = window.DailyIframe.createCallObject({
+      audioSource: true,
+      videoSource: false,
+    });
+
+    // With a call object we own media playback, so remote audio has to be
+    // attached by hand. Without this the bot is in the room and inaudible.
+    call.on("track-started", (event) => {
+      if (event.track.kind !== "audio" || event.participant?.local) return;
+      const audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.srcObject = new MediaStream([event.track]);
+      document.body.appendChild(audio);
+    });
+
+    call.on("joined-meeting", () => {
+      $("speaker").textContent = "Waiting for {{BOT_NAME}}…";
+      startTimer();
+    });
+
+    call.on("participant-joined", () => {
+      $("speaker").textContent = "Listening";
+      $("hint").textContent =
+        "Take your time. There is no rush, and pausing to think is fine.";
+    });
+
+    call.on("active-speaker-change", (event) => {
+      const local = call.participants().local;
+      const botSpeaking = event.activeSpeaker?.peerId !== local?.session_id;
+      $("orb").classList.toggle("speaking", botSpeaking);
+      $("orb-icon").textContent = botSpeaking ? "💬" : "🎙️";
+      $("speaker").textContent = botSpeaking ? "{{BOT_NAME}} is speaking" : "Listening";
+    });
+
+    // The bot leaving is how a completed interview ends.
+    call.on("participant-left", () => {
+      finish("Your interview has ended. Thank you for your time — you can close this tab.");
+    });
+
+    call.on("left-meeting", () => {
+      finish("Your interview has ended. Thank you for your time — you can close this tab.");
+    });
+
+    call.on("error", (event) => {
+      $("speaker").textContent = "Connection problem";
+      $("hint").textContent = event?.errorMsg || "Something went wrong with the connection.";
+    });
+
+    try {
+      await call.join({ url: session.room_url, token: session.token });
+    } catch (err) {
+      $("speaker").textContent = "Could not connect";
+      $("hint").textContent = String(err?.message || err);
+    }
+  });
+
+  $("mute").addEventListener("click", () => {
+    if (!call) return;
+    const muted = call.localAudio();
+    call.setLocalAudio(!muted);
+    $("mute").textContent = muted ? "Unmute" : "Mute";
+    $("mute").classList.toggle("muted", muted);
+  });
+
+  $("leave").addEventListener("click", async () => {
+    if (call) await call.leave();
+    finish();
+  });
+</script>
+</body>
+</html>
