@@ -22,14 +22,43 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 DEFAULT_DATABASE_URL = "sqlite+aiosqlite:///./interviewer.db"
 
 
+class DatabaseNotConfigured(RuntimeError):
+    """Raised when a deployed instance has no real database."""
+
+
+def is_deployed() -> bool:
+    """True when running on Railway rather than a developer machine."""
+    return bool(
+        os.environ.get("RAILWAY_ENVIRONMENT")
+        or os.environ.get("RAILWAY_PROJECT_ID")
+        or os.environ.get("RAILWAY_SERVICE_ID")
+    )
+
+
 def database_url() -> str:
     """Resolve the database URL, normalising Railway's Postgres scheme.
 
     Railway hands out `postgresql://`; SQLAlchemy's async engine needs the
     asyncpg driver named explicitly or it picks the sync one and fails at
     connect time.
+
+    The SQLite fallback is a local-development convenience and must never apply
+    in deployment. Railway does not share a Postgres service's DATABASE_URL with
+    other services automatically — it has to be added as a reference variable.
+    Forget it and the fallback would engage silently: health checks green,
+    interviews running, every transcript written to a container filesystem that
+    is wiped on the next deploy. Refusing to start is the only safe behaviour.
     """
-    url = os.environ.get("DATABASE_URL") or DEFAULT_DATABASE_URL
+    configured = os.environ.get("DATABASE_URL")
+    if not configured and is_deployed():
+        raise DatabaseNotConfigured(
+            "DATABASE_URL is not set on a deployed instance. Add a reference "
+            "variable on the service: DATABASE_URL = ${{Postgres.DATABASE_URL}}. "
+            "Refusing to start rather than silently writing interviews to an "
+            "ephemeral SQLite file."
+        )
+
+    url = configured or DEFAULT_DATABASE_URL
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
     if url.startswith("postgresql://"):

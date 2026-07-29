@@ -22,9 +22,24 @@ Region: **US**, per CLAUDE.md.
 
 In the Railway dashboard: **New → Database → PostgreSQL**.
 
-Railway injects `DATABASE_URL` automatically. Our code rewrites the
-`postgresql://` scheme it hands out to `postgresql+asyncpg://`, so nothing else
-is needed.
+**Then link it to the app service.** Railway does *not* share a database's
+`DATABASE_URL` with other services automatically — the Postgres service gets it,
+the app service does not. On the **MITRA service → Variables**, add:
+
+```
+DATABASE_URL = ${{Postgres.DATABASE_URL}}
+```
+
+(the `Add Variable` link in Railway's "Trying to connect a database?" hint does
+exactly this).
+
+Miss this and the app refuses to start, deliberately. It would otherwise fall
+back to local SQLite and write every interview to a container filesystem that
+the next deploy erases — green health checks, working interviews, and silent
+total data loss.
+
+The code rewrites Railway's `postgresql://` scheme to `postgresql+asyncpg://`,
+so nothing else is needed.
 
 ### 3. Set the environment variables
 
@@ -33,7 +48,6 @@ railway variables --set OPENAI_API_KEY=sk-...
 railway variables --set ELEVENLABS_API_KEY=...
 railway variables --set ELEVENLABS_VOICE_ID=oO7sLA3dWfQXsKeSAjpA
 railway variables --set DAILY_API_KEY=...
-railway variables --set APP_BASE_URL=https://<your-app>.up.railway.app
 ```
 
 Optional, defaults shown — see the model tiering policy in CLAUDE.md:

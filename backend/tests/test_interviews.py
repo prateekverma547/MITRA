@@ -489,3 +489,45 @@ async def test_the_call_ui_is_ours_not_daily_prebuilt(client):
     assert "<iframe" not in body.lower()
     # We own media playback with a call object; without this the bot is silent.
     assert "track-started" in body
+
+
+# -- deployment safety -------------------------------------------------------
+
+
+def test_deployed_instance_refuses_to_start_without_a_database(monkeypatch):
+    """Railway does not share a Postgres service's DATABASE_URL automatically.
+
+    Forget the reference variable and the SQLite fallback would engage
+    silently — green health checks, working interviews, and every transcript
+    written to a filesystem wiped by the next deploy. Loud failure is the only
+    safe behaviour.
+    """
+    from app.db import DatabaseNotConfigured, database_url
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+
+    with pytest.raises(DatabaseNotConfigured, match="Postgres.DATABASE_URL"):
+        database_url()
+
+
+def test_local_development_still_falls_back_to_sqlite(monkeypatch):
+    """The convenience is fine on a laptop, where nothing is lost."""
+    from app.db import database_url
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    for key in ("RAILWAY_ENVIRONMENT", "RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID"):
+        monkeypatch.delenv(key, raising=False)
+
+    assert database_url().startswith("sqlite+aiosqlite")
+
+
+def test_railway_postgres_scheme_is_rewritten_for_asyncpg(monkeypatch):
+    """Railway hands out `postgresql://`; the async engine needs the driver named."""
+    from app.db import database_url
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pw@host:5432/railway")
+    assert database_url() == "postgresql+asyncpg://user:pw@host:5432/railway"
+
+    monkeypatch.setenv("DATABASE_URL", "postgres://user:pw@host:5432/railway")
+    assert database_url() == "postgresql+asyncpg://user:pw@host:5432/railway"
