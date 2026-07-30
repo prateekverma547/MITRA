@@ -42,7 +42,7 @@ from blueprint.documents import DocumentError, extract_text
 from blueprint.generate import BlueprintGenerationError, BlueprintGenerator
 from blueprint.refine import BlueprintRefiner, RefinementError
 from bot.config import Settings
-from shared.branding import BOT_FULL_NAME, BOT_NAME, PRODUCT_TAGLINE
+from shared.branding import BOT_FULL_NAME, BOT_NAME, FAVICON_URL, LOGO_URL, PRODUCT_TAGLINE
 from shared.contracts import EvaluationSpec, InterviewBlueprint
 
 
@@ -659,19 +659,24 @@ async def get_candidate(candidate_id: str) -> BlueprintResponse:
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
 
-@lru_cache(maxsize=2)
+#: One more than the number of pages served, so every page stays cached. At
+#: maxsize=2 with three pages the cache thrashed and each request re-read disk.
+@lru_cache(maxsize=8)
 def _render_page(name: str) -> str:
-    """The candidate page with branding substituted in.
+    """A page with the product's identity substituted in.
 
     Read and rendered once. The name reaches the candidate through the spoken
     introduction, the call, and this page, and all three read from
-    shared/branding.py so they cannot drift apart.
+    shared/branding.py so they cannot drift apart. The logo's URL comes from
+    the same module for the same reason.
     """
     html = (FRONTEND_DIR / name).read_text()
     for token, value in (
         ("{{BOT_NAME}}", BOT_NAME),
         ("{{BOT_FULL_NAME}}", BOT_FULL_NAME),
         ("{{PRODUCT_TAGLINE}}", PRODUCT_TAGLINE),
+        ("{{LOGO_URL}}", LOGO_URL),
+        ("{{FAVICON_URL}}", FAVICON_URL),
     ):
         html = html.replace(token, value)
     return html
@@ -687,13 +692,35 @@ async def join_page() -> HTMLResponse:
     return HTMLResponse(_render_page("candidate/index.html"))
 
 
+@app.get("/assets/{filename}", include_in_schema=False)
+async def asset(filename: str) -> Response:
+    """Brand artwork, for formats that cannot be inlined.
+
+    The SVG mark is inlined into the pages themselves; this exists so a PNG or
+    JPEG logo can be dropped in without a code change.
+    """
+    allowed = {".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
+               ".jpeg": "image/jpeg", ".webp": "image/webp", ".ico": "image/x-icon"}
+    path = (FRONTEND_DIR / "assets" / filename).resolve()
+
+    # Refuse anything that climbs out of the assets folder.
+    if not path.is_file() or (FRONTEND_DIR / "assets").resolve() not in path.parents:
+        raise HTTPException(status_code=404, detail="No such asset.")
+    media_type = allowed.get(path.suffix.lower())
+    if media_type is None:
+        raise HTTPException(status_code=404, detail="No such asset.")
+
+    return Response(path.read_bytes(), media_type=media_type,
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
 @app.get("/admin", include_in_schema=False)
 async def admin_page() -> HTMLResponse:
     """The admin panel: JD -> clarification -> CV -> blueprint -> interview.
 
-    Unauthenticated for the POC. Multi-tenant auth is explicitly out of scope
-    (CLAUDE.md), but this must not be exposed to real candidates or real
-    employers as-is: it lists every job and every CV in the database.
+    Behind `ADMIN_PASSWORD`: it lists every job description, every CV and every
+    interview transcript in the database. The page itself renders the sign-in
+    screen, so it is reachable while the data behind it is not.
     """
     return HTMLResponse(_render_page("admin/index.html"))
 

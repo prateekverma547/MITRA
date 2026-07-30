@@ -19,6 +19,24 @@ BOT_FULL_NAME = "Machine Interviewer for Talent Review & Assessment"
 #: Shown to candidates before they join.
 PRODUCT_TAGLINE = "AI-conducted interviews, reviewed by people."
 
+#: The logo, served from `frontend/assets/`. Named here rather than written into
+#: each page for the same reason the name is: one file, one URL, every screen
+#: agrees. Swapping the artwork is dropping a new file in that folder and
+#: changing this line.
+#:
+#: Two things follow from what the artwork is. It is the full lockup, mark and
+#: wordmark and expansion together, so a page that shows it must not print the
+#: name beside it as well. And it is the transparent cut, so it sits on the page
+#: rather than inside a pale rectangle: the version with the background baked in
+#: reads as a grey box on any surface that is not exactly its own. That original
+#: is kept beside it as `logoMitra.webp`.
+LOGO_FILE = "TrasparentLogo.png"
+LOGO_URL = f"/assets/{LOGO_FILE}"
+
+#: Square, cut from the mark alone. The lockup is close to 3:1, which in a
+#: browser tab shrinks to an unreadable sliver.
+FAVICON_URL = "/assets/favicon.png"
+
 #: Appended to every prompt whose output a person reads: the clarification chat,
 #: the interview questions, the spoken turns, the feedback report.
 #:

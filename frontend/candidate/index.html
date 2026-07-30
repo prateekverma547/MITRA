@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{{BOT_NAME}} Interview</title>
+  <link rel="icon" href="{{FAVICON_URL}}" type="image/png" />
   <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
   <style>
     :root {
@@ -98,6 +99,15 @@
     .controls button.muted { background: #40202a; border-color: #6b2f3c; }
     .controls button.leave { background: #b3261e; border-color: #b3261e; }
 
+    /* The lockup carries the name and what it stands for, so the copy beside
+       it does not repeat them. A candidate about to be interviewed by a machine
+       should be able to see who is doing it. */
+    .brandmark {
+      display: block; width: 100%; max-width: 300px; height: auto;
+      margin: -18px auto 2px;
+    }
+    #done .brandmark { margin: 0 auto 22px; }
+
     /* ---- Step 3: after ---- */
     #done {
       min-height: 100%; display: flex; align-items: center; justify-content: center;
@@ -110,6 +120,7 @@
 <!-- Step 1 -->
 <div id="entry-wrap">
   <section class="card">
+    <img class="brandmark" src="{{LOGO_URL}}" alt="{{BOT_NAME}}" />
     <h1>Join your interview</h1>
     <p class="sub">You will be interviewed by <strong>{{BOT_NAME}}</strong>. {{PRODUCT_TAGLINE}}</p>
 
@@ -162,6 +173,7 @@
 <!-- Step 3 -->
 <section id="done" class="hidden">
   <div>
+    <img class="brandmark" src="{{LOGO_URL}}" alt="{{BOT_NAME}}" />
     <h1>Thank you for your time</h1>
     <p class="sub" id="done-note">Your interview has ended. You can close this tab.</p>
   </div>

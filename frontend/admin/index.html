@@ -4,9 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{{BOT_NAME}} Admin Panel</title>
+  <link rel="icon" href="{{FAVICON_URL}}" type="image/png" />
   <style>
     :root {
-      --ink: #12141a; --muted: #5c6272; --line: #e3e6ec; --accent: #2f5bd7;
+      /* Brand. --accent is the mark's blue; --navy is the wordmark's. */
+      --accent: #1e5be8; --navy: #12243f;
+      --ink: #12141a; --muted: #5c6272; --line: #e3e6ec;
       --bg: #f7f8fa; --ok: #1c8f5a; --warn: #b06f14; --bad: #b3261e;
       --panel: #fff; --code: #f4f6fb;
     }
@@ -20,7 +23,6 @@
       padding: 14px 24px; display: flex; align-items: center; gap: 14px;
       position: sticky; top: 0; z-index: 10;
     }
-    header .brand { font-weight: 700; letter-spacing: -0.01em; }
     header .sub { color: var(--muted); font-size: 13px; }
     main { max-width: 1080px; margin: 0 auto; padding: 26px 24px 80px; }
     h2 { font-size: 19px; margin: 0 0 4px; letter-spacing: -0.01em; }
@@ -136,6 +138,35 @@
       background: var(--code); border-radius: 0 8px 8px 0; font-size: 14px;
     }
     blockquote.quote .small { display: block; margin-top: 6px; }
+
+    /* -- brand ------------------------------------------------------------ */
+
+    /* The artwork is a hero lockup: mark, wordmark and the full expansion
+       together. At header size the expansion line becomes an unreadable smudge,
+       so the header uses the name set in type and the artwork appears where it
+       has room to be read. */
+    header .brand {
+      font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+      color: var(--navy); font-size: 15px;
+    }
+
+    /* Sign-in: the brand on the left, the way in on the right. The panel is a
+       dense working tool everywhere else, so this is the one screen with room
+       to say what the product is. */
+    .signin {
+      display: grid; grid-template-columns: 1.25fr 1fr; gap: 40px;
+      align-items: center; min-height: calc(100vh - 210px);
+    }
+    /* Sized so the lockup itself reads across a room: it occupies about half
+       the artwork's width, so the file has to be drawn wider than it looks. */
+    .signin .logo { width: 100%; max-width: 680px; height: auto; display: block; }
+    .signin .card { margin-bottom: 0; }
+
+    @media (max-width: 860px) {
+      .signin { grid-template-columns: 1fr; gap: 26px; min-height: 0; }
+      .signin .logo { max-width: 420px; margin: 0 auto; }
+    }
+
   </style>
 </head>
 <body>

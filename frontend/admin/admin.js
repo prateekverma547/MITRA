@@ -106,13 +106,16 @@ function go(path) {
 
 function renderLogin() {
   app.innerHTML = `
-    <div class="card" style="max-width:420px;margin:60px auto">
-      <h2>Sign in</h2>
-      <p class="sub">This panel shows every job description, CV and interview
-        transcript. It is not for candidates.</p>
-      <input type="password" id="pw" placeholder="Admin password" autofocus />
-      <button class="primary" id="in" style="width:100%;margin-top:16px">Sign in</button>
-      <div class="err hidden" id="err"></div>
+    <div class="signin">
+      <img class="logo" src="{{LOGO_URL}}" alt="{{BOT_NAME}}: {{BOT_FULL_NAME}}" />
+      <div class="card">
+        <h2>Sign in</h2>
+        <p class="sub">This panel shows every job description, CV and interview
+          transcript. It is not for candidates.</p>
+        <input type="password" id="pw" placeholder="Admin password" autofocus />
+        <button class="primary" id="in" style="width:100%;margin-top:16px">Sign in</button>
+        <div class="err hidden" id="err"></div>
+      </div>
     </div>`;
 
   const submit = async () => {

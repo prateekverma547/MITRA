@@ -857,6 +857,7 @@ PUBLIC_ROUTES = {
     ("GET", "/admin/session"),  # answers "am I signed in?"; leaks nothing
     ("GET", "/admin"),  # the login screen has to render before you can log in
     ("GET", "/admin/admin.js"),
+    ("GET", "/assets/{filename}"),  # the logo, on the sign-in and join screens
     ("GET", "/"),
 }
 
@@ -1032,3 +1033,38 @@ async def test_regenerating_scores_the_stored_transcript_not_a_new_one(client, m
     client.post(f"/interviews/{created['interview_id']}/feedback")
 
     assert seen == {"turns": 2, "status": db.InterviewStatus.COMPLETED}
+
+
+# -- brand assets -------------------------------------------------------------
+
+
+async def test_the_logo_and_favicon_are_served(client):
+    """Asserts they resolve, not what format they are. The artwork gets swapped;
+    a test that pins the file extension just breaks when it does."""
+    from shared.branding import FAVICON_URL, LOGO_URL
+
+    for url in (LOGO_URL, FAVICON_URL):
+        response = client.get(url)
+        assert response.status_code == 200, url
+        assert response.headers["content-type"].startswith("image/"), url
+        assert len(response.content) > 0, url
+
+
+async def test_assets_cannot_escape_their_folder(client):
+    """The filename comes straight off the URL, so it has to be pinned down."""
+    for attempt in ["../app/main.py", "..%2Fapp%2Fmain.py", "../../.env"]:
+        assert client.get(f"/assets/{attempt}").status_code in (404, 400)
+
+
+async def test_a_non_image_asset_is_refused(client):
+    assert client.get("/assets/main.py").status_code == 404
+
+
+async def test_the_sign_in_screen_shows_the_logo(client):
+    """The one screen with room to say what the product is."""
+    from shared.branding import LOGO_URL
+
+    script = client.get("/admin/admin.js").text
+
+    assert LOGO_URL in script
+    assert "{{" not in script  # every placeholder substituted
