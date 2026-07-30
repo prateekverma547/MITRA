@@ -84,6 +84,7 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setenv("ELEVENLABS_API_KEY", "el-test")
     monkeypatch.setenv("ELEVENLABS_VOICE_ID", "voice-test")
     monkeypatch.setenv("DAILY_API_KEY", "daily-test")
+    monkeypatch.setenv("ADMIN_PASSWORD", "test-admin-pw")
 
     from app import db, main
 
@@ -92,6 +93,9 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "BlueprintGenerator", StubGenerator)
 
     with TestClient(main.app) as test_client:
+        # Every admin route is guarded now; these tests exercise what happens
+        # behind the login, so they sign in once.
+        test_client.post("/admin/login", json={"password": "test-admin-pw"})
         yield test_client
 
     await db.reset_engine()

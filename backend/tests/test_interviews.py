@@ -62,6 +62,7 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path}/int.db")
     for key in ("OPENAI_API_KEY", "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID", "DAILY_API_KEY"):
         monkeypatch.setenv(key, "test")
+    monkeypatch.setenv("ADMIN_PASSWORD", "test-admin-pw")
 
     from app import db, interviews, main
 
@@ -89,6 +90,7 @@ async def client(tmp_path, monkeypatch):
 
     with TestClient(main.app) as test_client:
         test_client.spawned = spawned
+        test_client.post("/admin/login", json={"password": "test-admin-pw"})
         yield test_client
 
     await db.reset_engine()
@@ -598,3 +600,135 @@ async def test_candidate_listing_surfaces_generation_failures(client):
     broken = next(r for r in rows if r["candidate_id"] == "cand_broken")
     assert broken["blueprint_status"] == "failed"
     assert broken["blueprint_error"] == "model unavailable"
+
+
+# -- admin authentication ----------------------------------------------------
+
+
+async def test_admin_routes_are_closed_without_a_session(client):
+    """The panel exposes every JD, CV and transcript in the database. On a
+    public URL that cannot be open to anyone who guesses the path."""
+    client.cookies.clear()
+
+    for path in ("/jobs", "/jobs/job_1", "/candidates/cand_x"):
+        assert client.get(path).status_code == 401, path
+
+
+async def test_candidate_join_stays_public(client):
+    """Candidates have no account. Their credential is the meeting password."""
+    client.cookies.clear()
+
+    response = client.post(
+        "/interviews/join",
+        json={"meeting_id": "111-222-333", "password": "nope", "consent": True},
+    )
+    # 401 for wrong credentials, not for being signed out of the admin panel.
+    assert "meeting ID and password" in response.json()["detail"]
+
+
+async def test_wrong_admin_password_is_refused(client):
+    client.cookies.clear()
+    assert client.post("/admin/login", json={"password": "wrong"}).status_code == 401
+    assert client.get("/jobs").status_code == 401
+
+
+async def test_signing_out_ends_the_session(client):
+    assert client.get("/jobs").status_code == 200
+    client.post("/admin/logout")
+    assert client.get("/jobs").status_code == 401
+
+
+def test_login_cookie_is_not_secure_over_plain_http(monkeypatch):
+    """Hardcoding secure=True meant the browser never sent the cookie back over
+    HTTP, so login succeeded and every following request 401'd — on localhost."""
+    monkeypatch.setenv("ADMIN_PASSWORD", "pw")
+    from app.main import app as fresh
+
+    with TestClient(fresh) as c:
+        response = c.post("/admin/login", json={"password": "pw"})
+        assert "Secure" not in response.headers.get("set-cookie", "")
+        assert "HttpOnly" in response.headers["set-cookie"]
+
+
+async def test_deleting_a_profile_removes_everything_under_it(client):
+    """Cascades to CVs, plans and transcripts. There is no undo."""
+    from app import db
+
+    candidate_id = await make_candidate()
+    client.post(f"/candidates/{candidate_id}/interviews")
+
+    assert client.delete("/jobs/job_1").status_code == 200
+    assert client.get("/jobs").json() == []
+    assert client.get(f"/candidates/{candidate_id}").status_code == 404
+
+    async with db.get_sessionmaker()() as session:
+        from sqlalchemy import select
+
+        rows = (await session.scalars(select(db.Interview))).all()
+        assert rows == []
+
+
+async def test_deleting_an_unknown_profile_is_404(client):
+    assert client.delete("/jobs/job_nope").status_code == 404
+
+
+#: Everything a signed-out visitor is allowed to reach. Anything not on this
+#: list must be behind the admin login — the database holds job descriptions,
+#: CVs and interview transcripts, all of it personal data on a public URL.
+PUBLIC_ROUTES = {
+    ("POST", "/interviews/join"),  # candidate's own credential is the password
+    ("GET", "/join"),  # the candidate join page itself
+    ("GET", "/health"),
+    ("POST", "/admin/login"),
+    ("POST", "/admin/logout"),
+    ("GET", "/admin/session"),  # answers "am I signed in?"; leaks nothing
+    ("GET", "/admin"),  # the login screen has to render before you can log in
+    ("GET", "/admin/admin.js"),
+    ("GET", "/"),
+}
+
+
+def test_every_route_is_guarded_unless_it_is_deliberately_public():
+    """A sweep, not a spot check.
+
+    Guards were added route by route, which is exactly the pattern where a new
+    endpoint gets merged without one. This fails the moment that happens.
+    """
+    from fastapi.routing import APIRoute
+
+    from app.auth import require_admin
+    from app.main import app
+
+    unguarded = []
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for method in route.methods - {"HEAD", "OPTIONS"}:
+            if (method, route.path) in PUBLIC_ROUTES:
+                continue
+            if not any(d.call is require_admin for d in route.dependant.dependencies):
+                unguarded.append(f"{method} {route.path}")
+
+    assert not unguarded, (
+        "These routes are reachable without signing in. Either guard them with "
+        f"Depends(require_admin) or add them to PUBLIC_ROUTES: {sorted(unguarded)}"
+    )
+
+
+async def test_transcripts_are_not_readable_signed_out(client):
+    """The most sensitive read in the system: a candidate's full transcript."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews")
+    interview_id = created.json()["interview_id"]
+
+    client.cookies.clear()
+    assert client.get(f"/interviews/{interview_id}").status_code == 401
+    assert client.get(f"/candidates/{candidate_id}/interviews").status_code == 401
+
+
+async def test_starting_an_interview_requires_signing_in(client):
+    """It mints a paid Daily room. An open endpoint is a billable one."""
+    candidate_id = await make_candidate()
+    client.cookies.clear()
+
+    assert client.post(f"/candidates/{candidate_id}/interviews").status_code == 401

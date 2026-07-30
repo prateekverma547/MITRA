@@ -13,13 +13,14 @@ from functools import lru_cache
 from pathlib import Path
 from datetime import UTC, datetime
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, Response as FastAPIResponse, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.auth import COOKIE_NAME, check_password, issue_token, require_admin
 from app.db import (
     BlueprintStatus,
     Candidate,
@@ -37,9 +38,10 @@ from blueprint.clarify import (
 )
 from blueprint.documents import DocumentError, extract_text
 from blueprint.generate import BlueprintGenerationError, BlueprintGenerator
+from blueprint.refine import BlueprintRefiner, RefinementError
 from bot.config import Settings
 from shared.branding import BOT_FULL_NAME, BOT_NAME, PRODUCT_TAGLINE
-from shared.contracts import EvaluationSpec
+from shared.contracts import EvaluationSpec, InterviewBlueprint
 
 
 @asynccontextmanager
@@ -66,6 +68,14 @@ def _new_id(prefix: str) -> str:
 # --------------------------------------------------------------------------
 # Request / response shapes
 # --------------------------------------------------------------------------
+
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+class RefineRequest(BaseModel):
+    message: str
 
 
 class JobCreated(BaseModel):
@@ -102,6 +112,7 @@ class BlueprintResponse(BaseModel):
     blueprint_status: str
     blueprint: dict | None = None
     error: str | None = None
+    refinements: list[dict] = []
 
 
 # --------------------------------------------------------------------------
@@ -109,7 +120,7 @@ class BlueprintResponse(BaseModel):
 # --------------------------------------------------------------------------
 
 
-@app.post("/jobs", response_model=JobCreated)
+@app.post("/jobs", response_model=JobCreated, dependencies=[Depends(require_admin)])
 async def create_job(background: BackgroundTasks, file: UploadFile = File(...)) -> JobCreated:
     """Upload a job description and get the first clarifying question."""
     try:
@@ -147,7 +158,7 @@ async def create_job(background: BackgroundTasks, file: UploadFile = File(...)) 
     )
 
 
-@app.post("/jobs/{job_id}/clarify", response_model=ClarifyResponse)
+@app.post("/jobs/{job_id}/clarify", response_model=ClarifyResponse, dependencies=[Depends(require_admin)])
 async def clarify(job_id: str, request: ClarifyRequest) -> ClarifyResponse:
     """Answer the current clarifying question and get the next one."""
     async with get_sessionmaker()() as session:
@@ -199,7 +210,7 @@ async def clarify(job_id: str, request: ClarifyRequest) -> ClarifyResponse:
         )
 
 
-@app.get("/jobs/{job_id}")
+@app.get("/jobs/{job_id}", dependencies=[Depends(require_admin)])
 async def get_job(job_id: str) -> dict:
     async with get_sessionmaker()() as session:
         job = await session.scalar(
@@ -223,7 +234,64 @@ async def get_job(job_id: str) -> dict:
 # --------------------------------------------------------------------------
 
 
-@app.get("/jobs")
+# --------------------------------------------------------------------------
+# Admin session
+# --------------------------------------------------------------------------
+
+
+@app.post("/admin/login")
+async def admin_login(
+    body: LoginRequest, request: Request, response: FastAPIResponse
+) -> dict:
+    if not check_password(body.password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+    response.set_cookie(
+        COOKIE_NAME,
+        issue_token(),
+        httponly=True,  # not readable from JavaScript
+        samesite="lax",
+        # Secure only when the connection actually is. Hardcoding True means the
+        # browser never sends the cookie back over plain HTTP, so login silently
+        # succeeds and every subsequent request 401s — which is exactly what it
+        # did on localhost.
+        secure=request.url.scheme == "https",
+        max_age=12 * 60 * 60,
+    )
+    return {"ok": True}
+
+
+@app.post("/admin/logout")
+async def admin_logout(response: FastAPIResponse) -> dict:
+    response.delete_cookie(COOKIE_NAME)
+    return {"ok": True}
+
+
+@app.get("/admin/session")
+async def admin_session(request: Request) -> dict:
+    """Lets the panel decide whether to show the login screen."""
+    from app.auth import token_is_valid
+
+    return {"signed_in": token_is_valid(request.cookies.get(COOKIE_NAME))}
+
+
+@app.delete("/jobs/{job_id}", dependencies=[Depends(require_admin)])
+async def delete_job(job_id: str) -> dict:
+    """Delete a profile and everything under it.
+
+    Cascades to its clarification chat, candidates, blueprints and interviews —
+    including transcripts. There is no undo, which is why the panel asks first.
+    """
+    async with get_sessionmaker()() as session:
+        job = await session.get(Job, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"No profile '{job_id}'.")
+        await session.delete(job)
+        await session.commit()
+    logger.info(f"[{job_id}] profile deleted")
+    return {"deleted": job_id}
+
+
+@app.get("/jobs", dependencies=[Depends(require_admin)])
 async def list_jobs() -> list[dict]:
     """Every role being hired for, newest first."""
     async with get_sessionmaker()() as session:
@@ -240,7 +308,7 @@ async def list_jobs() -> list[dict]:
         ]
 
 
-@app.get("/jobs/{job_id}/candidates")
+@app.get("/jobs/{job_id}/candidates", dependencies=[Depends(require_admin)])
 async def list_candidates(job_id: str) -> list[dict]:
     async with get_sessionmaker()() as session:
         rows = await session.scalars(
@@ -261,7 +329,7 @@ async def list_candidates(job_id: str) -> list[dict]:
         ]
 
 
-@app.post("/jobs/{job_id}/candidates", response_model=CandidateCreated)
+@app.post("/jobs/{job_id}/candidates", response_model=CandidateCreated, dependencies=[Depends(require_admin)])
 async def create_candidate(
     job_id: str,
     background: BackgroundTasks,
@@ -370,7 +438,7 @@ async def generate_blueprint_task(candidate_id: str) -> None:
     )
 
 
-@app.get("/candidates/{candidate_id}", response_model=BlueprintResponse)
+@app.get("/candidates/{candidate_id}", response_model=BlueprintResponse, dependencies=[Depends(require_admin)])
 async def get_candidate(candidate_id: str) -> BlueprintResponse:
     async with get_sessionmaker()() as session:
         candidate = await session.get(Candidate, candidate_id)
@@ -382,6 +450,7 @@ async def get_candidate(candidate_id: str) -> BlueprintResponse:
             blueprint_status=candidate.blueprint_status,
             blueprint=candidate.blueprint,
             error=candidate.blueprint_error,
+            refinements=candidate.blueprint_refinements or [],
         )
 
 
@@ -433,6 +502,52 @@ async def admin_page() -> HTMLResponse:
 @app.get("/admin/admin.js", include_in_schema=False)
 async def admin_script() -> Response:
     return Response(_render_page("admin/admin.js"), media_type="application/javascript")
+
+
+@app.post("/candidates/{candidate_id}/refine", dependencies=[Depends(require_admin)])
+async def refine_blueprint(candidate_id: str, request: RefineRequest) -> dict:
+    """Change the interview plan by describing what you want changed.
+
+    The revision is validated as strictly as generation is; one that would leave
+    the plan uninterviewable is refused and the existing blueprint stands.
+    """
+    async with get_sessionmaker()() as session:
+        candidate = await session.get(Candidate, candidate_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail=f"No candidate '{candidate_id}'.")
+        if candidate.blueprint_status != BlueprintStatus.READY or not candidate.blueprint:
+            raise HTTPException(
+                status_code=409, detail="There is no finished plan to refine yet."
+            )
+        current = InterviewBlueprint.model_validate(candidate.blueprint)
+        cv_text = candidate.cv_text
+        history = list(candidate.blueprint_refinements or [])
+
+    settings = _settings()
+    refiner = BlueprintRefiner(
+        api_key=settings.openai_api_key, model=settings.blueprint_model
+    )
+    try:
+        result = await refiner.refine(
+            blueprint=current, cv_text=cv_text, message=request.message, history=history
+        )
+    except RefinementError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    async with get_sessionmaker()() as session:
+        candidate = await session.get(Candidate, candidate_id)
+        candidate.blueprint = result.blueprint.model_dump(mode="json")
+        candidate.blueprint_refinements = history + [
+            {"role": "employer", "content": request.message},
+            {"role": "assistant", "content": result.reply},
+        ]
+        await session.commit()
+
+    logger.info(f"[{candidate_id}] blueprint refined")
+    return {
+        "reply": result.reply,
+        "blueprint": result.blueprint.model_dump(mode="json"),
+    }
 
 
 @app.get("/health")

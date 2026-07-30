@@ -21,11 +21,12 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.auth import require_admin
 from app.db import (
     BlueprintStatus,
     Candidate,
@@ -43,6 +44,13 @@ from bot.config import Settings
 from bot.services.daily import create_meeting_token, create_room
 
 router = APIRouter(tags=["interviews"])
+
+#: Guards every route on this module except the candidate's own join. Creating
+#: an interview mints a paid Daily room, and reading one returns the full
+#: transcript — neither can be open on a public URL. The candidate's route is
+#: deliberately outside this: they have no account, and their credential is the
+#: meeting ID and password.
+ADMIN_ONLY = [Depends(require_admin)]
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
@@ -110,7 +118,7 @@ def _settings() -> Settings:
     return Settings.load()
 
 
-@router.post("/candidates/{candidate_id}/interviews", response_model=InterviewCreated)
+@router.post("/candidates/{candidate_id}/interviews", response_model=InterviewCreated, dependencies=ADMIN_ONLY)
 async def create_interview(candidate_id: str) -> InterviewCreated:
     """Book an interview for a candidate whose blueprint is ready."""
     async with get_sessionmaker()() as session:
@@ -297,7 +305,7 @@ async def _start_bot(
     logger.info(f"[{interview_id}] bot spawned")
 
 
-@router.get("/interviews/{interview_id}", response_model=InterviewView)
+@router.get("/interviews/{interview_id}", response_model=InterviewView, dependencies=ADMIN_ONLY)
 async def get_interview(interview_id: str) -> InterviewView:
     async with get_sessionmaker()() as session:
         interview = await session.get(Interview, interview_id)
@@ -320,7 +328,7 @@ async def get_interview(interview_id: str) -> InterviewView:
         )
 
 
-@router.get("/candidates/{candidate_id}/interviews")
+@router.get("/candidates/{candidate_id}/interviews", dependencies=ADMIN_ONLY)
 async def list_interviews(candidate_id: str) -> list[dict]:
     async with get_sessionmaker()() as session:
         rows = await session.scalars(

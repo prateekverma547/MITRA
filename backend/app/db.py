@@ -177,6 +177,11 @@ class Candidate(Base):
     blueprint_generated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: The employer's conversation about improving the plan, as
+    #: [{"role": "employer"|"assistant", "content": ...}].
+    blueprint_refinements: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON, nullable=True
+    )
 
     job: Mapped[Job] = relationship(back_populates="candidates")
     interviews: Mapped[list["Interview"]] = relationship(
@@ -270,9 +275,41 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
 
 async def create_all() -> None:
-    """Create tables. Fine for a POC; real migrations arrive with real data."""
+    """Create tables, then add any column a live table is missing.
+
+    `create_all` only creates tables that do not exist — it never alters one that
+    does. Adding a field to a model above would therefore work on a fresh
+    developer database and fail on the deployed one, which is the worst possible
+    split. So after creating, we add whatever is missing.
+
+    This handles the only migration shape a POC needs: a new nullable column.
+    Renames, type changes and backfills are not attempted — they need real
+    migrations, which arrive with real data.
+    """
     async with get_engine().begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(_add_missing_columns)
+
+
+def _add_missing_columns(connection) -> None:
+    from sqlalchemy import inspect, text
+    from sqlalchemy.schema import CreateColumn
+
+    inspector = inspect(connection)
+    for table in Base.metadata.sorted_tables:
+        existing = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in existing:
+                continue
+            if not column.nullable:
+                # Existing rows would have nothing to put here. Refusing loudly
+                # beats writing a wrong default into real interview records.
+                raise RuntimeError(
+                    f"{table.name}.{column.name} is new and NOT NULL; "
+                    "it needs a real migration, not an automatic ALTER."
+                )
+            ddl = CreateColumn(column).compile(connection.engine)
+            connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {ddl}"))
 
 
 async def reset_engine() -> None:
