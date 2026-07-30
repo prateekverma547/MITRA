@@ -1,0 +1,27 @@
+# The Docker build context is the repository root, so this is the file Docker
+# actually reads. `backend/.dockerignore` is NOT consulted — Docker only honours
+# the one at the context root.
+
+# 537MB of virtualenv that the image rebuilds from the lockfile anyway.
+backend/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+
+# Local run artifacts. The database is the record of truth in deployment.
+backend/sessions/
+**/*.db
+**/*.db-journal
+
+# Real CVs and JDs contain personal data and must never enter an image.
+cv/
+jds/
+uploads/
+
+.env
+.env.*
+!.env.example
+
+.git
+.github

@@ -7,6 +7,10 @@
 # A Dockerfile rather than Railway's auto-detection, because the build needs
 # uv and a pinned Python, and because `ffmpeg`/`libsndfile` are system packages
 # the audio stack needs and auto-detection will not install.
+#
+# NOTE ON PATHS: the build context is the REPOSITORY ROOT, not `backend/`, so
+# every COPY below is written relative to the root. Writing them relative to
+# this file's directory fails immediately with `"/uv.lock": not found`.
 
 FROM python:3.12-slim AS base
 
@@ -31,10 +35,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Dependencies first, so a code change does not re-resolve the whole tree.
-COPY pyproject.toml uv.lock ./
+COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY . .
+COPY backend/ .
 RUN uv sync --frozen --no-dev
 
 # Long-lived bot subprocesses must not be killed by an impatient shutdown: a
