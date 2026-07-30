@@ -94,7 +94,7 @@ def assess(
     prompted = sum(1 for e in silence_events if e.get("stage") in PROMPTING_STAGES)
     dead_air = sum(float(e.get("dead_air_seconds") or 0.0) for e in silence_events)
 
-    health = ConversationHealth(
+    return ConversationHealth(
         candidate_turns=candidate_turns,
         fragmentary_turns=fragmentary,
         repair_requests=repair_requests,
@@ -103,6 +103,3 @@ def assess(
         dead_air_seconds=round(dead_air, 1),
         disconnects=int(metrics.get("disconnects") or 0),
     )
-    # Computed last so `was_clean` and `degraded` cannot disagree.
-    health.was_clean = not health.degraded
-    return health

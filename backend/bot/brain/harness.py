@@ -149,6 +149,35 @@ def refusing_candidate() -> ScriptedCandidate:
     )
 
 
+def unheard_candidate() -> ScriptedCandidate:
+    """Someone answering well through a connection that is dropping their words.
+
+    The point of the script is that this person is **not** weak. Read the pieces
+    together and there is a real answer underneath: a named product, a measured
+    outcome, an owned decision. What reaches the transcript is wreckage.
+
+    This is the case the report has to get right. Scored on the text alone the
+    candidate looks incoherent, and that judgement would go into a hiring record
+    about a real person whose only mistake was a cheap headset.
+    """
+    return ScriptedCandidate(
+        replies=[
+            "Sorry, could you say that again?",
+            "So the",
+            "we shipped a",
+            "Sorry, you cut out there.",
+            "retrieval assistant for support agents",
+            "and it cut",
+            "Can you repeat the question?",
+            "handling time by about a third",
+            "Uh",
+            "the hard part was",
+            "Sorry, I did not catch that.",
+            "grounding every answer in ticket history",
+        ]
+    )
+
+
 def off_topic_candidate() -> ScriptedCandidate:
     """Drifts off the role, to test the redirect."""
     return ScriptedCandidate(

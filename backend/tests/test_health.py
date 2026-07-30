@@ -46,7 +46,6 @@ def test_a_clean_interview_is_not_flagged():
 
     assert health.candidate_turns == 2
     assert health.degraded is False
-    assert health.was_clean is True
     assert health.as_sentence() is None
 
 
@@ -257,3 +256,18 @@ def test_fragments_alone_do_not_flag_a_recording():
     assert assess(choppy).degraded is False
     # One real signal alongside them, and it does count.
     assert assess(choppy, repair_requests=1).degraded is True
+
+
+# -- it has to survive the trip to the browser -------------------------------
+
+
+def test_degraded_survives_serialisation():
+    """It is a computed field for this reason. As a plain property it vanished
+    on the way out, so the panel's banner checked an undefined value and never
+    fired, while every unit test here passed."""
+    payload = ConversationHealth(candidate_turns=10, disconnects=2).model_dump(mode="json")
+
+    assert payload["degraded"] is True
+    assert ConversationHealth(candidate_turns=10).model_dump(mode="json")["degraded"] is False
+
+

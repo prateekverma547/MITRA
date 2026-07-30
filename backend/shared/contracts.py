@@ -15,7 +15,7 @@ reverse.
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 SCHEMA_VERSION = 1
 
@@ -395,10 +395,12 @@ class ConversationHealth(BaseModel):
     dead_air_seconds: float = 0.0
     disconnects: int = 0
 
-    #: Set when the interview ran normally. Kept explicit so a reader is told
-    #: "the recording was fine" rather than left to infer it from absent fields.
-    was_clean: bool = True
-
+    #: A computed field, not a plain property, because the panel reads this over
+    #: JSON. As a property it was invisible to every consumer outside Python:
+    #: the report rendered, the banner checked `degraded`, got undefined, and
+    #: silently never fired. The unit tests all passed, because they held the
+    #: object rather than its serialised form.
+    @computed_field
     @property
     def degraded(self) -> bool:
         """True when the channel is a plausible explanation for thin answers.
