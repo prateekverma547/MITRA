@@ -1112,3 +1112,66 @@ async def test_artwork_is_still_cached(client):
 
     cache = client.get(LOGO_URL).headers.get("cache-control", "")
     assert "max-age" in cache and "no-cache" not in cache
+
+
+# -- the candidate's clock ---------------------------------------------------
+
+
+async def test_the_browsers_timezone_reaches_the_bot(client):
+    """The greeting is only right if this survives the whole hop: browser to
+    join endpoint to spawned process."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    client.post(
+        "/interviews/join",
+        json={
+            "meeting_id": created["meeting_id"],
+            "password": created["password"],
+            "consent": True,
+            "timezone": "Asia/Kolkata",
+        },
+    )
+
+    assert client.spawned[0]["timezone"] == "Asia/Kolkata"
+
+
+async def test_the_timezone_is_kept_on_the_record(client):
+    """A transcript timestamped in UTC cannot tell you what time it was for the
+    person being interviewed."""
+    from app import db
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    client.post(
+        "/interviews/join",
+        json={
+            "meeting_id": created["meeting_id"],
+            "password": created["password"],
+            "consent": True,
+            "timezone": "Asia/Kolkata",
+        },
+    )
+
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, created["interview_id"])
+        assert interview.candidate_timezone == "Asia/Kolkata"
+
+
+async def test_a_join_without_a_timezone_still_works(client):
+    """Older browsers, privacy tooling, anything. An interview must not hinge on
+    a greeting."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    response = client.post(
+        "/interviews/join",
+        json={
+            "meeting_id": created["meeting_id"],
+            "password": created["password"],
+            "consent": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert client.spawned[0]["timezone"] is None

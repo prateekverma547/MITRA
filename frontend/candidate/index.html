@@ -227,6 +227,14 @@
     submit.textContent = "Connecting…";
 
     let session;
+    function browserTimezone() {
+      try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+      } catch {
+        return null;  // never block a join over a greeting
+      }
+    }
+
     try {
       const response = await fetch("/interviews/join", {
         method: "POST",
@@ -235,6 +243,10 @@
           meeting_id: $("meeting").value,
           password: $("password").value,
           consent: consent.checked,
+          // The browser is the only thing that knows what time it is where the
+          // candidate is sitting. The server runs on UTC, so without this the
+          // bot greets them by a clock nobody in the room is looking at.
+          timezone: browserTimezone(),
         }),
       });
       const body = await response.json();

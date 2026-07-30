@@ -83,6 +83,11 @@ class JoinRequest(BaseModel):
     #: goes to the employer. No bot is ever started without it, so there is no
     #: path where someone is recorded before agreeing.
     consent: bool = False
+    #: IANA timezone from the candidate's browser, e.g. "Asia/Kolkata". Used so
+    #: the opening greeting matches the clock they are looking at rather than
+    #: the server's, which is UTC and belongs to nobody. Untrusted and optional:
+    #: it is validated where it is used, and an interview never fails over it.
+    timezone: str | None = None
 
 
 class JoinResponse(BaseModel):
@@ -266,7 +271,9 @@ async def join_interview(request: JoinRequest) -> JoinResponse:
         # given. First acceptance wins — a reconnect is not a fresh consent.
         if interview.consent_accepted_at is None:
             interview.consent_accepted_at = datetime.now(UTC)
-            await session.commit()
+        if request.timezone and not interview.candidate_timezone:
+            interview.candidate_timezone = request.timezone[:64]
+        await session.commit()
         interview_id = interview.id
         room_url = interview.daily_room_url
         room_name = interview.daily_room_name
@@ -286,7 +293,8 @@ async def join_interview(request: JoinRequest) -> JoinResponse:
     # A candidate refreshing the page must not start a second bot in the room.
     if not already_running:
         await _start_bot(interview_id=interview_id, candidate_id=interview.candidate_id,
-                        room_url=room_url, room_name=room_name, settings=settings)
+                        room_url=room_url, room_name=room_name, settings=settings,
+                        timezone=request.timezone)
 
     return JoinResponse(
         interview_id=interview_id,
@@ -298,7 +306,8 @@ async def join_interview(request: JoinRequest) -> JoinResponse:
 
 
 async def _start_bot(
-    *, interview_id: str, candidate_id: str, room_url: str, room_name: str, settings: Settings
+    *, interview_id: str, candidate_id: str, room_url: str, room_name: str,
+    settings: Settings, timezone: str | None = None,
 ) -> None:
     """Spawn one bot process for one interview.
 
@@ -330,6 +339,7 @@ async def _start_bot(
             "--session-id", interview_id,
             "--interview-id", interview_id,
             "--blueprint-id", candidate_id,
+            *(["--timezone", timezone] if timezone else []),
             cwd=str(BACKEND_DIR),
             env={**os.environ},
         )

@@ -47,24 +47,10 @@ from bot.turn_taking import build_turn_strategies, build_vad_analyzer
 
 # The name the candidate sees in the call, kept in step with the spoken
 # introduction — see shared/branding.py.
+from bot.greeting import time_of_day  # noqa: E402
 from shared.branding import BOT_NAME  # noqa: E402
 
 
-def current_time_of_day() -> str:
-    """Server-local time of day, so the bot can open with a real greeting.
-
-    Server local, not the candidate's — good enough for the POC. From Milestone
-    5 the join page can send the browser's timezone, which is the only way to
-    get this right for a remote candidate.
-    """
-    from datetime import datetime
-
-    hour = datetime.now().hour
-    if hour < 12:
-        return "morning"
-    if hour < 17:
-        return "afternoon"
-    return "evening"
 
 # Cancel the session after this long with neither party speaking. A candidate
 # gathering their thoughts must never trip this, so it sits far above any
@@ -80,6 +66,7 @@ async def run_bot(
     blueprint_id: str | None = None,
     interview_id: str | None = None,
     use_brain: bool = True,
+    timezone: str | None = None,
 ) -> None:
     """Run one interview session to completion.
 
@@ -113,7 +100,7 @@ async def run_bot(
     # The brain owns the interview: which section we are in, what the model sees,
     # when to move on. The system instruction below is only a starting value —
     # BrainDirector retargets it at the current section on every turn.
-    brain = InterviewBrain(blueprint, time_of_day=current_time_of_day())
+    brain = InterviewBrain(blueprint, time_of_day=time_of_day(timezone))
 
     llm = build_llm(
         api_key=settings.openai_api_key,
@@ -312,6 +299,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--timezone",
+        default=None,
+        help=(
+            "IANA timezone the candidate is in, e.g. Asia/Kolkata. Sent by their "
+            "browser at join time so the opening greeting matches their clock "
+            "rather than the server's."
+        ),
+    )
+    parser.add_argument(
         "--no-brain",
         action="store_true",
         help=(
@@ -339,6 +335,7 @@ def main() -> None:
                 blueprint_id=args.blueprint_id,
                 interview_id=args.interview_id,
                 use_brain=not args.no_brain,
+                timezone=args.timezone,
             )
         )
     except (MissingConfig, VoiceUnavailable, BlueprintUnavailable, FileNotFoundError) as exc:

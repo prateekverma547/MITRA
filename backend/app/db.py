@@ -253,6 +253,11 @@ class Interview(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    #: IANA timezone reported by the candidate's browser when they joined.
+    #: Kept on the record because it is the only trace of what time it was
+    #: for them, which a transcript timestamped in UTC cannot tell you.
+    candidate_timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     #: The auditable ground truth (CLAUDE.md). Persisted in full, as the
     #: `Transcript` contract.
     transcript: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
