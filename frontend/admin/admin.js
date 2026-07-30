@@ -644,6 +644,14 @@ async function viewInterview(interviewId) {
   const retry = document.getElementById("rescore");
   if (retry) {
     retry.onclick = async () => {
+      // Only warn when there is a report to lose. Scores can shift between
+      // runs on the same transcript, and someone may already have acted on the
+      // one on screen.
+      if (iv.feedback_report && !confirm(
+        "Rebuild this report from the transcript?\n\n" +
+        "It is scored again from the same conversation, so wording and scores " +
+        "may come out slightly differently. The current report is replaced."
+      )) return;
       retry.disabled = true;
       await api(`/interviews/${interviewId}/feedback`, { method: "POST" });
       render();
@@ -694,6 +702,7 @@ function reportCard(iv) {
   const average = scored.length
     ? scored.reduce((a, s) => a + s.score, 0) / scored.length
     : null;
+  const rebuilding = ["pending", "generating"].includes(iv.feedback_status);
 
   return `
     <div class="card">
@@ -714,6 +723,16 @@ function reportCard(iv) {
       <p class="small muted" style="margin:14px 0 0">
         Evidence for a person to weigh — not a hiring decision. Every score below
         is backed by quotes you can check against the transcript.</p>
+      <div class="spread" style="margin-top:16px;align-items:center">
+        <span class="small muted">
+          ${rebuilding
+            ? "Recomputing from the transcript…"
+            : iv.feedback_generated_at
+              ? `Generated ${when(iv.feedback_generated_at)}`
+              : "Generated from the saved transcript"}
+        </span>
+        <button id="rescore" ${rebuilding ? "disabled" : ""}>Regenerate</button>
+      </div>
     </div>
 
     ${r.competency_scores.map(competencyCard).join("")}

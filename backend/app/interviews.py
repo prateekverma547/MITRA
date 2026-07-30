@@ -116,6 +116,7 @@ class InterviewView(BaseModel):
     feedback_report: dict | None = None
     feedback_status: str = "pending"
     feedback_error: str | None = None
+    feedback_generated_at: datetime | None = None
 
 
 def _settings() -> Settings:
@@ -370,17 +371,24 @@ async def get_interview(interview_id: str) -> InterviewView:
             feedback_report=interview.feedback_report,
             feedback_status=interview.feedback_status,
             feedback_error=interview.feedback_error,
+            feedback_generated_at=interview.feedback_generated_at,
         )
 
 
 @router.post("/interviews/{interview_id}/feedback", dependencies=ADMIN_ONLY)
 async def regenerate_feedback(interview_id: str, background: BackgroundTasks) -> dict:
-    """Retry scoring for a finished interview.
+    """Recompute the report from the stored transcript.
 
-    Scoring normally happens by itself the moment the transcript is saved. This
-    exists for the case where that did not survive — the bot process was killed
-    by a redeploy, or the model call failed. It is a retry, not the trigger: an
-    interview nobody opens still gets scored.
+    Serves two cases: retrying one that failed, and rebuilding one that
+    succeeded — after the prompt improves, or when the employer simply wants
+    another read of the same conversation.
+
+    It is never the trigger. Scoring happens by itself the moment the transcript
+    is saved, so an interview nobody opens still gets a report.
+
+    Always scores the transcript that is already stored. This cannot reach a
+    live interview or a partial conversation: the guard below only lets a
+    completed one through, and the transcript is written once and not amended.
     """
     async with get_sessionmaker()() as session:
         interview = await session.get(Interview, interview_id)

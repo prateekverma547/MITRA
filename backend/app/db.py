@@ -270,6 +270,12 @@ class Interview(Base):
         String(32), default=FeedbackStatus.PENDING, server_default=FeedbackStatus.PENDING
     )
     feedback_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: When the stored report was produced. Shown next to the regenerate
+    #: button: recomputing without knowing how old the current one is, or
+    #: whether it predates something you have since read, is a blind click.
+    feedback_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     #: Latency, turn-taking, silence and brain-transition telemetry.
     #:

@@ -967,3 +967,68 @@ async def test_scoring_is_not_started_twice_concurrently(client):
 
     assert response.status_code == 409
     assert "already running" in response.json()["detail"]
+
+
+async def test_a_successful_report_can_be_regenerated(client, monkeypatch):
+    """Not only a retry for failures — rebuilding a good report from the same
+    transcript is a normal thing to want after the prompt improves."""
+    from app import db
+
+    scored = []
+
+    async def fake_generate(interview_id):
+        scored.append(interview_id)
+
+    monkeypatch.setattr("feedback.run.generate_feedback", fake_generate)
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, created["interview_id"])
+        interview.status = db.InterviewStatus.COMPLETED
+        interview.feedback_status = db.FeedbackStatus.READY
+        interview.feedback_report = {"summary": "the old one"}
+        await session.commit()
+
+    response = client.post(f"/interviews/{created['interview_id']}/feedback")
+
+    assert response.status_code == 200
+    assert scored == [created["interview_id"]]
+
+
+async def test_regenerating_scores_the_stored_transcript_not_a_new_one(client, monkeypatch):
+    """The transcript is written once when the interview ends. Regenerating
+    re-reads it; it cannot reach a live or partial conversation."""
+    from app import db
+    from shared.contracts import Speaker, Transcript, TranscriptTurn
+
+    seen = {}
+
+    async def fake_generate(interview_id):
+        async with db.get_sessionmaker()() as session:
+            row = await session.get(db.Interview, interview_id)
+            seen["turns"] = len(row.transcript["turns"])
+            seen["status"] = row.status
+
+    monkeypatch.setattr("feedback.run.generate_feedback", fake_generate)
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    stored = Transcript(
+        interview_id=created["interview_id"],
+        turns=[
+            TranscriptTurn(index=0, speaker=Speaker.INTERVIEWER, text="Hello.", at_seconds=0.0),
+            TranscriptTurn(index=1, speaker=Speaker.CANDIDATE, text="Hi.", at_seconds=4.0),
+        ],
+        duration_seconds=10.0,
+    )
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, created["interview_id"])
+        interview.status = db.InterviewStatus.COMPLETED
+        interview.transcript = stored.model_dump(mode="json")
+        interview.feedback_status = db.FeedbackStatus.READY
+        await session.commit()
+
+    client.post(f"/interviews/{created['interview_id']}/feedback")
+
+    assert seen == {"turns": 2, "status": db.InterviewStatus.COMPLETED}

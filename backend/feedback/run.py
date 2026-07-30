@@ -11,6 +11,8 @@ Called from two places, both after the fact:
   - `POST /interviews/{id}/feedback`, to retry one that failed
 """
 
+from datetime import UTC, datetime
+
 from loguru import logger
 
 from shared.contracts import EvaluationSpec, FeedbackReport, Transcript
@@ -106,6 +108,7 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
         interview.feedback_report = report.model_dump(mode="json")
         interview.feedback_status = FeedbackStatus.READY
         interview.feedback_error = None
+        interview.feedback_generated_at = datetime.now(UTC)
         await session.commit()
 
     scored = sum(1 for s in report.competency_scores if s.score is not None)
