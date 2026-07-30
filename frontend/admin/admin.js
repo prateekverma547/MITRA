@@ -175,7 +175,7 @@ async function viewProfiles() {
 
 window.removeProfile = async (jobId) => {
   if (!confirm(
-    "Delete this profile and everything under it — CVs, interview plans and " +
+    "Delete this profile and everything under it: CVs, interview plans and " +
     "transcripts?\n\nThis cannot be undone."
   )) return;
   await api(`/jobs/${jobId}`, { method: "DELETE" });
@@ -325,7 +325,7 @@ function announcePropagation(p) {
   if (p.skipped_refined.length) {
     lines.push(
       `${p.skipped_refined.length} plan(s) left alone because you had edited them ` +
-      `by hand — they are marked out of date, and you can rebuild them yourself.`
+      `by hand. They are marked out of date, and you can rebuild them yourself.`
     );
   }
   if (p.skipped_interviewed.length) {
@@ -479,7 +479,7 @@ async function viewCandidate(candidateId) {
     ${candidate.plan_is_stale ? `<div class="card note">
       <strong>This plan is out of date.</strong>
       It was built before you changed what this profile tests. It was kept
-      because you had edited it by hand — rebuilding it would have discarded
+      because you had edited it by hand. Rebuilding it would have discarded
       your edits. Ask for the change again below, or delete and re-upload the CV
       to start from the current spec.
     </div>` : ""}
@@ -548,7 +548,7 @@ async function viewCandidate(candidateId) {
 
     <div class="card">
       <h3 style="margin-top:0">Improve the plan</h3>
-      <p class="sub" style="margin-top:6px">Tell Mitra what to change — "spend less
+      <p class="sub" style="margin-top:6px">Tell Mitra what to change: "spend less
         time on mentoring", "push harder on the pricing claim", "that question is unfair".</p>
       <div class="chat">${chat(candidate.refinements)}</div>
       <textarea id="refine" placeholder="What should change?"></textarea>
@@ -637,7 +637,7 @@ async function viewInterview(interviewId) {
 
     ${done ? reportCard(iv) : ""}
     ${done ? brainCard(iv, metrics, latency) : `<div class="card muted">
-      Waiting for the candidate to join. Mitra starts when they do — this page
+      Waiting for the candidate to join. Mitra starts when they do, and this page
       refreshes on its own.</div>`}
   `;
 
@@ -688,7 +688,7 @@ function reportCard(iv) {
         <button id="rescore">Try again</button>
       </div>
       <p class="small muted" style="margin-bottom:0">The transcript is saved and
-        unaffected — only the report needs rebuilding.</p>
+        unaffected. Only the report needs rebuilding.</p>
     </div>`;
   }
   if (!iv.feedback_report) {
@@ -715,13 +715,14 @@ function reportCard(iv) {
           </div>
         </div>
         <div style="text-align:right">
-          <div class="score-big">${average === null ? "—" : average.toFixed(1)}<span
-            class="score-max">/5</span></div>
+          <div class="score-big">${average === null
+            ? `n/a`
+            : `${average.toFixed(1)}<span class="score-max">/5</span>`}</div>
           <div class="small muted">${esc(SIGNAL_TEXT[r.recommendation] || r.recommendation)}</div>
         </div>
       </div>
       <p class="small muted" style="margin:14px 0 0">
-        Evidence for a person to weigh — not a hiring decision. Every score below
+        Evidence for a person to weigh, not a hiring decision. Every score below
         is backed by quotes you can check against the transcript.</p>
       <div class="spread" style="margin-top:16px;align-items:center">
         <span class="small muted">
@@ -799,7 +800,7 @@ function competencyCard(s) {
 function quoteBlock(q) {
   return `<blockquote class="quote">
     “${esc(q.text)}”
-    <span class="small muted">— ${Math.floor(q.at_seconds / 60)}:${
+    <span class="small muted">${Math.floor(q.at_seconds / 60)}:${
       String(Math.round(q.at_seconds % 60)).padStart(2, "0")}, turn ${q.turn_index}</span>
   </blockquote>`;
 }
@@ -816,9 +817,11 @@ function brainCard(iv, metrics, latency) {
         <div>Length</div><div>${((iv.transcript?.duration_seconds || 0) / 60).toFixed(1)} min</div>
         <div>Turns</div><div>${turns.length}</div>
         <div>Median response</div>
-        <div>${latency.ttfa_median_ms ? (latency.ttfa_median_ms / 1000).toFixed(2) + "s" : "—"}</div>
-        <div>Longest pause tolerated</div><div>${latency.longest_tolerated_pause_s ?? "—"}s</div>
-        <div>Model</div><div class="mono small">${esc(metrics.llm_model || "—")}</div>
+        <div>${latency.ttfa_median_ms ? (latency.ttfa_median_ms / 1000).toFixed(2) + "s" : "n/a"}</div>
+        <div>Longest pause tolerated</div>
+        <div>${latency.longest_tolerated_pause_s == null
+          ? "n/a" : `${latency.longest_tolerated_pause_s}s`}</div>
+        <div>Model</div><div class="mono small">${esc(metrics.llm_model || "n/a")}</div>
       </div>
     </div>
 

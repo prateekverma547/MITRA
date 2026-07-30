@@ -258,7 +258,7 @@ async def join_interview(request: JoinRequest) -> JoinResponse:
                     status_code=503,
                     detail=(
                         "All interview slots are busy right now. Your link is "
-                        "still valid — please try again in a few minutes."
+                        "still valid. Please try again in a few minutes."
                     ),
                 ) from exc
 

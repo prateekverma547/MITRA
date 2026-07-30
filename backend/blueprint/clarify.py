@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from openai import AsyncOpenAI
 
+from shared.branding import PROSE_STYLE
 from shared.contracts import (
     DEFAULT_DURATION_MINUTES,
     MAX_DURATION_MINUTES,
@@ -124,6 +125,8 @@ Spec rules:
 - Red flags must be observable in an interview. "Not a team player" is not
   observable; "describes every past conflict as someone else's fault" is.
 """
+
+SYSTEM = f"{SYSTEM}\n\n{PROSE_STYLE}\n"
 
 
 @dataclass

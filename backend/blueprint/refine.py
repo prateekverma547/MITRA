@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from openai import AsyncOpenAI
 
+from shared.branding import PROSE_STYLE
 from shared.contracts import EvaluationSpec, InterviewBlueprint
 
 from blueprint.generate import BlueprintGenerationError, build_blueprint
@@ -68,6 +69,8 @@ Rules that still apply, whatever they ask:
 - `emphasis` runs 0.5 to 2.0. Time is computed from it, so do not state minutes.
 - Never invent facts about the candidate that are not in the CV.
 """
+
+SYSTEM = f"{SYSTEM}\n\n{PROSE_STYLE}\n"
 
 
 class RefinementError(RuntimeError):

@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title=f"{BOT_NAME} — {BOT_FULL_NAME}", lifespan=lifespan)
+app = FastAPI(title=f"{BOT_NAME}: {BOT_FULL_NAME}", lifespan=lifespan)
 
 from app.interviews import router as interviews_router  # noqa: E402
 
@@ -543,7 +543,7 @@ async def create_candidate(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Finish the clarification chat before uploading candidates — "
+                    "Finish the clarification chat before uploading candidates. "
                     "there is no evaluation spec to build a blueprint against."
                 ),
             )

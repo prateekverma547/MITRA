@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from loguru import logger
 from openai import AsyncOpenAI
 
+from shared.branding import PROSE_STYLE
 from shared.contracts import (
     CompetencyScore,
     Contradiction,
@@ -100,7 +101,7 @@ Return JSON exactly in this shape:
   "red_flags_observed": [
     {"description": "...", "evidence": [{"turn_index": 8, "text": "..."}]}
   ],
-  "coverage_gaps": ["competency name — why the interview could not tell"],
+  "coverage_gaps": ["competency name: why the interview could not tell"],
   "summary": "A short written assessment for the reader. What the transcript
               supports, what it does not, and what a human should probe next.
               Plain language, no verdict.",
@@ -111,6 +112,8 @@ Return JSON exactly in this shape:
 `recommendation` describes the STRENGTH OF THE EVIDENCE GATHERED, not whether to
 hire. An excellent candidate given a short interview is "limited_evidence".
 """
+
+SYSTEM = f"{SYSTEM}\n\n{PROSE_STYLE}\n"
 
 
 class FeedbackError(RuntimeError):

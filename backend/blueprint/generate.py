@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from openai import AsyncOpenAI
 
+from shared.branding import PROSE_STYLE
 from shared.contracts import (
     ClaimToVerify,
     CompetencyPlan,
@@ -112,6 +113,8 @@ Rules:
   assert it.
 - Do not include time budgets. Those are computed separately.
 """
+
+SYSTEM = f"{SYSTEM}\n\n{PROSE_STYLE}\n"
 
 
 class BlueprintGenerationError(RuntimeError):

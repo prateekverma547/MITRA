@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{{BOT_NAME}} — Interview</title>
+  <title>{{BOT_NAME}} Interview</title>
   <script crossorigin src="https://unpkg.com/@daily-co/daily-js"></script>
   <style>
     :root {
@@ -123,8 +123,8 @@
       <div class="notice">
         <h2>Before you begin</h2>
         <ul>
-          <li>This interview is conducted by <strong>{{BOT_NAME}}</strong>, an AI interviewer ({{BOT_FULL_NAME}}) — not a person.</li>
-          <li>It is <strong>voice only</strong> — your camera is not used.</li>
+          <li>This interview is conducted by <strong>{{BOT_NAME}}</strong>, an AI interviewer ({{BOT_FULL_NAME}}), not a person.</li>
+          <li>It is <strong>voice only</strong>. Your camera is not used.</li>
           <li>The conversation is <strong>recorded and transcribed</strong>.</li>
           <li>The recording and transcript are shared with the employer to help
               them evaluate your application.</li>
@@ -275,11 +275,11 @@
 
     // The bot leaving is how a completed interview ends.
     call.on("participant-left", () => {
-      finish("Your interview has ended. Thank you for your time — you can close this tab.");
+      finish("Your interview has ended. Thank you for your time. You can close this tab.");
     });
 
     call.on("left-meeting", () => {
-      finish("Your interview has ended. Thank you for your time — you can close this tab.");
+      finish("Your interview has ended. Thank you for your time. You can close this tab.");
     });
 
     call.on("error", (event) => {
