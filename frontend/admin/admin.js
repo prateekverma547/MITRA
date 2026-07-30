@@ -1,4 +1,4 @@
-// Employer panel: JD -> clarification -> CV -> blueprint -> interview -> observe.
+// Admin panel: JD -> clarification -> CV -> blueprint -> interview -> observe.
 //
 // Deliberately plain JavaScript with no build step. CLAUDE.md specifies React +
 // Vite for the frontend, and that is still the right call once this stabilises;

@@ -11,6 +11,11 @@
 # NOTE ON PATHS: the build context is the REPOSITORY ROOT, not `backend/`, so
 # every COPY below is written relative to the root. Writing them relative to
 # this file's directory fails immediately with `"/uv.lock": not found`.
+#
+# The image mirrors the repository layout — /app/backend and /app/frontend —
+# rather than flattening backend/ into /app. The app resolves the frontend
+# directory relative to its own file, so a flattened image would find the UIs
+# locally and 500 in production.
 
 FROM python:3.12-slim AS base
 
@@ -32,13 +37,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-WORKDIR /app
+WORKDIR /app/backend
 
 # Dependencies first, so a code change does not re-resolve the whole tree.
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY backend/ .
+COPY backend/ ./
+# The candidate and admin UIs, served by FastAPI.
+COPY frontend/ /app/frontend/
 RUN uv sync --frozen --no-dev
 
 # Long-lived bot subprocesses must not be killed by an impatient shutdown: a

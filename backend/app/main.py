@@ -385,7 +385,10 @@ async def get_candidate(candidate_id: str) -> BlueprintResponse:
         )
 
 
-STATIC_DIR = Path(__file__).parent / "static"
+#: The UIs live at the repository root, outside the Python package: they are
+#: their own thing and will become React apps (CLAUDE.md). The Docker image
+#: mirrors this layout so the path resolves identically in both places.
+FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
 
 @lru_cache(maxsize=2)
@@ -396,7 +399,7 @@ def _render_page(name: str) -> str:
     introduction, the call, and this page, and all three read from
     shared/branding.py so they cannot drift apart.
     """
-    html = (STATIC_DIR / name).read_text()
+    html = (FRONTEND_DIR / name).read_text()
     for token, value in (
         ("{{BOT_NAME}}", BOT_NAME),
         ("{{BOT_FULL_NAME}}", BOT_FULL_NAME),
@@ -413,23 +416,23 @@ async def join_page() -> HTMLResponse:
     Serving this from the backend keeps the candidate on our own domain: they
     see a meeting ID prompt and a consent notice, never a Daily URL.
     """
-    return HTMLResponse(_render_page("join.html"))
+    return HTMLResponse(_render_page("candidate/index.html"))
 
 
-@app.get("/panel", include_in_schema=False)
-async def panel_page() -> HTMLResponse:
-    """The employer panel: JD -> clarification -> CV -> blueprint -> interview.
+@app.get("/admin", include_in_schema=False)
+async def admin_page() -> HTMLResponse:
+    """The admin panel: JD -> clarification -> CV -> blueprint -> interview.
 
     Unauthenticated for the POC. Multi-tenant auth is explicitly out of scope
     (CLAUDE.md), but this must not be exposed to real candidates or real
     employers as-is: it lists every job and every CV in the database.
     """
-    return HTMLResponse(_render_page("panel.html"))
+    return HTMLResponse(_render_page("admin/index.html"))
 
 
-@app.get("/static/panel.js", include_in_schema=False)
-async def panel_script() -> Response:
-    return Response(_render_page("panel.js"), media_type="application/javascript")
+@app.get("/admin/admin.js", include_in_schema=False)
+async def admin_script() -> Response:
+    return Response(_render_page("admin/admin.js"), media_type="application/javascript")
 
 
 @app.get("/health")

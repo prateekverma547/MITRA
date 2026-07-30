@@ -48,7 +48,11 @@ interviewer/
 │   ├── bot/            # Pipecat pipeline + interview brain
 │   ├── shared/         # Pydantic contracts (see Data contracts)
 │   └── requirements.txt
-├── frontend/           # React: employer panel + candidate join/interview pages
+├── frontend/
+│   ├── candidate/      # join page, consent gate, in-call interview UI
+│   └── admin/          # admin panel: JD, clarification, CV, blueprint, interviews
+│                       # Plain HTML/JS for the POC; React + Vite when it settles.
+│                       # Served by FastAPI; the Docker image mirrors this layout.
 ├── CLAUDE.md
 └── railway config files
 ```

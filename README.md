@@ -55,6 +55,10 @@ computed correctly.
 ## Layout
 
 ```
+frontend/
+├── candidate/          # join + consent + in-call UI
+└── admin/              # admin panel
+
 backend/
 ├── bot/
 │   ├── turn_taking.py    # WHEN we decide the candidate finished speaking

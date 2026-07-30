@@ -433,6 +433,18 @@ async def test_consent_is_timestamped_against_the_interview(client):
         assert interview.consent_accepted_at is not None
 
 
+async def test_frontend_lives_outside_the_python_package(client):
+    """Both UIs are their own thing at the repo root, not files inside the
+    backend package — and the Docker image mirrors that layout, so a path that
+    works locally works in production too."""
+    from app.main import FRONTEND_DIR
+
+    assert FRONTEND_DIR.name == "frontend"
+    assert (FRONTEND_DIR / "candidate" / "index.html").exists()
+    assert (FRONTEND_DIR / "admin" / "index.html").exists()
+    assert (FRONTEND_DIR / "admin" / "admin.js").exists()
+
+
 async def test_the_join_page_is_served(client):
     """Candidates stay on our domain and never see a Daily URL."""
     response = client.get("/join")
@@ -536,16 +548,16 @@ def test_railway_postgres_scheme_is_rewritten_for_asyncpg(monkeypatch):
 # -- employer panel ----------------------------------------------------------
 
 
-async def test_panel_is_served_with_branding(client):
-    response = client.get("/panel")
+async def test_admin_panel_is_served_with_branding(client):
+    response = client.get("/admin")
 
     assert response.status_code == 200
     assert "Mitra" in response.text
     assert "{{" not in response.text  # every placeholder substituted
 
 
-async def test_panel_script_is_served_as_javascript(client):
-    response = client.get("/static/panel.js")
+async def test_admin_script_is_served_as_javascript(client):
+    response = client.get("/admin/admin.js")
 
     assert response.status_code == 200
     assert "javascript" in response.headers["content-type"]
