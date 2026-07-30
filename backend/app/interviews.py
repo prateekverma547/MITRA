@@ -135,6 +135,28 @@ async def create_interview(candidate_id: str) -> InterviewCreated:
                 ),
             )
 
+        # One live session per candidate. Without this, clicking Start twice
+        # created two interviews with two Daily rooms and two credential pairs
+        # — and whichever set the candidate was sent, the other room sat paid
+        # for and empty. A candidate can only be in one interview anyway.
+        existing = await session.scalar(
+            select(Interview).where(
+                Interview.candidate_id == candidate_id,
+                Interview.status.in_(
+                    [InterviewStatus.SCHEDULED, InterviewStatus.IN_PROGRESS]
+                ),
+            )
+        )
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"This candidate already has a session ({existing.meeting_id}) "
+                    f"that is {existing.status}. Cancel it or wait for it to "
+                    "finish before starting another."
+                ),
+            )
+
     settings = _settings()
     room = await create_room(
         api_key=settings.daily_api_key,
@@ -344,6 +366,37 @@ async def get_interview(interview_id: str) -> InterviewView:
             session_metrics=interview.session_metrics,
             feedback_report=interview.feedback_report,
         )
+
+
+@router.delete("/interviews/{interview_id}", dependencies=ADMIN_ONLY)
+async def cancel_interview(interview_id: str) -> dict:
+    """Cancel a session that has not started, freeing the candidate for a new one.
+
+    Only a scheduled session can be cancelled. A live interview is someone
+    mid-sentence in a room, and a stray click here would cut them off; ending
+    one of those is the bot's job when the conversation closes. A completed
+    interview is a record, and records are not cancelled.
+    """
+    async with get_sessionmaker()() as session:
+        interview = await session.get(Interview, interview_id)
+        if interview is None:
+            raise HTTPException(status_code=404, detail=f"No interview '{interview_id}'.")
+
+        if interview.status != InterviewStatus.SCHEDULED:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"This session is {interview.status} and cannot be cancelled. "
+                    "Only a session that has not started yet can be."
+                ),
+            )
+
+        candidate_id = interview.candidate_id
+        await session.delete(interview)
+        await session.commit()
+
+    logger.info(f"[{interview_id}] cancelled before it started")
+    return {"cancelled": interview_id, "candidate_id": candidate_id}
 
 
 @router.get("/candidates/{candidate_id}/interviews", dependencies=ADMIN_ONLY)

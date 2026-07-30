@@ -119,6 +119,14 @@ class Job(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    #: What the employer calls this opening, typed at creation. The spec also
+    #: carries a `role_title`, but that only exists once the clarification chat
+    #: has finished — a profile has to be identifiable in the list before then.
+    title: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    #: Free-text tag, typically a business unit. Three "Business Analyst"
+    #: profiles for different units are otherwise indistinguishable.
+    business_unit: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
     source_filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
     jd_text: Mapped[str] = mapped_column(Text)
 
@@ -128,6 +136,10 @@ class Job(Base):
     spec_status: Mapped[str] = mapped_column(
         String(32), default=SpecStatus.AWAITING_CLARIFICATION
     )
+    #: Bumped every time the spec is reopened and changed. A blueprint records
+    #: the version it was built from, so the panel can show which candidates
+    #: are planned against a spec that has since moved on.
+    spec_version: Mapped[int] = mapped_column(default=1, server_default="1")
 
     clarification_turns: Mapped[list["ClarificationTurn"]] = relationship(
         back_populates="job", cascade="all, delete-orphan", order_by="ClarificationTurn.index"
@@ -182,6 +194,10 @@ class Candidate(Base):
     blueprint_refinements: Mapped[list[dict[str, Any]] | None] = mapped_column(
         JSON, nullable=True
     )
+    #: Which `Job.spec_version` this plan was built from. When the spec moves
+    #: ahead of this, the plan is stale: it is testing for something the
+    #: employer has since changed their mind about.
+    spec_version: Mapped[int] = mapped_column(default=1, server_default="1")
 
     job: Mapped[Job] = relationship(back_populates="candidates")
     interviews: Mapped[list["Interview"]] = relationship(
@@ -301,12 +317,15 @@ def _add_missing_columns(connection) -> None:
         for column in table.columns:
             if column.name in existing:
                 continue
-            if not column.nullable:
-                # Existing rows would have nothing to put here. Refusing loudly
-                # beats writing a wrong default into real interview records.
+            if not column.nullable and column.server_default is None:
+                # Existing rows would have nothing to put here, and NOT NULL
+                # forbids leaving it empty. A server_default answers the
+                # question; without one, guessing a value would write a
+                # fabricated number into real interview records.
                 raise RuntimeError(
-                    f"{table.name}.{column.name} is new and NOT NULL; "
-                    "it needs a real migration, not an automatic ALTER."
+                    f"{table.name}.{column.name} is new and NOT NULL with no "
+                    "server_default; it needs a real migration, not an "
+                    "automatic ALTER."
                 )
             ddl = CreateColumn(column).compile(connection.engine)
             connection.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {ddl}"))

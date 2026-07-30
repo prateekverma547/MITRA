@@ -468,14 +468,99 @@ async def test_saving_against_a_missing_interview_does_not_raise(client):
 
 
 async def test_interviews_are_listed_for_a_candidate(client):
+    """History accumulates once sessions actually finish."""
+    from app import db
+
     candidate_id = await make_candidate()
-    client.post(f"/candidates/{candidate_id}/interviews")
+    first = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, first["interview_id"])
+        interview.status = db.InterviewStatus.COMPLETED
+        await session.commit()
+
     client.post(f"/candidates/{candidate_id}/interviews")
 
     rows = client.get(f"/candidates/{candidate_id}/interviews").json()
 
     assert len(rows) == 2
-    assert all(r["status"] == "scheduled" for r in rows)
+    assert {r["status"] for r in rows} == {"completed", "scheduled"}
+
+
+# -- one session at a time ---------------------------------------------------
+
+
+async def test_a_second_session_is_refused_while_one_is_open(client):
+    """Two sessions meant two Daily rooms and two credential pairs — and
+    whichever set the candidate got, the other room sat paid for and empty."""
+    candidate_id = await make_candidate()
+    first = client.post(f"/candidates/{candidate_id}/interviews")
+    assert first.status_code == 200
+
+    second = client.post(f"/candidates/{candidate_id}/interviews")
+
+    assert second.status_code == 409
+    assert first.json()["meeting_id"] in second.json()["detail"]
+
+
+async def test_a_new_session_is_allowed_once_the_last_one_completed(client):
+    from app import db
+
+    candidate_id = await make_candidate()
+    first = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, first["interview_id"])
+        interview.status = db.InterviewStatus.COMPLETED
+        await session.commit()
+
+    second = client.post(f"/candidates/{candidate_id}/interviews")
+
+    assert second.status_code == 200
+    assert second.json()["meeting_id"] != first["meeting_id"]
+
+
+async def test_cancelling_a_scheduled_session_frees_the_candidate(client):
+    candidate_id = await make_candidate()
+    first = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    cancelled = client.delete(f"/interviews/{first['interview_id']}")
+    assert cancelled.status_code == 200
+
+    assert client.post(f"/candidates/{candidate_id}/interviews").status_code == 200
+
+
+async def test_a_live_interview_cannot_be_cancelled(client):
+    """Someone is mid-sentence in that room; a stray click must not cut them off."""
+    from app import db
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, created["interview_id"])
+        interview.status = db.InterviewStatus.IN_PROGRESS
+        await session.commit()
+
+    response = client.delete(f"/interviews/{created['interview_id']}")
+
+    assert response.status_code == 409
+    assert "cannot be cancelled" in response.json()["detail"]
+
+
+async def test_a_completed_interview_cannot_be_cancelled(client):
+    """It is a record of something that happened. Records are not cancelled."""
+    from app import db
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, created["interview_id"])
+        interview.status = db.InterviewStatus.COMPLETED
+        await session.commit()
+
+    assert client.delete(f"/interviews/{created['interview_id']}").status_code == 409
 
 
 async def test_unknown_interview_returns_404(client):

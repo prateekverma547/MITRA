@@ -13,7 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 from datetime import UTC, datetime
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, Response as FastAPIResponse, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response as FastAPIResponse, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from loguru import logger
 from pydantic import BaseModel
@@ -25,6 +25,8 @@ from app.db import (
     BlueprintStatus,
     Candidate,
     ClarificationTurn,
+    Interview,
+    InterviewStatus,
     Job,
     SpecStatus,
     create_all,
@@ -97,6 +99,10 @@ class ClarifyResponse(BaseModel):
     #: Positions assumed but never stated by the employer. The panel must show
     #: these rather than letting them pass on a skimmed "looks right".
     inferred: list[str] = []
+    #: Only set when a *revision* completes: which candidates' plans were
+    #: regenerated, and which were deliberately left alone. Shown so the reach
+    #: of a spec change is visible at the moment it happens.
+    propagation: dict | None = None
 
 
 class CandidateCreated(BaseModel):
@@ -113,6 +119,9 @@ class BlueprintResponse(BaseModel):
     blueprint: dict | None = None
     error: str | None = None
     refinements: list[dict] = []
+    #: This plan was built from an older spec than the profile now has. It was
+    #: left alone rather than regenerated because the employer hand-refined it.
+    plan_is_stale: bool = False
 
 
 # --------------------------------------------------------------------------
@@ -121,8 +130,20 @@ class BlueprintResponse(BaseModel):
 
 
 @app.post("/jobs", response_model=JobCreated, dependencies=[Depends(require_admin)])
-async def create_job(background: BackgroundTasks, file: UploadFile = File(...)) -> JobCreated:
-    """Upload a job description and get the first clarifying question."""
+async def create_job(
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    title: str = Form(""),
+    business_unit: str = Form(""),
+) -> JobCreated:
+    """Upload a job description and get the first clarifying question.
+
+    `title` and `business_unit` are the employer's own labels, taken here rather
+    than derived later: the spec's `role_title` only exists once the
+    clarification chat finishes, so without these a profile is unidentifiable in
+    the list for the whole time it is being set up — and three Business Analyst
+    openings for three different units look identical forever.
+    """
     try:
         jd_text = extract_text(filename=file.filename or "jd", data=await file.read())
     except DocumentError as exc:
@@ -140,6 +161,8 @@ async def create_job(background: BackgroundTasks, file: UploadFile = File(...)) 
     async with get_sessionmaker()() as session:
         job = Job(
             id=job_id,
+            title=(title or "").strip() or None,
+            business_unit=(business_unit or "").strip() or None,
             source_filename=file.filename,
             jd_text=jd_text,
             spec_status=SpecStatus.AWAITING_CLARIFICATION,
@@ -159,7 +182,9 @@ async def create_job(background: BackgroundTasks, file: UploadFile = File(...)) 
 
 
 @app.post("/jobs/{job_id}/clarify", response_model=ClarifyResponse, dependencies=[Depends(require_admin)])
-async def clarify(job_id: str, request: ClarifyRequest) -> ClarifyResponse:
+async def clarify(
+    job_id: str, request: ClarifyRequest, background: BackgroundTasks
+) -> ClarifyResponse:
     """Answer the current clarifying question and get the next one."""
     async with get_sessionmaker()() as session:
         job = await session.scalar(
@@ -170,7 +195,10 @@ async def clarify(job_id: str, request: ClarifyRequest) -> ClarifyResponse:
         if job.spec_status == SpecStatus.READY:
             raise HTTPException(
                 status_code=409,
-                detail="This job's evaluation spec is already complete.",
+                detail=(
+                    "This profile's evaluation spec is already complete. "
+                    "Reopen it to change what the interview tests."
+                ),
             )
 
         history = [{"role": t.role, "content": t.content} for t in job.clarification_turns]
@@ -193,21 +221,124 @@ async def clarify(job_id: str, request: ClarifyRequest) -> ClarifyResponse:
             ClarificationTurn(index=next_index + 1, role=INTERVIEWER_ROLE, content=turn.reply)
         )
 
+        # A revision is a spec that already existed and has now changed. The
+        # first time through there is nothing downstream to propagate to.
+        is_revision = job.evaluation_spec is not None
+
         if turn.done and turn.spec is not None:
             job.evaluation_spec = turn.spec.model_dump(mode="json")
             job.spec_status = SpecStatus.READY
+            if is_revision:
+                job.spec_version += 1
             logger.info(f"[{job_id}] evaluation spec complete: {turn.spec.role_title}")
 
         await session.commit()
+        spec_now_ready = job.spec_status == SpecStatus.READY
+        spec_payload = job.evaluation_spec
 
-        return ClarifyResponse(
-            job_id=job_id,
-            reply=turn.reply,
-            done=job.spec_status == SpecStatus.READY,
-            spec_status=job.spec_status,
-            evaluation_spec=job.evaluation_spec,
-            inferred=turn.inferred,
+    propagation = None
+    if spec_now_ready and is_revision:
+        propagation = await _propagate_spec_change(job_id, background)
+
+    return ClarifyResponse(
+        job_id=job_id,
+        reply=turn.reply,
+        done=spec_now_ready,
+        spec_status=SpecStatus.READY if spec_now_ready else SpecStatus.AWAITING_CLARIFICATION,
+        evaluation_spec=spec_payload,
+        inferred=turn.inferred,
+        propagation=propagation,
+    )
+
+
+@app.post("/jobs/{job_id}/reopen", dependencies=[Depends(require_admin)])
+async def reopen_spec(job_id: str) -> dict:
+    """Reopen a finished clarification so the employer can change what is tested.
+
+    The conversation continues where it left off rather than starting over —
+    the model still has the JD and everything already agreed, so the employer
+    only has to state the change.
+
+    Nothing is regenerated here. Reopening is not the decision; the decision is
+    made when the revised spec is confirmed, and `_propagate_spec_change` below
+    is what acts on it.
+    """
+    async with get_sessionmaker()() as session:
+        job = await session.get(Job, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"No profile '{job_id}'.")
+        if job.spec_status != SpecStatus.READY:
+            raise HTTPException(
+                status_code=409,
+                detail="This spec is not finished yet, so there is nothing to reopen.",
+            )
+        job.spec_status = SpecStatus.AWAITING_CLARIFICATION
+        await session.commit()
+
+    logger.info(f"[{job_id}] spec reopened for revision")
+    return {"job_id": job_id, "spec_status": SpecStatus.AWAITING_CLARIFICATION}
+
+
+async def _propagate_spec_change(job_id: str, background: BackgroundTasks) -> dict:
+    """Decide which candidates a revised spec reaches.
+
+    Three groups, three different answers:
+
+    - **Already interviewed** — untouched, always. Their blueprint is the record
+      of what they were actually asked. Rewriting it would mean a later feedback
+      report scoring them against competencies that did not exist while they
+      were being interviewed, which is a written judgement about a real person
+      measured against a yardstick nobody applied to them.
+    - **Hand-refined by the employer** — left alone and flagged stale, by
+      explicit decision. Regenerating would silently discard the employer's own
+      edits; the panel shows these so the choice to refresh stays theirs.
+    - **Everyone else** — regenerated against the new spec, in the background.
+    """
+    regenerated: list[str] = []
+    skipped_refined: list[str] = []
+    skipped_interviewed: list[str] = []
+
+    async with get_sessionmaker()() as session:
+        job = await session.get(Job, job_id)
+        candidates = list(
+            await session.scalars(
+                select(Candidate)
+                .where(Candidate.job_id == job_id)
+                .options(selectinload(Candidate.interviews))
+            )
         )
+
+        for candidate in candidates:
+            interviewed = any(
+                i.status in (InterviewStatus.COMPLETED, InterviewStatus.IN_PROGRESS)
+                for i in candidate.interviews
+            )
+            if interviewed:
+                skipped_interviewed.append(candidate.id)
+                continue
+            if candidate.blueprint_refinements:
+                skipped_refined.append(candidate.id)
+                continue
+
+            candidate.blueprint_status = BlueprintStatus.PENDING
+            candidate.spec_version = job.spec_version
+            regenerated.append(candidate.id)
+
+        await session.commit()
+
+    for candidate_id in regenerated:
+        background.add_task(generate_blueprint_task, candidate_id)
+
+    logger.info(
+        f"[{job_id}] spec revised: {len(regenerated)} plans regenerating, "
+        f"{len(skipped_refined)} kept (hand-refined), "
+        f"{len(skipped_interviewed)} kept (already interviewed)"
+    )
+    return {
+        "regenerated": regenerated,
+        "skipped_refined": skipped_refined,
+        "skipped_interviewed": skipped_interviewed,
+    }
 
 
 @app.get("/jobs/{job_id}", dependencies=[Depends(require_admin)])
@@ -220,8 +351,11 @@ async def get_job(job_id: str) -> dict:
             raise HTTPException(status_code=404, detail=f"No job '{job_id}'.")
         return {
             "job_id": job.id,
+            "title": job.title,
+            "business_unit": job.business_unit,
             "source_filename": job.source_filename,
             "spec_status": job.spec_status,
+            "spec_version": job.spec_version,
             "evaluation_spec": job.evaluation_spec,
             "clarification": [
                 {"role": t.role, "content": t.content} for t in job.clarification_turns
@@ -293,16 +427,40 @@ async def delete_job(job_id: str) -> dict:
 
 @app.get("/jobs", dependencies=[Depends(require_admin)])
 async def list_jobs() -> list[dict]:
-    """Every role being hired for, newest first."""
+    """Every role being hired for, newest first.
+
+    Carries the candidate tallies so the list answers "where does this one
+    stand?" without a request per profile.
+    """
     async with get_sessionmaker()() as session:
-        rows = await session.scalars(select(Job).order_by(Job.created_at.desc()))
+        rows = list(
+            await session.scalars(
+                select(Job)
+                .order_by(Job.created_at.desc())
+                .options(
+                    selectinload(Job.candidates).selectinload(Candidate.interviews)
+                )
+            )
+        )
         return [
             {
                 "job_id": row.id,
+                "title": row.title,
+                "business_unit": row.business_unit,
                 "role_title": (row.evaluation_spec or {}).get("role_title"),
                 "source_filename": row.source_filename,
                 "spec_status": row.spec_status,
+                "spec_version": row.spec_version,
                 "created_at": row.created_at,
+                "candidate_count": len(row.candidates),
+                "interviewed_count": sum(
+                    1
+                    for c in row.candidates
+                    if any(i.status == InterviewStatus.COMPLETED for i in c.interviews)
+                ),
+                "stale_count": sum(
+                    1 for c in row.candidates if c.spec_version < row.spec_version
+                ),
             }
             for row in rows
         ]
@@ -310,11 +468,23 @@ async def list_jobs() -> list[dict]:
 
 @app.get("/jobs/{job_id}/candidates", dependencies=[Depends(require_admin)])
 async def list_candidates(job_id: str) -> list[dict]:
+    """Everyone lined up for this role, with where their interview stands.
+
+    `interview_status` is the one thing the employer is scanning this list for,
+    so it is computed here rather than left to a request per candidate.
+    """
     async with get_sessionmaker()() as session:
-        rows = await session.scalars(
-            select(Candidate)
-            .where(Candidate.job_id == job_id)
-            .order_by(Candidate.created_at.desc())
+        job = await session.get(Job, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"No profile '{job_id}'.")
+
+        rows = list(
+            await session.scalars(
+                select(Candidate)
+                .where(Candidate.job_id == job_id)
+                .order_by(Candidate.created_at.desc())
+                .options(selectinload(Candidate.interviews))
+            )
         )
         return [
             {
@@ -324,9 +494,33 @@ async def list_candidates(job_id: str) -> list[dict]:
                 "blueprint_status": row.blueprint_status,
                 "blueprint_error": row.blueprint_error,
                 "created_at": row.created_at,
+                "interview_status": _interview_status(row),
+                "has_refinements": bool(row.blueprint_refinements),
+                # Planned against a spec the employer has since changed.
+                "plan_is_stale": row.spec_version < job.spec_version,
             }
             for row in rows
         ]
+
+
+def _interview_status(candidate: Candidate) -> str:
+    """Where this candidate stands, as one word the panel can show.
+
+    A completed interview outranks everything: it is the fact the employer is
+    looking for, and it stays true even if a later session were somehow booked.
+    """
+    statuses = {i.status for i in candidate.interviews}
+    if InterviewStatus.COMPLETED in statuses:
+        return "completed"
+    if InterviewStatus.IN_PROGRESS in statuses:
+        return "in_progress"
+    if InterviewStatus.SCHEDULED in statuses:
+        return "scheduled"
+    if InterviewStatus.FAILED in statuses:
+        return "failed"
+    if InterviewStatus.EXPIRED in statuses:
+        return "expired"
+    return "not_scheduled"
 
 
 @app.post("/jobs/{job_id}/candidates", response_model=CandidateCreated, dependencies=[Depends(require_admin)])
@@ -398,6 +592,9 @@ async def generate_blueprint_task(candidate_id: str) -> None:
             return
 
         candidate.blueprint_status = BlueprintStatus.GENERATING
+        # Recorded now, from the spec actually being used. Reading it back
+        # later would risk stamping a version the plan was never built against.
+        candidate.spec_version = job.spec_version
         spec_payload = job.evaluation_spec
         cv_text = candidate.cv_text
         await session.commit()
@@ -444,6 +641,7 @@ async def get_candidate(candidate_id: str) -> BlueprintResponse:
         candidate = await session.get(Candidate, candidate_id)
         if candidate is None:
             raise HTTPException(status_code=404, detail=f"No candidate '{candidate_id}'.")
+        job = await session.get(Job, candidate.job_id)
         return BlueprintResponse(
             candidate_id=candidate.id,
             job_id=candidate.job_id,
@@ -451,6 +649,7 @@ async def get_candidate(candidate_id: str) -> BlueprintResponse:
             blueprint=candidate.blueprint,
             error=candidate.blueprint_error,
             refinements=candidate.blueprint_refinements or [],
+            plan_is_stale=bool(job and candidate.spec_version < job.spec_version),
         )
 
 

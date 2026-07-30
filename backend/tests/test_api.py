@@ -7,6 +7,7 @@ database with a status the panel can poll.
 """
 
 import os
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -236,3 +237,169 @@ async def test_generation_failure_is_recorded_not_swallowed(client, monkeypatch)
 async def test_unknown_ids_return_404(client):
     assert client.get("/jobs/nope").status_code == 404
     assert client.get("/candidates/nope").status_code == 404
+
+
+# -- profile identity ---------------------------------------------------------
+
+
+async def test_a_profile_can_be_named_and_tagged_at_creation(client):
+    """The spec's role_title only exists after the chat finishes, so without
+    these a profile is unidentifiable in the list for its whole setup."""
+    response = client.post(
+        "/jobs",
+        files={"file": ("jd.txt", read("jd_senior_pm.txt"), "text/plain")},
+        data={"title": "Business Analyst", "business_unit": "Payments"},
+    )
+    job_id = response.json()["job_id"]
+
+    listed = client.get("/jobs").json()[0]
+    assert listed["title"] == "Business Analyst"
+    assert listed["business_unit"] == "Payments"
+
+    detail = client.get(f"/jobs/{job_id}").json()
+    assert detail["title"] == "Business Analyst"
+    assert detail["business_unit"] == "Payments"
+
+
+async def test_a_profile_without_a_title_still_works(client):
+    """Naming is a convenience, not a gate on uploading a JD."""
+    response = client.post(
+        "/jobs", files={"file": ("jd.txt", read("jd_senior_pm.txt"), "text/plain")}
+    )
+    assert response.status_code == 200
+    assert client.get("/jobs").json()[0]["title"] is None
+
+
+# -- revising the spec --------------------------------------------------------
+
+
+async def test_a_finished_spec_must_be_reopened_before_it_can_change(client):
+    job_id = await complete_job(client)
+
+    blocked = client.post(f"/jobs/{job_id}/clarify", json={"message": "Actually..."})
+    assert blocked.status_code == 409
+
+    assert client.post(f"/jobs/{job_id}/reopen").status_code == 200
+    assert client.post(f"/jobs/{job_id}/clarify", json={"message": "Actually..."}).status_code == 200
+
+
+async def test_revising_the_spec_regenerates_untested_plans(client):
+    job_id = await complete_job(client)
+    upload = client.post(
+        f"/jobs/{job_id}/candidates",
+        files={"file": ("cv.txt", read("cv_strong_pm.txt"), "text/plain")},
+    )
+    candidate_id = upload.json()["candidate_id"]
+
+    client.post(f"/jobs/{job_id}/reopen")
+    revised = client.post(f"/jobs/{job_id}/clarify", json={"message": "Drop the second one."})
+
+    assert revised.json()["propagation"]["regenerated"] == [candidate_id]
+    assert client.get(f"/candidates/{candidate_id}").json()["blueprint_status"] == "ready"
+
+
+async def test_a_hand_refined_plan_is_left_alone_and_flagged_stale(client):
+    """The employer's own edits are not silently discarded — their call."""
+    from app import db
+
+    job_id = await complete_job(client)
+    upload = client.post(
+        f"/jobs/{job_id}/candidates",
+        files={"file": ("cv.txt", read("cv_strong_pm.txt"), "text/plain")},
+    )
+    candidate_id = upload.json()["candidate_id"]
+
+    async with db.get_sessionmaker()() as session:
+        candidate = await session.get(db.Candidate, candidate_id)
+        candidate.blueprint_refinements = [{"role": "employer", "content": "push harder"}]
+        await session.commit()
+
+    client.post(f"/jobs/{job_id}/reopen")
+    revised = client.post(f"/jobs/{job_id}/clarify", json={"message": "Change it."})
+
+    assert revised.json()["propagation"]["skipped_refined"] == [candidate_id]
+    assert client.get(f"/candidates/{candidate_id}").json()["plan_is_stale"] is True
+    assert client.get(f"/jobs/{job_id}/candidates").json()[0]["plan_is_stale"] is True
+
+
+async def test_an_interviewed_candidates_plan_is_never_rewritten(client):
+    """Their blueprint is the record of what they were actually asked. Rewriting
+    it would score them later against competencies nobody applied to them."""
+    from app import db
+
+    job_id = await complete_job(client)
+    upload = client.post(
+        f"/jobs/{job_id}/candidates",
+        files={"file": ("cv.txt", read("cv_strong_pm.txt"), "text/plain")},
+    )
+    candidate_id = upload.json()["candidate_id"]
+    original = client.get(f"/candidates/{candidate_id}").json()["blueprint"]
+
+    async with db.get_sessionmaker()() as session:
+        session.add(
+            db.Interview(
+                id="int_done",
+                candidate_id=candidate_id,
+                meeting_id="111-111-111",
+                password="pw",
+                daily_room_name="r",
+                daily_room_url="https://example.daily.co/r",
+                room_expires_at=datetime.now(UTC) + timedelta(hours=1),
+                status=db.InterviewStatus.COMPLETED,
+            )
+        )
+        await session.commit()
+
+    client.post(f"/jobs/{job_id}/reopen")
+    revised = client.post(f"/jobs/{job_id}/clarify", json={"message": "Change it."})
+
+    assert revised.json()["propagation"]["skipped_interviewed"] == [candidate_id]
+    assert client.get(f"/candidates/{candidate_id}").json()["blueprint"] == original
+
+
+async def test_the_first_time_a_spec_completes_is_not_a_revision(client):
+    """Nothing downstream exists yet, so nothing is propagated to."""
+    response = client.post(
+        "/jobs", files={"file": ("jd.txt", read("jd_senior_pm.txt"), "text/plain")}
+    )
+    job_id = response.json()["job_id"]
+
+    done = client.post(f"/jobs/{job_id}/clarify", json={"message": "Prioritisation."})
+
+    assert done.json()["done"] is True
+    assert done.json()["propagation"] is None
+    assert client.get(f"/jobs/{job_id}").json()["spec_version"] == 1
+
+
+# -- candidate list -----------------------------------------------------------
+
+
+async def test_the_candidate_list_shows_where_each_interview_stands(client):
+    from app import db
+
+    job_id = await complete_job(client)
+    upload = client.post(
+        f"/jobs/{job_id}/candidates",
+        files={"file": ("cv.txt", read("cv_strong_pm.txt"), "text/plain")},
+    )
+    candidate_id = upload.json()["candidate_id"]
+
+    assert client.get(f"/jobs/{job_id}/candidates").json()[0]["interview_status"] == "not_scheduled"
+
+    async with db.get_sessionmaker()() as session:
+        session.add(
+            db.Interview(
+                id="int_x",
+                candidate_id=candidate_id,
+                meeting_id="222-222-222",
+                password="pw",
+                daily_room_name="r",
+                daily_room_url="https://example.daily.co/r",
+                room_expires_at=datetime.now(UTC) + timedelta(hours=1),
+                status=db.InterviewStatus.COMPLETED,
+            )
+        )
+        await session.commit()
+
+    assert client.get(f"/jobs/{job_id}/candidates").json()[0]["interview_status"] == "completed"
+    assert client.get("/jobs").json()[0]["interviewed_count"] == 1

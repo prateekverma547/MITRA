@@ -1,26 +1,34 @@
 // Admin panel.
 //
 //   Login
-//     └─ Profiles                     a profile is a role you are hiring for
-//          └─ Profile
-//               ├─ Discuss with AI    defines what the interview tests
-//               ├─ CVs                each generates an interview plan
-//               │    └─ Discuss       refine that candidate's plan
-//               └─ Start interview    creates the session, ID and password
+//     └─ #/profiles                     a profile is a role you are hiring for
+//          └─ #/profiles/<id>
+//               ├─ what it tests        the locked evaluation spec
+//               ├─ discussion           collapsed once it is settled
+//               └─ candidates           each with where their interview stands
+//                    └─ #/candidates/<id>
+//                         ├─ the session   at most one open at a time
+//                         ├─ the plan
+//                         └─ improve the plan
+//                              └─ #/interviews/<id>
+//
+// Navigation is real: every screen has its own URL in the hash, so the back
+// button, forward, refresh and bookmarks all behave. Screens are reached with
+// ordinary <a href> links rather than click handlers, which is what makes
+// middle-click and copy-link-address work too.
 //
 // Plain JavaScript, no build step. CLAUDE.md specifies React + Vite, which is
 // still right once this settles; it talks to the real API, so a rewrite swaps
 // the view layer and nothing else.
 
 const app = document.getElementById("app");
-const state = { view: "profiles", jobId: null, candidateId: null, interviewId: null };
 
 // ---------------------------------------------------------------- utilities
 
 async function api(path, options = {}) {
   const response = await fetch(path, options);
   if (response.status === 401 && !path.startsWith("/admin/")) {
-    go("login");
+    renderLogin();
     throw new Error("Signed out.");
   }
   const body = await response.json().catch(() => ({}));
@@ -37,21 +45,23 @@ const when = (iso) =>
     day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
   });
 
-function pill(status) {
+const LABELS = {
+  not_scheduled: "no session",
+  in_progress: "in progress",
+  awaiting_clarification: "being defined",
+};
+
+function pill(status, label) {
   const good = ["ready", "completed", "sufficient"];
   const bad = ["failed", "insufficient", "expired", "not_started"];
   const cls = good.includes(status) ? "ok" : bad.includes(status) ? "bad" : "warn";
-  return `<span class="pill ${cls}">${esc(status).replace(/_/g, " ")}</span>`;
-}
-
-function go(view, ids = {}) {
-  Object.assign(state, ids, { view });
-  render();
+  const text = label || LABELS[status] || String(status).replace(/_/g, " ");
+  return `<span class="pill ${cls}">${esc(text)}</span>`;
 }
 
 function crumbs(parts) {
   return `<div class="crumb">${parts
-    .map((p) => (p.go ? `<a onclick="${p.go}">${esc(p.label)}</a>` : esc(p.label)))
+    .map((p) => (p.href ? `<a href="${p.href}">${esc(p.label)}</a>` : esc(p.label)))
     .join(" › ")}</div>`;
 }
 
@@ -61,9 +71,40 @@ function chat(turns) {
     .join("");
 }
 
+/** Name a profile the way the employer will recognise it. */
+function profileName(job) {
+  return job.title || job.role_title || job.source_filename || "Untitled profile";
+}
+
+// -- polling ----------------------------------------------------------------
+//
+// Several screens re-render themselves while work finishes. Each render takes a
+// ticket; a scheduled re-render only fires if its ticket is still the current
+// one. Without this, navigating away from a waiting screen leaves its timer
+// running, and it redraws itself over whatever you opened next.
+
+let ticket = 0;
+
+function poll(ms) {
+  const mine = ticket;
+  setTimeout(() => { if (mine === ticket) render(); }, ms);
+}
+
+// ------------------------------------------------------------------- router
+
+function route() {
+  const raw = location.hash.replace(/^#\/?/, "");
+  const [section, id, sub] = raw.split("/");
+  return { section: section || "profiles", id, sub };
+}
+
+function go(path) {
+  location.hash = path;  // fires hashchange -> render
+}
+
 // ------------------------------------------------------------------- login
 
-function viewLogin() {
+function renderLogin() {
   app.innerHTML = `
     <div class="card" style="max-width:420px;margin:60px auto">
       <h2>Sign in</h2>
@@ -83,7 +124,7 @@ function viewLogin() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: document.getElementById("pw").value }),
       });
-      go("profiles");
+      render();
     } catch (e) {
       button.disabled = false;
       const err = document.getElementById("err");
@@ -104,7 +145,7 @@ async function viewProfiles() {
       <div><h2>Profiles</h2><p class="sub">One profile per role you are hiring for.</p></div>
       <div class="row">
         <button onclick="signOut()">Sign out</button>
-        <button class="primary" onclick="go('newProfile')">New profile</button>
+        <a class="btn primary" href="#/profiles/new">New profile</a>
       </div>
     </div>
     ${profiles.length === 0 ? `<div class="card muted">
@@ -112,10 +153,17 @@ async function viewProfiles() {
     ${profiles.map((p) => `
       <div class="list-item">
         <div class="spread">
-          <div onclick="go('profile', {jobId: '${p.job_id}'})" style="flex:1;cursor:pointer">
-            <strong>${esc(p.role_title || p.source_filename || "Untitled")}</strong>
-            <div class="small muted">${when(p.created_at)}</div>
-          </div>
+          <a href="#/profiles/${p.job_id}" style="flex:1;text-decoration:none;color:inherit">
+            <strong>${esc(profileName(p))}</strong>
+            ${p.business_unit ? `<span class="tag">${esc(p.business_unit)}</span>` : ""}
+            <div class="small muted">
+              ${p.candidate_count} candidate${p.candidate_count === 1 ? "" : "s"}
+              ${p.candidate_count ? ` · ${p.interviewed_count} interviewed` : ""}
+              ${p.stale_count ? ` · <span class="warntext">${p.stale_count} plan${
+                p.stale_count === 1 ? "" : "s"} out of date</span>` : ""}
+              · ${when(p.created_at)}
+            </div>
+          </a>
           <div class="row">
             ${pill(p.spec_status)}
             <button class="danger" onclick="removeProfile('${p.job_id}')">Delete</button>
@@ -136,13 +184,24 @@ window.removeProfile = async (jobId) => {
 
 function viewNewProfile() {
   app.innerHTML = `
-    ${crumbs([{ label: "Profiles", go: "go('profiles')" }, { label: "New profile" }])}
+    ${crumbs([{ label: "Profiles", href: "#/profiles" }, { label: "New profile" }])}
     <div class="card">
-      <h2>Upload the job description</h2>
-      <p class="sub">PDF, DOCX or text. Mitra reads it, then asks you a few
-        questions to work out what the interview should actually test.</p>
+      <h2>New profile</h2>
+      <p class="sub">Name it, then upload the job description. Mitra reads the JD
+        and asks you a few questions to work out what the interview should test.</p>
+
+      <label class="lbl">What are you hiring for?</label>
+      <input type="text" id="title" placeholder="Business Analyst" autofocus />
+
+      <label class="lbl">Team or business unit <span class="muted">(optional)</span></label>
+      <input type="text" id="bu" placeholder="Payments" />
+      <div class="small muted" style="margin-top:5px">Tells two openings for the
+        same role apart.</div>
+
+      <label class="lbl">Job description</label>
       <input type="file" id="jd" accept=".pdf,.docx,.txt,.md" />
-      <div class="row" style="margin-top:16px">
+
+      <div class="row" style="margin-top:18px">
         <button class="primary" id="up">Create profile</button>
         <span class="muted small" id="status"></span>
       </div>
@@ -151,18 +210,24 @@ function viewNewProfile() {
 
   document.getElementById("up").onclick = async () => {
     const file = document.getElementById("jd").files[0];
-    if (!file) return;
+    const err = document.getElementById("err");
+    if (!file) {
+      err.textContent = "Choose a job description file first.";
+      err.classList.remove("hidden");
+      return;
+    }
     document.getElementById("up").disabled = true;
     document.getElementById("status").textContent = "Reading the job description…";
     try {
       const form = new FormData();
       form.append("file", file);
+      form.append("title", document.getElementById("title").value);
+      form.append("business_unit", document.getElementById("bu").value);
       const created = await api("/jobs", { method: "POST", body: form });
-      go("profile", { jobId: created.job_id });
+      go(`/profiles/${created.job_id}`);
     } catch (e) {
       document.getElementById("up").disabled = false;
       document.getElementById("status").textContent = "";
-      const err = document.getElementById("err");
       err.textContent = e.message;
       err.classList.remove("hidden");
     }
@@ -171,45 +236,58 @@ function viewNewProfile() {
 
 // ----------------------------------------------------------------- profile
 
-async function viewProfile() {
+async function viewProfile(jobId) {
   const [job, candidates] = await Promise.all([
-    api(`/jobs/${state.jobId}`),
-    api(`/jobs/${state.jobId}/candidates`),
+    api(`/jobs/${jobId}`),
+    api(`/jobs/${jobId}/candidates`).catch(() => []),
   ]);
   const ready = job.spec_status === "ready";
   const spec = job.evaluation_spec;
+  const revising = !ready && spec;  // reopened: a spec exists but is being changed
 
   app.innerHTML = `
-    ${crumbs([
-      { label: "Profiles", go: "go('profiles')" },
-      { label: spec?.role_title || "New profile" },
-    ])}
+    ${crumbs([{ label: "Profiles", href: "#/profiles" }, { label: profileName(job) }])}
 
     <div class="card">
       <div class="spread">
-        <h2 style="margin:0">${esc(spec?.role_title || "Defining this profile")}</h2>
+        <div>
+          <h2 style="margin:0">${esc(profileName(job))}</h2>
+          <div class="small muted" style="margin-top:5px">
+            ${job.business_unit ? `<span class="tag">${esc(job.business_unit)}</span>` : ""}
+            ${spec?.role_title && spec.role_title !== job.title
+              ? esc(spec.role_title) : ""}
+            ${job.spec_version > 1 ? ` · revision ${job.spec_version}` : ""}
+          </div>
+        </div>
         ${pill(job.spec_status)}
       </div>
-      <p class="sub" style="margin:8px 0 0">
-        ${ready
-          ? "Locked in. This is what every interview for this profile will test."
-          : "Answer Mitra's questions so it knows what you are actually looking for."}
-      </p>
     </div>
+
+    ${ready ? specCard(spec, jobId) : ""}
 
     <div class="card">
-      <h3 style="margin-top:0">Discussion</h3>
-      <div class="chat">${chat(job.clarification)}</div>
-      ${ready ? `<p class="small muted">This discussion is complete.</p>` : `
-        <textarea id="reply" placeholder="Your answer…"></textarea>
-        <div class="row" style="margin-top:10px">
-          <button class="primary" id="send">Send</button>
-          <span class="muted small" id="status"></span>
+      <details ${ready ? "" : "open"}>
+        <summary class="disclosure">
+          <strong>Discussion with Mitra</strong>
+          <span class="muted small">${(job.clarification || []).length} messages${
+            ready ? " · settled" : ""}</span>
+        </summary>
+        <div style="margin-top:14px">
+          ${revising ? `<div class="note">You are changing what this profile
+            tests. When you confirm the new summary, plans for candidates who
+            have not been interviewed will be rebuilt.</div>` : ""}
+          <div class="chat">${chat(job.clarification)}</div>
+          ${ready ? "" : `
+            <textarea id="reply" placeholder="Your answer…"></textarea>
+            <div class="row" style="margin-top:10px">
+              <button class="primary" id="send">Send</button>
+              <span class="muted small" id="status"></span>
+            </div>
+            <div class="err hidden" id="err"></div>`}
         </div>
-        <div class="err hidden" id="err"></div>`}
+      </details>
     </div>
 
-    ${ready ? specCard(spec) : ""}
     ${ready ? cvsCard(candidates) : ""}
   `;
 
@@ -220,30 +298,54 @@ async function viewProfile() {
       document.getElementById("send").disabled = true;
       document.getElementById("status").textContent = "Thinking…";
       try {
-        await api(`/jobs/${state.jobId}/clarify`, {
+        const reply = await api(`/jobs/${jobId}/clarify`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message: text }),
         });
+        if (reply.propagation) announcePropagation(reply.propagation);
         render();
       } catch (e) {
         document.getElementById("send").disabled = false;
+        document.getElementById("status").textContent = "";
         const err = document.getElementById("err");
         err.textContent = e.message;
         err.classList.remove("hidden");
       }
     };
   } else {
-    wireCvUpload();
+    wireCvUpload(jobId);
   }
 }
 
-function specCard(spec) {
+/** Say plainly which candidates a spec change reached, and which it did not. */
+function announcePropagation(p) {
+  const lines = [];
+  if (p.regenerated.length) lines.push(`${p.regenerated.length} interview plan(s) rebuilt.`);
+  if (p.skipped_refined.length) {
+    lines.push(
+      `${p.skipped_refined.length} plan(s) left alone because you had edited them ` +
+      `by hand — they are marked out of date, and you can rebuild them yourself.`
+    );
+  }
+  if (p.skipped_interviewed.length) {
+    lines.push(
+      `${p.skipped_interviewed.length} candidate(s) already interviewed were not ` +
+      `touched. Their plan is the record of what they were actually asked.`
+    );
+  }
+  if (lines.length) alert(lines.join("\n\n"));
+}
+
+function specCard(spec, jobId) {
   const total = spec.competencies.reduce((a, c) => a + c.weight, 0) || 1;
   return `
     <div class="card">
-      <h3 style="margin-top:0">What this interview tests</h3>
-      <div class="kv">
+      <div class="spread">
+        <h3 style="margin:0">What this interview tests</h3>
+        <button onclick="reopenSpec('${jobId}')">Change this</button>
+      </div>
+      <div class="kv" style="margin-top:14px">
         <div>Seniority</div><div>${esc(spec.seniority)}</div>
         <div>Experience</div><div>${esc(spec.experience_expectation)}</div>
         <div>Length</div><div>${spec.duration_minutes} min</div>
@@ -264,6 +366,17 @@ function specCard(spec) {
     </div>`;
 }
 
+window.reopenSpec = async (jobId) => {
+  if (!confirm(
+    "Reopen the discussion to change what this interview tests?\n\n" +
+    "When you confirm a new summary, plans are rebuilt for candidates who have " +
+    "not been interviewed yet. Candidates you have already interviewed, and " +
+    "plans you edited by hand, are left as they are."
+  )) return;
+  await api(`/jobs/${jobId}/reopen`, { method: "POST" });
+  render();
+};
+
 function cvsCard(candidates) {
   return `
     <div class="card">
@@ -276,21 +389,28 @@ function cvsCard(candidates) {
         <span class="muted small" id="cvstatus"></span>
       </div>
       <div class="err hidden" id="cverr"></div>
+      ${candidates.length === 0 ? `<div class="muted small">Nobody yet.</div>` : ""}
       ${candidates.map((c) => `
-        <div class="list-item" onclick="go('candidate', {candidateId: '${c.candidate_id}'})">
+        <a class="list-item" href="#/candidates/${c.candidate_id}"
+           style="display:block;text-decoration:none;color:inherit">
           <div class="spread">
             <div>
               <strong>${esc(c.name || c.source_filename || "Candidate")}</strong>
+              ${c.plan_is_stale ? `<span class="tag warn">plan out of date</span>` : ""}
               <div class="small muted">${when(c.created_at)}</div>
               ${c.blueprint_error ? `<div class="small err">${esc(c.blueprint_error)}</div>` : ""}
             </div>
-            ${pill(c.blueprint_status)}
+            <div class="row">
+              ${c.blueprint_status === "ready"
+                ? pill(c.interview_status)
+                : pill(c.blueprint_status, `plan ${c.blueprint_status}`)}
+            </div>
           </div>
-        </div>`).join("")}
+        </a>`).join("")}
     </div>`;
 }
 
-function wireCvUpload() {
+function wireCvUpload(jobId) {
   const button = document.getElementById("upcv");
   if (!button) return;
   button.onclick = async () => {
@@ -301,8 +421,8 @@ function wireCvUpload() {
     try {
       const form = new FormData();
       form.append("file", file);
-      await api(`/jobs/${state.jobId}/candidates`, { method: "POST", body: form });
-      setTimeout(render, 1500);
+      await api(`/jobs/${jobId}/candidates`, { method: "POST", body: form });
+      poll(1500);
     } catch (e) {
       button.disabled = false;
       document.getElementById("cvstatus").textContent = "";
@@ -315,51 +435,94 @@ function wireCvUpload() {
 
 // --------------------------------------------------- candidate + the plan
 
-async function viewCandidate() {
+async function viewCandidate(candidateId) {
   const [candidate, interviews] = await Promise.all([
-    api(`/candidates/${state.candidateId}`),
-    api(`/candidates/${state.candidateId}/interviews`),
+    api(`/candidates/${candidateId}`),
+    api(`/candidates/${candidateId}/interviews`),
   ]);
+
+  const backToProfile = `#/profiles/${candidate.job_id}`;
 
   if (candidate.blueprint_status !== "ready") {
     app.innerHTML = `
-      ${crumbs([{ label: "Profiles", go: "go('profiles')" }, { label: "Candidate" }])}
+      ${crumbs([
+        { label: "Profiles", href: "#/profiles" },
+        { label: "Profile", href: backToProfile },
+        { label: "Candidate" },
+      ])}
       <div class="card">
         <h2>Building the interview plan…</h2>
         <p class="sub">${pill(candidate.blueprint_status)}
           ${candidate.error ? esc(candidate.error) : "Usually under a minute."}</p>
       </div>`;
-    if (candidate.blueprint_status !== "failed") setTimeout(render, 2500);
+    if (candidate.blueprint_status !== "failed") poll(2500);
     return;
   }
 
   const bp = candidate.blueprint;
+  // At most one session is open at a time; anything else is history.
+  const open = interviews.find((i) => ["scheduled", "in_progress"].includes(i.status));
+  const past = interviews.filter((i) => i !== open);
+
   app.innerHTML = `
     ${crumbs([
-      { label: "Profiles", go: "go('profiles')" },
-      { label: bp.evaluation_spec.role_title, go: `go('profile', {jobId: '${candidate.job_id}'})` },
+      { label: "Profiles", href: "#/profiles" },
+      { label: bp.evaluation_spec.role_title, href: backToProfile },
       { label: bp.candidate_name || "Candidate" },
     ])}
 
     <div class="card">
-      <div class="spread">
-        <h2 style="margin:0">${esc(bp.candidate_name || "Candidate")}</h2>
-        <button class="primary" id="start">Start interview</button>
-      </div>
+      <h2 style="margin:0">${esc(bp.candidate_name || "Candidate")}</h2>
       <p class="sub" style="margin:10px 0 0">${esc(bp.candidate_summary || "")}</p>
+    </div>
+
+    ${candidate.plan_is_stale ? `<div class="card note">
+      <strong>This plan is out of date.</strong>
+      It was built before you changed what this profile tests. It was kept
+      because you had edited it by hand — rebuilding it would have discarded
+      your edits. Ask for the change again below, or delete and re-upload the CV
+      to start from the current spec.
+    </div>` : ""}
+
+    <div class="card">
+      <div class="spread">
+        <h3 style="margin:0">Session</h3>
+        ${open ? "" : `<button class="primary" id="start">Start interview</button>`}
+      </div>
+      ${open ? `
+        <div class="cred" style="margin-top:14px">
+          <div class="small muted" style="margin-bottom:6px">Send the candidate:</div>
+          <div><strong>${location.origin}/join</strong></div>
+          <div style="margin-top:8px">
+            Meeting ID <strong class="mono">${esc(open.meeting_id)}</strong> ·
+            Password <strong class="mono">${esc(open.password || "")}</strong>
+          </div>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <a class="btn" href="#/interviews/${open.interview_id}">Open session</a>
+          ${open.status === "scheduled"
+            ? `<button class="danger" onclick="cancelSession('${open.interview_id}')">Cancel</button>`
+            : ""}
+          ${pill(open.status)}
+        </div>
+        <p class="small muted" style="margin-bottom:0">
+          One session at a time. Start another once this one has finished.</p>
+      ` : `<p class="sub" style="margin:10px 0 0">No session yet. Starting one
+        creates the link, meeting ID and password to send the candidate.</p>`}
       <div class="err hidden" id="starterr"></div>
     </div>
 
-    ${interviews.length ? `<div class="card">
-      <h3 style="margin-top:0">Sessions</h3>
-      ${interviews.map((i) => `
-        <div class="list-item" onclick="go('interview', {interviewId: '${i.interview_id}'})">
+    ${past.length ? `<div class="card">
+      <h3 style="margin-top:0">Earlier sessions</h3>
+      ${past.map((i) => `
+        <a class="list-item" href="#/interviews/${i.interview_id}"
+           style="display:block;text-decoration:none;color:inherit">
           <div class="spread">
             <div><strong class="mono">${esc(i.meeting_id)}</strong>
               <div class="small muted">${when(i.created_at)}</div></div>
             ${pill(i.status)}
           </div>
-        </div>`).join("")}
+        </a>`).join("")}
     </div>` : ""}
 
     <div class="card">
@@ -397,18 +560,21 @@ async function viewCandidate() {
     </div>
   `;
 
-  document.getElementById("start").onclick = async () => {
-    document.getElementById("start").disabled = true;
-    try {
-      const started = await api(`/candidates/${state.candidateId}/interviews`, { method: "POST" });
-      go("interview", { interviewId: started.interview_id });
-    } catch (e) {
-      document.getElementById("start").disabled = false;
-      const err = document.getElementById("starterr");
-      err.textContent = e.message;
-      err.classList.remove("hidden");
-    }
-  };
+  const startButton = document.getElementById("start");
+  if (startButton) {
+    startButton.onclick = async () => {
+      startButton.disabled = true;
+      try {
+        const started = await api(`/candidates/${candidateId}/interviews`, { method: "POST" });
+        go(`/interviews/${started.interview_id}`);
+      } catch (e) {
+        startButton.disabled = false;
+        const err = document.getElementById("starterr");
+        err.textContent = e.message;
+        err.classList.remove("hidden");
+      }
+    };
+  }
 
   document.getElementById("dorefine").onclick = async () => {
     const text = document.getElementById("refine").value.trim();
@@ -416,7 +582,7 @@ async function viewCandidate() {
     document.getElementById("dorefine").disabled = true;
     document.getElementById("refstatus").textContent = "Rewriting the plan…";
     try {
-      await api(`/candidates/${state.candidateId}/refine`, {
+      await api(`/candidates/${candidateId}/refine`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text }),
@@ -432,18 +598,27 @@ async function viewCandidate() {
   };
 }
 
+window.cancelSession = async (interviewId) => {
+  if (!confirm(
+    "Cancel this session?\n\nThe meeting ID and password stop working. You can " +
+    "start a new session afterwards."
+  )) return;
+  await api(`/interviews/${interviewId}`, { method: "DELETE" });
+  render();
+};
+
 // --------------------------------------------------------------- interview
 
-async function viewInterview() {
-  const iv = await api(`/interviews/${state.interviewId}`);
+async function viewInterview(interviewId) {
+  const iv = await api(`/interviews/${interviewId}`);
   const metrics = iv.session_metrics || {};
   const latency = metrics.latency_summary || {};
   const done = ["completed", "failed"].includes(iv.status);
 
   app.innerHTML = `
     ${crumbs([
-      { label: "Profiles", go: "go('profiles')" },
-      { label: "Candidate", go: `go('candidate', {candidateId: '${iv.candidate_id}'})` },
+      { label: "Profiles", href: "#/profiles" },
+      { label: "Candidate", href: `#/candidates/${iv.candidate_id}` },
       { label: "Session" },
     ])}
 
@@ -465,7 +640,7 @@ async function viewInterview() {
       refreshes on its own.</div>`}
   `;
 
-  if (!done) setTimeout(render, 5000);
+  if (!done) poll(5000);
 }
 
 function brainCard(iv, metrics, latency) {
@@ -527,28 +702,34 @@ function brainCard(iv, metrics, latency) {
     </div>`;
 }
 
-// ------------------------------------------------------------------ router
+// ------------------------------------------------------------------ render
 
 async function render() {
+  ticket += 1;  // cancels any re-render the previous screen had scheduled
+  const { section, id } = route();
   try {
-    if (state.view !== "login") {
-      const { signed_in } = await api("/admin/session");
-      if (!signed_in) return viewLogin();
-    }
-    if (state.view === "login") viewLogin();
-    else if (state.view === "profiles") await viewProfiles();
-    else if (state.view === "newProfile") viewNewProfile();
-    else if (state.view === "profile") await viewProfile();
-    else if (state.view === "candidate") await viewCandidate();
-    else if (state.view === "interview") await viewInterview();
+    const { signed_in } = await api("/admin/session");
+    if (!signed_in) return renderLogin();
+
+    if (section === "profiles" && id === "new") viewNewProfile();
+    else if (section === "profiles" && id) await viewProfile(id);
+    else if (section === "profiles") await viewProfiles();
+    else if (section === "candidates" && id) await viewCandidate(id);
+    else if (section === "interviews" && id) await viewInterview(id);
+    else go("/profiles");
   } catch (e) {
     if (e.message === "Signed out.") return;
     app.innerHTML = `<div class="card"><h2>Something went wrong</h2>
       <p class="sub">${esc(e.message)}</p>
-      <button onclick="go('profiles')">Back to profiles</button></div>`;
+      <a class="btn" href="#/profiles">Back to profiles</a></div>`;
   }
 }
 
-window.go = go;
-window.signOut = async () => { await api("/admin/logout", { method: "POST" }); go("login"); };
+window.signOut = async () => {
+  await api("/admin/logout", { method: "POST" });
+  go("/profiles");
+  renderLogin();
+};
+
+window.addEventListener("hashchange", render);
 render();

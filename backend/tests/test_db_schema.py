@@ -10,7 +10,7 @@ These tests pin the additive-migration step that closes that gap.
 """
 
 import pytest
-from sqlalchemy import Column, String, inspect, text
+from sqlalchemy import Column, Integer, String, inspect, text
 
 from app import db
 
@@ -55,6 +55,21 @@ async def test_a_new_not_null_column_refuses_rather_than_guessing(database):
             await db.create_all()
     finally:
         table._columns.remove(table.c.required_addition)
+
+
+async def test_a_not_null_column_with_a_server_default_is_allowed(database):
+    """The default answers "what do existing rows get?", so nothing is guessed."""
+    await db.create_all()
+
+    table = db.Candidate.__table__
+    table.append_column(
+        Column("counted", Integer, nullable=False, server_default="1")
+    )
+    try:
+        await db.create_all()
+        assert "counted" in await columns_of("candidates")
+    finally:
+        table._columns.remove(table.c.counted)
 
 
 async def test_existing_rows_survive_the_migration(database):
