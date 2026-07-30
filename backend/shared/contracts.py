@@ -360,6 +360,100 @@ class RecommendationSignal(StrEnum):
     INSUFFICIENT_SIGNAL = "insufficient_signal"
 
 
+class ConversationHealth(BaseModel):
+    """Evidence about the channel, not about the candidate.
+
+    Repairs, dead air, echo and disconnects are all the same kind of fact: the
+    connection was poor. Without somewhere to put them they silently become
+    evidence about the person instead, and a cheap headset reads as an
+    incoherent answer inside a hiring record.
+
+    This is the same distinction the brain already makes by keeping
+    `declined_turns` apart from low coverage. "Declined to answer" and "answered
+    shallowly" say different things about someone, and only one is about their
+    ability. **"Could not be heard" is a third thing**, and it has been getting
+    scored as the second.
+
+    Derived from the transcript and the session metrics rather than recorded
+    live, so it can be recomputed for interviews that already happened when the
+    heuristics improve.
+    """
+
+    schema_version: Literal[1] = SCHEMA_VERSION
+
+    candidate_turns: int = 0
+    #: Turns too short to carry an answer. A few are normal ("yes", "sure"); a
+    #: lot of them means the words were not arriving.
+    fragmentary_turns: int = 0
+    #: Times the interviewer had to ask for something again.
+    repair_requests: int = 0
+    #: Turns that were our own speech coming back through their microphone,
+    #: usually laptop speakers instead of headphones.
+    echo_turns: int = 0
+    #: Silences long enough that the interviewer had to prompt.
+    prompted_silences: int = 0
+    dead_air_seconds: float = 0.0
+    disconnects: int = 0
+
+    #: Set when the interview ran normally. Kept explicit so a reader is told
+    #: "the recording was fine" rather than left to infer it from absent fields.
+    was_clean: bool = True
+
+    @property
+    def degraded(self) -> bool:
+        """True when the channel is a plausible explanation for thin answers.
+
+        Driven by the signals that only occur when something is actually wrong:
+        the interviewer having to ask again, our own voice returning, silences
+        long enough to prompt, a dropped call.
+
+        `fragmentary_turns` is deliberately **not** decisive on its own. It was,
+        and against eight real recorded interviews it flagged five, including
+        healthy ones, because the STT emits fillers and mid-sentence pieces as
+        separate turns in every session. It is still reported, because it is
+        useful colour next to a real problem, but a signal that fires on
+        everything cannot be the one that decides anything.
+        """
+        if self.candidate_turns == 0:
+            return False
+        return (
+            self.disconnects > 0
+            or self.prompted_silences >= 3
+            or self.repair_requests >= 3
+            or self.echo_turns >= 2
+            or (self.repair_requests + self.echo_turns) >= 3
+            # Fragments only matter when something real corroborates them.
+            or (
+                self.repair_requests + self.echo_turns >= 1
+                and self.fragmentary_turns >= max(4, round(0.3 * self.candidate_turns))
+            )
+        )
+
+    def as_sentence(self) -> str | None:
+        """Plain language for the report, or None when there is nothing to say."""
+        if not self.degraded:
+            return None
+        parts = []
+        if self.repair_requests:
+            parts.append(f"was asked to repeat themselves {self.repair_requests} times")
+        if self.fragmentary_turns:
+            parts.append(f"had {self.fragmentary_turns} answers arrive incomplete")
+        if self.echo_turns:
+            parts.append("was heard through their own speakers")
+        if self.prompted_silences:
+            parts.append(f"had {self.prompted_silences} long silences")
+        if self.disconnects:
+            parts.append(f"dropped out of the call {self.disconnects} times")
+        if not parts:
+            return None
+        joined = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+        return (
+            f"The recording was poor: the candidate {joined}. Where the evidence "
+            f"below is thin, the connection is a likely cause and not a "
+            f"conclusion about the candidate."
+        )
+
+
 class FeedbackReport(BaseModel):
     """Structured evidence for a human decision-maker.
 
@@ -382,6 +476,10 @@ class FeedbackReport(BaseModel):
     #: Competencies the interview never adequately covered. Surfaced prominently
     #: so a reader knows what this report cannot tell them.
     coverage_gaps: list[str] = Field(default_factory=list)
+
+    #: How well the candidate could actually be heard. Read this before reading
+    #: a low score: the two are easily confused and only one is about them.
+    conversation_health: ConversationHealth | None = None
 
     interview_duration_seconds: float = 0.0
 

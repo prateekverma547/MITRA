@@ -27,6 +27,7 @@ from openai import AsyncOpenAI
 from shared.branding import PROSE_STYLE
 from shared.contracts import (
     CompetencyScore,
+    ConversationHealth,
     Contradiction,
     CoverageLevel,
     EvaluationSpec,
@@ -68,6 +69,13 @@ done. Where a competency went unevidenced because they declined, say exactly
 that in the rationale and mark it insufficient_signal. Never write it up as a
 weakness. "Declined to answer" and "answered poorly" say different things about
 a person, and only one of them is about their ability.
+
+WHERE THE CANDIDATE COULD NOT BE HEARD.
+You may be told the recording was poor. If so, thin or broken answers are
+evidence about the connection, not about the person. Say that plainly in the
+rationale and mark the competency insufficient_signal rather than scoring it
+low. Someone with a cheap headset must not read as someone who could not
+answer.
 
 WHERE THE INTERVIEW RAN SHORT.
 If a section was squeezed or never properly reached, that is the interview's
@@ -252,6 +260,7 @@ class FeedbackScorer:
         transcript: Transcript,
         section_outcomes: list[dict] | None = None,
         contradictions: list[dict] | None = None,
+        health: ConversationHealth | None = None,
     ) -> FeedbackReport:
         outcomes = section_outcomes or []
 
@@ -264,14 +273,20 @@ class FeedbackScorer:
                 blueprint_id=blueprint_id,
                 spec=spec,
                 transcript=transcript,
+                health=health,
                 reason=(
                     "The candidate did not say anything that was recorded, so "
                     "there is nothing to assess. This says nothing about them."
                 ),
             )
 
+        channel = ""
+        if health is not None and health.degraded:
+            channel = f"RECORDING QUALITY:\n{health.as_sentence()}\n\n"
+
         user = (
             f"EVALUATION SPEC:\n{spec.model_dump_json(indent=2)}\n\n"
+            f"{channel}"
             f"WHAT THE INTERVIEWER RECORDED PER SECTION:\n{_render_sections(outcomes)}\n\n"
             f"TRANSCRIPT:\n{_render_transcript(transcript)}"
         )
@@ -297,6 +312,7 @@ class FeedbackScorer:
             transcript=transcript,
             payload=payload,
             contradictions=contradictions or [],
+            health=health,
         )
 
 
@@ -308,6 +324,7 @@ def build_report(
     transcript: Transcript,
     payload: dict,
     contradictions: list[dict] | None = None,
+    health: ConversationHealth | None = None,
 ) -> FeedbackReport:
     """Validate and anchor the model's report. Pure — no network, so it is testable.
 
@@ -404,8 +421,9 @@ def build_report(
         red_flags_observed=red_flags,
         contradictions=[Contradiction.model_validate(c) for c in (contradictions or [])],
         summary=str(payload.get("summary", "")).strip() or "No summary was produced.",
-        recommendation=_recommendation(payload.get("recommendation"), ordered, spec),
+        recommendation=_recommendation(payload.get("recommendation"), ordered, spec, health),
         coverage_gaps=gaps,
+        conversation_health=health,
         interview_duration_seconds=transcript.duration_seconds,
     )
 
@@ -437,7 +455,10 @@ CONFIDENT_SIGNAL_REQUIRES_WEIGHT = 0.75
 
 
 def _recommendation(
-    raw: object, scores: list[CompetencyScore], spec: EvaluationSpec
+    raw: object,
+    scores: list[CompetencyScore],
+    spec: EvaluationSpec,
+    health: "ConversationHealth | None" = None,
 ) -> RecommendationSignal:
     """Trust the model's signal, but never let it overstate thin evidence.
 
@@ -453,6 +474,15 @@ def _recommendation(
     assessed = {s.competency_id for s in scores if s.score is not None}
     if not assessed:
         return RecommendationSignal.INSUFFICIENT_SIGNAL
+
+    # A confident reading cannot be drawn from a recording the candidate could
+    # not be heard through. Capped rather than discarded: what was captured is
+    # still worth reading, it just cannot carry a strong claim.
+    if health is not None and health.degraded and signal in (
+        RecommendationSignal.STRONG_EVIDENCE_FOR,
+        RecommendationSignal.SOME_EVIDENCE_FOR,
+    ):
+        return RecommendationSignal.LIMITED_EVIDENCE
 
     total = sum(c.weight for c in spec.competencies) or 1.0
     covered = sum(c.weight for c in spec.competencies if c.id in assessed) / total
@@ -475,6 +505,7 @@ def _empty_report(
     spec: EvaluationSpec,
     transcript: Transcript,
     reason: str,
+    health: ConversationHealth | None = None,
 ) -> FeedbackReport:
     return FeedbackReport(
         interview_id=interview_id,
@@ -495,5 +526,6 @@ def _empty_report(
         summary=reason,
         recommendation=RecommendationSignal.INSUFFICIENT_SIGNAL,
         coverage_gaps=[c.name for c in spec.competencies],
+        conversation_health=health,
         interview_duration_seconds=transcript.duration_seconds,
     )

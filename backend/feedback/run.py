@@ -17,6 +17,7 @@ from loguru import logger
 
 from shared.contracts import EvaluationSpec, FeedbackReport, Transcript
 
+from feedback.health import assess
 from feedback.score import FeedbackError, FeedbackScorer
 
 
@@ -71,6 +72,7 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
         await session.commit()
 
         transcript_payload = interview.transcript
+        metrics = interview.session_metrics or {}
         outcomes = interview.section_outcomes or []
         blueprint_payload = candidate.blueprint
         blueprint_id = candidate.id
@@ -83,6 +85,10 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
         scorer = FeedbackScorer(
             api_key=settings.openai_api_key, model=settings.feedback_model
         )
+        # Derived here, not recorded live, so rebuilding an old report picks
+        # up whatever the heuristics have learned since.
+        health = assess(transcript, metrics, repair_requests=_repairs(metrics))
+
         report = await scorer.score(
             interview_id=interview_id,
             blueprint_id=blueprint_id,
@@ -90,6 +96,7 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
             transcript=transcript,
             section_outcomes=outcomes,
             contradictions=_contradictions(outcomes),
+            health=health,
         )
     except (FeedbackError, Exception) as exc:  # noqa: BLE001
         logger.error(f"[{interview_id}] feedback generation failed: {exc}")
@@ -117,6 +124,17 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
         f"competencies scored, {len(report.coverage_gaps)} gaps"
     )
     return report
+
+
+def _repairs(metrics: dict) -> int:
+    """How many times the interviewer had to ask for something again.
+
+    Recorded by the brain rather than inferred from its wording: guessing at our
+    own behaviour from our own transcript would be the least reliable source
+    available.
+    """
+    events = metrics.get("brain_events") or []
+    return sum(1 for e in events if e.get("kind") == "repair")
 
 
 def _contradictions(outcomes: list[dict]) -> list[dict]:

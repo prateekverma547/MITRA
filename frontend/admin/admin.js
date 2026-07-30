@@ -768,6 +768,7 @@ function reportCard(iv) {
   }
 
   const r = iv.feedback_report;
+  const health = r.conversation_health;
   const scored = r.competency_scores.filter((s) => s.score !== null);
   const average = scored.length
     ? scored.reduce((a, s) => a + s.score, 0) / scored.length
@@ -794,6 +795,8 @@ function reportCard(iv) {
       <p class="small muted" style="margin:14px 0 0">
         Evidence for a person to weigh, not a hiring decision. Every score below
         is backed by quotes you can check against the transcript.</p>
+      ${health && health.degraded ? `<div class="note" style="margin:14px 0 0">
+        <strong>Read this first.</strong> ${esc(healthSentence(health))}</div>` : ""}
       <div class="spread" style="margin-top:16px;align-items:center">
         <span class="small muted">
           ${rebuilding
@@ -839,6 +842,22 @@ function reportCard(iv) {
       <h3 style="margin-top:0">Written summary</h3>
       <p style="margin-bottom:0;white-space:pre-wrap">${esc(r.summary)}</p>
     </div>`;
+}
+
+/** Why the recording, rather than the candidate, may explain a thin report.
+ *  Built here rather than sent as prose so the panel can word it its own way. */
+function healthSentence(h) {
+  const parts = [];
+  if (h.repair_requests) parts.push(`was asked to repeat themselves ${h.repair_requests} times`);
+  if (h.fragmentary_turns) parts.push(`had ${h.fragmentary_turns} answers arrive incomplete`);
+  if (h.echo_turns) parts.push("was heard through their own speakers rather than headphones");
+  if (h.prompted_silences) parts.push(`went quiet ${h.prompted_silences} times long enough to be prompted`);
+  if (h.disconnects) parts.push(`dropped out of the call ${h.disconnects} times`);
+  const list = parts.length > 1
+    ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1]
+    : parts[0] || "could not be heard clearly";
+  return `The recording was poor: the candidate ${list}. Where the scores below `
+    + `are thin, the connection is a likely cause and not a conclusion about them.`;
 }
 
 function competencyCard(s) {
