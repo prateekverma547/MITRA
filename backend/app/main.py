@@ -682,6 +682,15 @@ def _render_page(name: str) -> str:
     return html
 
 
+#: Pages and scripts are rendered from files that change on every deploy, and
+#: nothing in their URLs changes with them. Without this the browser is free to
+#: reuse whatever it fetched last time and never ask again, which is exactly
+#: what it did: a deploy landed, the API served the new data, and the panel kept
+#: running last week's JavaScript against it. The bodies are a few tens of KB,
+#: so revalidating every time costs nothing worth measuring.
+NO_CACHE = {"Cache-Control": "no-cache, must-revalidate", "Pragma": "no-cache"}
+
+
 @app.get("/join", include_in_schema=False)
 async def join_page() -> HTMLResponse:
     """The candidate's entry point.
@@ -689,7 +698,7 @@ async def join_page() -> HTMLResponse:
     Serving this from the backend keeps the candidate on our own domain: they
     see a meeting ID prompt and a consent notice, never a Daily URL.
     """
-    return HTMLResponse(_render_page("candidate/index.html"))
+    return HTMLResponse(_render_page("candidate/index.html"), headers=NO_CACHE)
 
 
 @app.get("/assets/{filename}", include_in_schema=False)
@@ -722,12 +731,16 @@ async def admin_page() -> HTMLResponse:
     interview transcript in the database. The page itself renders the sign-in
     screen, so it is reachable while the data behind it is not.
     """
-    return HTMLResponse(_render_page("admin/index.html"))
+    return HTMLResponse(_render_page("admin/index.html"), headers=NO_CACHE)
 
 
 @app.get("/admin/admin.js", include_in_schema=False)
 async def admin_script() -> Response:
-    return Response(_render_page("admin/admin.js"), media_type="application/javascript")
+    return Response(
+        _render_page("admin/admin.js"),
+        media_type="application/javascript",
+        headers=NO_CACHE,
+    )
 
 
 @app.post("/candidates/{candidate_id}/refine", dependencies=[Depends(require_admin)])

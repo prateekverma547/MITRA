@@ -1094,3 +1094,21 @@ async def test_both_screens_show_the_same_credentials(client):
 
     for field in ("meeting_id", "password"):
         assert from_list[field] == from_detail[field] == created[field]
+
+
+async def test_the_panel_and_its_script_are_never_cached(client):
+    """A deploy changes these files but not their URLs. Without this the browser
+    reuses what it fetched last time and never asks again, so a shipped fix can
+    sit on the server while the panel keeps running the old code against it."""
+    for path in ("/admin", "/admin/admin.js", "/join"):
+        headers = client.get(path).headers
+        assert "no-cache" in headers.get("cache-control", ""), path
+
+
+async def test_artwork_is_still_cached(client):
+    """It does not change between deploys, and re-fetching it on every page
+    load is waste."""
+    from shared.branding import LOGO_URL
+
+    cache = client.get(LOGO_URL).headers.get("cache-control", "")
+    assert "max-age" in cache and "no-cache" not in cache
