@@ -2,27 +2,33 @@
 
 Every interview is a child process holding a WebRTC connection, a VAD model and
 a turn-detection model. Measured at ~224MB resident while idle, more once audio
-is flowing. The Railway replica limit is 1GB, and CLAUDE.md pins replicas at 1
-because a bot is a child of one specific container.
+is flowing. CLAUDE.md pins replicas at 1 because a bot is a child of one
+specific container, so this number is the whole capacity of the deployment.
 
 Without a cap the failure is not "the new interview is slow". The container hits
 its memory limit, the OOM killer takes a process, and Railway restarts the
 container — which kills **every** in-flight interview, including the ones that
 were running fine. One candidate clicking join can end three other people's
-interviews. That asymmetry is the whole reason this file exists: refusing the
-third candidate costs one rescheduled interview, and accepting them costs all
-of them.
+interviews. That asymmetry is the whole reason this file exists: refusing one
+candidate costs one rescheduled interview, and accepting them costs all of them.
 
-The arithmetic behind the default:
+The arithmetic behind the default, against Railway's 8GB / 8 vCPU replica:
 
-    1024MB replica limit
-    - 250MB  backend (FastAPI, SQLAlchemy, asyncpg, the Python base image)
-    =  774MB for bots
-    / ~300MB per bot under load
-    =  2 concurrent interviews
+    8192MB replica limit
+    -  400MB  backend (FastAPI, SQLAlchemy, asyncpg, the Python base image)
+    / ~400MB per bot under load
+    =  ~19 concurrent interviews before memory binds
 
-Set `MAX_CONCURRENT_INTERVIEWS` to raise it after raising the replica's memory.
-Raising it without raising memory converts a clean refusal into an outage.
+Memory is not what binds first, though. Each bot runs Silero VAD continuously
+and smart-turn inference at every turn end, on top of WebRTC encode/decode —
+sustained CPU, not bursts. **Per-bot CPU has not been measured**, so the default
+below is set well under the memory ceiling rather than at it: 6 bots is ~2.4GB
+of 8GB and leaves better than a vCPU each.
+
+Raise `MAX_CONCURRENT_INTERVIEWS` once the Railway Metrics tab shows what
+concurrent interviews actually cost in CPU. Raising it past what the replica can
+carry converts a clean refusal into an outage, which is the trade this file
+exists to avoid — so raise it from a measurement, not from optimism.
 """
 
 import asyncio
@@ -30,7 +36,7 @@ import os
 
 from loguru import logger
 
-DEFAULT_MAX_CONCURRENT = 2
+DEFAULT_MAX_CONCURRENT = 6
 
 
 class AtCapacity(RuntimeError):
