@@ -273,6 +273,94 @@ async def test_rejoining_does_not_start_a_second_bot(client):
     assert len(client.spawned) == 1
 
 
+async def test_a_join_is_refused_when_the_container_is_full(client, monkeypatch):
+    """Refusing one candidate beats OOM-killing everyone else's interview."""
+    from app.capacity import registry
+
+    monkeypatch.setenv("MAX_CONCURRENT_INTERVIEWS", "1")
+
+    class Running:
+        returncode = None
+
+    registry.register("int_someone_else", Running())
+    try:
+        candidate_id = await make_candidate()
+        created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+        response = client.post(
+            "/interviews/join",
+            json={
+                "meeting_id": created["meeting_id"],
+                "password": created["password"],
+                "consent": True,
+            },
+        )
+
+        assert response.status_code == 503
+        assert "still valid" in response.json()["detail"]
+        assert client.spawned == []
+    finally:
+        registry.release("int_someone_else")
+
+
+async def test_a_refused_join_does_not_record_consent(client, monkeypatch):
+    """Consent means "this interview is being recorded". If no interview
+    happened, storing an acceptance would put a false record against a person."""
+    from app import db
+    from app.capacity import registry
+
+    monkeypatch.setenv("MAX_CONCURRENT_INTERVIEWS", "1")
+
+    class Running:
+        returncode = None
+
+    registry.register("int_someone_else", Running())
+    try:
+        candidate_id = await make_candidate()
+        created = client.post(f"/candidates/{candidate_id}/interviews").json()
+        client.post(
+            "/interviews/join",
+            json={
+                "meeting_id": created["meeting_id"],
+                "password": created["password"],
+                "consent": True,
+            },
+        )
+
+        async with db.get_sessionmaker()() as session:
+            interview = await session.get(db.Interview, created["interview_id"])
+            assert interview.consent_accepted_at is None
+            assert interview.status == db.InterviewStatus.SCHEDULED
+    finally:
+        registry.release("int_someone_else")
+
+
+async def test_capacity_does_not_block_a_candidate_rejoining(client, monkeypatch):
+    """Their bot is already running, so reconnecting costs no new memory.
+    Refusing them would strand someone mid-interview on a dropped connection."""
+    from app.capacity import registry
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    payload = {
+        "meeting_id": created["meeting_id"],
+        "password": created["password"],
+        "consent": True,
+    }
+    assert client.post("/interviews/join", json=payload).status_code == 200
+
+    monkeypatch.setenv("MAX_CONCURRENT_INTERVIEWS", "1")
+
+    class Running:
+        returncode = None
+
+    registry.register("int_someone_else", Running())
+    try:
+        assert client.post("/interviews/join", json=payload).status_code == 200
+    finally:
+        registry.release("int_someone_else")
+
+
 async def test_expired_room_is_refused(client):
     from app import db
 

@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.auth import require_admin
+from app.capacity import AtCapacity, registry
 from app.db import (
     BlueprintStatus,
     Candidate,
@@ -219,6 +220,22 @@ async def join_interview(request: JoinRequest) -> JoinResponse:
         candidate = await session.get(Candidate, interview.candidate_id)
         already_running = interview.status == InterviewStatus.IN_PROGRESS
 
+        # Checked before minting tokens or recording consent. Turning a
+        # candidate away is bad; taking their consent and their Daily token and
+        # then failing to seat them is worse.
+        if not already_running:
+            try:
+                registry.claim()
+            except AtCapacity as exc:
+                logger.warning(f"[{interview.id}] join refused — {exc}")
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "All interview slots are busy right now. Your link is "
+                        "still valid — please try again in a few minutes."
+                    ),
+                ) from exc
+
         # Recorded against the interview it applies to, at the moment it was
         # given. First acceptance wins — a reconnect is not a fresh consent.
         if interview.consent_accepted_at is None:
@@ -278,7 +295,7 @@ async def _start_bot(
             await session.commit()
 
     try:
-        await asyncio.create_subprocess_exec(
+        process = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
             "bot.run_bot",
@@ -302,6 +319,7 @@ async def _start_bot(
             status_code=500, detail="The interviewer could not be started."
         ) from exc
 
+    registry.register(interview_id, process)
     logger.info(f"[{interview_id}] bot spawned")
 
 
