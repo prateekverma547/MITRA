@@ -459,6 +459,10 @@ async def list_interviews(candidate_id: str) -> list[dict]:
             {
                 "interview_id": row.id,
                 "meeting_id": row.meeting_id,
+                # Both halves of the credential, or the candidate page can show
+                # a meeting ID that opens nothing. This is an admin-only route,
+                # and the password is the thing the employer has to pass on.
+                "password": row.password,
                 "status": row.status,
                 "created_at": row.created_at,
                 "ended_at": row.ended_at,

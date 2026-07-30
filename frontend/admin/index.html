@@ -83,8 +83,32 @@
     .err { color: var(--bad); margin-top: 10px; }
     .cred {
       background: #f0f4ff; border: 1px solid #c8d6f7; border-radius: 10px;
-      padding: 16px; font-size: 15px;
+      padding: 14px 16px; font-size: 15px; margin-top: 14px;
     }
+    /* One row per fact, each copyable on its own: these get retyped into an
+       email otherwise, and a mistyped password is a candidate locked out. */
+    .credline {
+      display: flex; align-items: center; gap: 10px; padding: 7px 0;
+      border-top: 1px solid #dbe4fa;
+    }
+    .credline:first-of-type { border-top: 0; padding-top: 10px; }
+    .credlabel {
+      color: var(--muted); font-size: 12px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      min-width: 88px; flex-shrink: 0;
+    }
+    .credline strong { overflow-wrap: anywhere; }
+    button.copy {
+      margin-left: auto; flex-shrink: 0; padding: 5px 8px; line-height: 1;
+      color: var(--accent); border-color: #c8d6f7; background: #fff;
+      min-width: 32px;
+    }
+    button.copy:hover { border-color: var(--accent); }
+    button.copy-all {
+      padding: 5px 11px; font-size: 12.5px;
+      color: var(--accent); border-color: #c8d6f7; background: #fff;
+    }
+    button.copied { color: var(--ok); border-color: #bfe3d0; background: #f0f9f4; }
 
     /* Links styled as buttons: navigation stays real <a href> so back,
        middle-click and copy-link-address all work. */

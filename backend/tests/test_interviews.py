@@ -1068,3 +1068,29 @@ async def test_the_sign_in_screen_shows_the_logo(client):
 
     assert LOGO_URL in script
     assert "{{" not in script  # every placeholder substituted
+
+
+async def test_the_session_list_carries_the_password(client):
+    """The candidate screen reads sessions from this list. Without the password
+    it showed a meeting ID that opens nothing, which is a credential the
+    employer cannot pass on."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    listed = client.get(f"/candidates/{candidate_id}/interviews").json()[0]
+
+    assert listed["meeting_id"] == created["meeting_id"]
+    assert listed["password"] == created["password"]
+
+
+async def test_both_screens_show_the_same_credentials(client):
+    """The candidate screen and the session screen must agree; they are the same
+    three facts and the employer reads whichever is in front of them."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    from_list = client.get(f"/candidates/{candidate_id}/interviews").json()[0]
+    from_detail = client.get(f"/interviews/{created['interview_id']}").json()
+
+    for field in ("meeting_id", "password"):
+        assert from_list[field] == from_detail[field] == created[field]

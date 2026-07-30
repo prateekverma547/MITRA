@@ -139,6 +139,87 @@ function renderLogin() {
   document.getElementById("pw").onkeydown = (e) => { if (e.key === "Enter") submit(); };
 }
 
+// -- credentials ------------------------------------------------------------
+//
+// One block, used on both the candidate screen and the session screen, because
+// these are the same three facts and they must not drift apart.
+//
+// Everything here exists to be copied. The employer's job at this point is to
+// get a link, an ID and a password into an email without transcribing them by
+// hand, so each line copies on its own and there is one button that copies the
+// lot as a ready message.
+
+const COPY_ICON = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+  stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+  aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/>
+  <path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`;
+
+function copyButton(value, label) {
+  return `<button class="copy" data-copy="${esc(value)}"
+    title="Copy ${esc(label)}" aria-label="Copy ${esc(label)}">${COPY_ICON}</button>`;
+}
+
+function credentials(interview) {
+  const url = `${location.origin}/join`;
+  const id = interview.meeting_id || "";
+  const password = interview.password || "";
+  const message =
+    `Interview link: ${url}\n` +
+    `Meeting ID: ${id}\n` +
+    `Password: ${password}`;
+
+  return `
+    <div class="cred">
+      <div class="spread" style="align-items:center">
+        <div class="small muted">Send the candidate</div>
+        <button class="copy-all" data-copy="${esc(message)}">Copy all three</button>
+      </div>
+      <div class="credline">
+        <span class="credlabel">Link</span>
+        <strong>${esc(url)}</strong>
+        ${copyButton(url, "the interview link")}
+      </div>
+      <div class="credline">
+        <span class="credlabel">Meeting ID</span>
+        <strong class="mono">${esc(id)}</strong>
+        ${copyButton(id, "the meeting ID")}
+      </div>
+      <div class="credline">
+        <span class="credlabel">Password</span>
+        <strong class="mono">${esc(password) || '<span class="muted">not available</span>'}</strong>
+        ${password ? copyButton(password, "the password") : ""}
+      </div>
+    </div>`;
+}
+
+/** Copy on click, with the button saying so. Delegated, so it survives every
+ *  re-render without rebinding. */
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-copy]");
+  if (!button) return;
+  const text = button.getAttribute("data-copy");
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Clipboard API needs a secure context. Fall back rather than fail silently.
+    const scratch = document.createElement("textarea");
+    scratch.value = text;
+    scratch.style.position = "fixed";
+    scratch.style.opacity = "0";
+    document.body.appendChild(scratch);
+    scratch.select();
+    document.execCommand("copy");
+    scratch.remove();
+  }
+  const original = button.innerHTML;
+  button.classList.add("copied");
+  button.innerHTML = button.classList.contains("copy-all") ? "Copied" : "✓";
+  setTimeout(() => {
+    button.innerHTML = original;
+    button.classList.remove("copied");
+  }, 1400);
+});
+
 // ---------------------------------------------------------------- profiles
 
 async function viewProfiles() {
@@ -493,14 +574,7 @@ async function viewCandidate(candidateId) {
         ${open ? "" : `<button class="primary" id="start">Start interview</button>`}
       </div>
       ${open ? `
-        <div class="cred" style="margin-top:14px">
-          <div class="small muted" style="margin-bottom:6px">Send the candidate:</div>
-          <div><strong>${location.origin}/join</strong></div>
-          <div style="margin-top:8px">
-            Meeting ID <strong class="mono">${esc(open.meeting_id)}</strong> ·
-            Password <strong class="mono">${esc(open.password || "")}</strong>
-          </div>
-        </div>
+        ${credentials(open)}
         <div class="row" style="margin-top:14px">
           <a class="btn" href="#/interviews/${open.interview_id}">Open session</a>
           ${open.status === "scheduled"
@@ -627,14 +701,7 @@ async function viewInterview(interviewId) {
 
     <div class="card">
       <div class="spread"><h2 style="margin:0">Interview session</h2>${pill(iv.status)}</div>
-      <div class="cred" style="margin-top:14px">
-        <div class="small muted" style="margin-bottom:6px">Send the candidate:</div>
-        <div><strong>${location.origin}/join</strong></div>
-        <div style="margin-top:8px">
-          Meeting ID <strong class="mono">${esc(iv.meeting_id)}</strong> ·
-          Password <strong class="mono">${esc(iv.password)}</strong>
-        </div>
-      </div>
+      ${credentials(iv)}
       ${iv.failure_reason ? `<div class="err">${esc(iv.failure_reason)}</div>` : ""}
     </div>
 
