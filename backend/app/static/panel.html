@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{BOT_NAME}} — Employer Panel</title>
+  <style>
+    :root {
+      --ink: #12141a; --muted: #5c6272; --line: #e3e6ec; --accent: #2f5bd7;
+      --bg: #f7f8fa; --ok: #1c8f5a; --warn: #b06f14; --bad: #b3261e;
+      --panel: #fff; --code: #f4f6fb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    header {
+      background: #fff; border-bottom: 1px solid var(--line);
+      padding: 14px 24px; display: flex; align-items: center; gap: 14px;
+      position: sticky; top: 0; z-index: 10;
+    }
+    header .brand { font-weight: 700; letter-spacing: -0.01em; }
+    header .sub { color: var(--muted); font-size: 13px; }
+    main { max-width: 1080px; margin: 0 auto; padding: 26px 24px 80px; }
+    h2 { font-size: 19px; margin: 0 0 4px; letter-spacing: -0.01em; }
+    h3 { font-size: 15px; margin: 26px 0 10px; }
+    p.sub { color: var(--muted); margin: 0 0 18px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 12px; padding: 22px; margin-bottom: 16px;
+    }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .spread { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+    button {
+      padding: 10px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+      border-radius: 8px; border: 1px solid var(--line); background: #fff; color: var(--ink);
+    }
+    button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    input[type=text], textarea {
+      width: 100%; padding: 10px 12px; font: inherit;
+      border: 1px solid var(--line); border-radius: 8px;
+    }
+    textarea { min-height: 76px; resize: vertical; }
+    .pill {
+      display: inline-block; padding: 2px 9px; border-radius: 999px;
+      font-size: 12px; font-weight: 600; border: 1px solid var(--line);
+    }
+    .pill.ok { color: var(--ok); border-color: #bfe3d0; background: #f0f9f4; }
+    .pill.warn { color: var(--warn); border-color: #f0dcb8; background: #fdf7ec; }
+    .pill.bad { color: var(--bad); border-color: #f2c9c6; background: #fdf1f0; }
+    .list-item {
+      border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px;
+      margin-bottom: 9px; background: #fff; cursor: pointer;
+    }
+    .list-item:hover { border-color: var(--accent); }
+    .muted { color: var(--muted); }
+    .small { font-size: 13px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .bar { height: 7px; background: var(--accent); border-radius: 4px; }
+    .chat { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+    .msg { padding: 12px 15px; border-radius: 11px; max-width: 78%; }
+    .msg.ai { background: var(--code); align-self: flex-start; }
+    .msg.me { background: var(--accent); color: #fff; align-self: flex-end; }
+    .turn { padding: 9px 0; border-bottom: 1px solid var(--line); }
+    .turn .who { font-weight: 600; font-size: 13px; }
+    .turn .who.int { color: var(--accent); }
+    .kv { display: grid; grid-template-columns: 200px 1fr; gap: 6px 14px; font-size: 14px; }
+    .kv div:nth-child(odd) { color: var(--muted); }
+    pre {
+      background: var(--code); border: 1px solid var(--line); border-radius: 9px;
+      padding: 13px; overflow-x: auto; font-size: 12.5px; margin: 0;
+    }
+    .hidden { display: none !important; }
+    .crumb { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+    .crumb a { color: var(--accent); cursor: pointer; text-decoration: none; }
+    .err { color: var(--bad); margin-top: 10px; }
+    .cred {
+      background: #f0f4ff; border: 1px solid #c8d6f7; border-radius: 10px;
+      padding: 16px; font-size: 15px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="brand">{{BOT_NAME}}</span>
+    <span class="sub">Employer panel</span>
+  </header>
+  <main id="app">Loading…</main>
+  <script src="/static/panel.js"></script>
+</body>
+</html>

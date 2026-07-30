@@ -531,3 +531,58 @@ def test_railway_postgres_scheme_is_rewritten_for_asyncpg(monkeypatch):
 
     monkeypatch.setenv("DATABASE_URL", "postgres://user:pw@host:5432/railway")
     assert database_url() == "postgresql+asyncpg://user:pw@host:5432/railway"
+
+
+# -- employer panel ----------------------------------------------------------
+
+
+async def test_panel_is_served_with_branding(client):
+    response = client.get("/panel")
+
+    assert response.status_code == 200
+    assert "Mitra" in response.text
+    assert "{{" not in response.text  # every placeholder substituted
+
+
+async def test_panel_script_is_served_as_javascript(client):
+    response = client.get("/static/panel.js")
+
+    assert response.status_code == 200
+    assert "javascript" in response.headers["content-type"]
+    assert "{{" not in response.text
+
+
+async def test_jobs_and_candidates_can_be_listed(client):
+    """The panel needs these; nothing else did, so they did not exist."""
+    candidate_id = await make_candidate()
+
+    jobs = client.get("/jobs").json()
+    assert len(jobs) == 1
+    assert jobs[0]["job_id"] == "job_1"
+
+    candidates = client.get("/jobs/job_1/candidates").json()
+    assert [c["candidate_id"] for c in candidates] == [candidate_id]
+    assert candidates[0]["blueprint_status"] == "ready"
+
+
+async def test_candidate_listing_surfaces_generation_failures(client):
+    """A blueprint that failed must be visible in the list, not silently absent."""
+    from app import db
+
+    await make_candidate()
+    async with db.get_sessionmaker()() as session:
+        session.add(
+            db.Candidate(
+                id="cand_broken",
+                job_id="job_1",
+                cv_text="cv",
+                blueprint_status=db.BlueprintStatus.FAILED,
+                blueprint_error="model unavailable",
+            )
+        )
+        await session.commit()
+
+    rows = client.get("/jobs/job_1/candidates").json()
+    broken = next(r for r in rows if r["candidate_id"] == "cand_broken")
+    assert broken["blueprint_status"] == "failed"
+    assert broken["blueprint_error"] == "model unavailable"

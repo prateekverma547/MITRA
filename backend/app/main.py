@@ -14,7 +14,7 @@ from pathlib import Path
 from datetime import UTC, datetime
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -223,6 +223,44 @@ async def get_job(job_id: str) -> dict:
 # --------------------------------------------------------------------------
 
 
+@app.get("/jobs")
+async def list_jobs() -> list[dict]:
+    """Every role being hired for, newest first."""
+    async with get_sessionmaker()() as session:
+        rows = await session.scalars(select(Job).order_by(Job.created_at.desc()))
+        return [
+            {
+                "job_id": row.id,
+                "role_title": (row.evaluation_spec or {}).get("role_title"),
+                "source_filename": row.source_filename,
+                "spec_status": row.spec_status,
+                "created_at": row.created_at,
+            }
+            for row in rows
+        ]
+
+
+@app.get("/jobs/{job_id}/candidates")
+async def list_candidates(job_id: str) -> list[dict]:
+    async with get_sessionmaker()() as session:
+        rows = await session.scalars(
+            select(Candidate)
+            .where(Candidate.job_id == job_id)
+            .order_by(Candidate.created_at.desc())
+        )
+        return [
+            {
+                "candidate_id": row.id,
+                "name": row.name,
+                "source_filename": row.source_filename,
+                "blueprint_status": row.blueprint_status,
+                "blueprint_error": row.blueprint_error,
+                "created_at": row.created_at,
+            }
+            for row in rows
+        ]
+
+
 @app.post("/jobs/{job_id}/candidates", response_model=CandidateCreated)
 async def create_candidate(
     job_id: str,
@@ -350,15 +388,15 @@ async def get_candidate(candidate_id: str) -> BlueprintResponse:
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-@lru_cache(maxsize=1)
-def _join_page() -> str:
+@lru_cache(maxsize=2)
+def _render_page(name: str) -> str:
     """The candidate page with branding substituted in.
 
     Read and rendered once. The name reaches the candidate through the spoken
     introduction, the call, and this page, and all three read from
     shared/branding.py so they cannot drift apart.
     """
-    html = (STATIC_DIR / "join.html").read_text()
+    html = (STATIC_DIR / name).read_text()
     for token, value in (
         ("{{BOT_NAME}}", BOT_NAME),
         ("{{BOT_FULL_NAME}}", BOT_FULL_NAME),
@@ -375,7 +413,23 @@ async def join_page() -> HTMLResponse:
     Serving this from the backend keeps the candidate on our own domain: they
     see a meeting ID prompt and a consent notice, never a Daily URL.
     """
-    return HTMLResponse(_join_page())
+    return HTMLResponse(_render_page("join.html"))
+
+
+@app.get("/panel", include_in_schema=False)
+async def panel_page() -> HTMLResponse:
+    """The employer panel: JD -> clarification -> CV -> blueprint -> interview.
+
+    Unauthenticated for the POC. Multi-tenant auth is explicitly out of scope
+    (CLAUDE.md), but this must not be exposed to real candidates or real
+    employers as-is: it lists every job and every CV in the database.
+    """
+    return HTMLResponse(_render_page("panel.html"))
+
+
+@app.get("/static/panel.js", include_in_schema=False)
+async def panel_script() -> Response:
+    return Response(_render_page("panel.js"), media_type="application/javascript")
 
 
 @app.get("/health")
