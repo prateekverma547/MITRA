@@ -91,3 +91,31 @@ async def save_interview_result(
             f"[{interview_id}] COULD NOT SAVE TRANSCRIPT: {exc}. "
             f"The session file on disk is now the only copy."
         )
+        return
+
+    # Only now, with the complete transcript committed, does scoring start.
+    # Deliberately after the commit and outside its try block: the transcript is
+    # the thing that must survive, and a scoring failure must never be able to
+    # take it down with it.
+    if failure_reason is None:
+        await _score_in_the_background(interview_id)
+
+
+async def _score_in_the_background(interview_id: str) -> None:
+    """Kick off scoring at the moment its input exists, not when it is read.
+
+    Awaited here rather than left as a loose task: this runs in the bot's
+    shutdown path, and a task abandoned at process exit would never finish. The
+    interview is already over, so the wait costs the candidate nothing — and if
+    the process dies anyway, `feedback_status` stays retryable.
+    """
+    try:
+        from feedback.run import generate_feedback
+
+        logger.info(f"[{interview_id}] scoring the completed transcript")
+        await generate_feedback(interview_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            f"[{interview_id}] feedback could not be generated: {exc}. "
+            f"The transcript is saved; scoring can be retried from the panel."
+        )

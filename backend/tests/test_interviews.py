@@ -905,3 +905,65 @@ async def test_starting_an_interview_requires_signing_in(client):
     client.cookies.clear()
 
     assert client.post(f"/candidates/{candidate_id}/interviews").status_code == 401
+
+
+# -- feedback ----------------------------------------------------------------
+
+
+async def test_feedback_can_be_retried_for_a_completed_interview(client, monkeypatch):
+    """Scoring normally happens by itself. This is the path for when the bot
+    process was killed mid-scoring, or the model call failed."""
+    from app import db, interviews
+
+    scored = []
+
+    async def fake_generate(interview_id):
+        scored.append(interview_id)
+
+    monkeypatch.setattr("feedback.run.generate_feedback", fake_generate)
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, created["interview_id"])
+        interview.status = db.InterviewStatus.COMPLETED
+        interview.feedback_status = db.FeedbackStatus.FAILED
+        interview.feedback_error = "model unavailable"
+        await session.commit()
+
+    response = client.post(f"/interviews/{created['interview_id']}/feedback")
+
+    assert response.status_code == 200
+    assert scored == [created["interview_id"]]
+    # The previous failure is cleared so the panel does not keep showing it.
+    view = client.get(f"/interviews/{created['interview_id']}").json()
+    assert view["feedback_error"] is None
+
+
+async def test_an_unfinished_interview_cannot_be_scored(client):
+    """There is no complete transcript yet, and scoring a partial one would
+    judge someone on half a conversation."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    response = client.post(f"/interviews/{created['interview_id']}/feedback")
+
+    assert response.status_code == 409
+    assert "completed" in response.json()["detail"]
+
+
+async def test_scoring_is_not_started_twice_concurrently(client):
+    from app import db
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, created["interview_id"])
+        interview.status = db.InterviewStatus.COMPLETED
+        interview.feedback_status = db.FeedbackStatus.GENERATING
+        await session.commit()
+
+    response = client.post(f"/interviews/{created['interview_id']}/feedback")
+
+    assert response.status_code == 409
+    assert "already running" in response.json()["detail"]

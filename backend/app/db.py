@@ -105,6 +105,15 @@ class InterviewStatus(StrEnum):
     EXPIRED = "expired"
 
 
+class FeedbackStatus(StrEnum):
+    """Where the post-interview scoring got to."""
+
+    PENDING = "pending"
+    GENERATING = "generating"
+    READY = "ready"
+    FAILED = "failed"
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -251,8 +260,16 @@ class Interview(Base):
     section_outcomes: Mapped[list[dict[str, Any]] | None] = mapped_column(
         JSON, nullable=True
     )
-    #: Populated by Milestone 4.
+    #: Scored once, at the end, from the complete transcript above.
     feedback_report: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: pending | generating | ready | failed. Its own column rather than a
+    #: null check on the report, so "not scored yet" and "scoring failed" stay
+    #: distinguishable — otherwise a failure looks like work still in progress
+    #: and nobody ever retries it.
+    feedback_status: Mapped[str] = mapped_column(
+        String(32), default=FeedbackStatus.PENDING, server_default=FeedbackStatus.PENDING
+    )
+    feedback_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     #: Latency, turn-taking, silence and brain-transition telemetry.
     #:

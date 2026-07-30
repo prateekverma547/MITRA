@@ -46,6 +46,8 @@ interviewer/
 │   │                   # clarification chat, bot spawning, feedback jobs
 │   ├── blueprint/      # JD+CV parsing and interview blueprint generation
 │   ├── bot/            # Pipecat pipeline + interview brain
+│   ├── feedback/       # post-interview scoring: runs once, at the end, from
+│   │                   # the complete transcript. Never on the live path.
 │   ├── shared/         # Pydantic contracts (see Data contracts)
 │   └── requirements.txt
 ├── frontend/
@@ -171,6 +173,17 @@ Pipecat bot that joins a Daily room and conducts a spoken interview for a fixed 
 ### Milestone 4 — Feedback report
 - On `completed`, a BackgroundTask scores the transcript against the EvaluationSpec → FeedbackReport stored in Postgres. Same pattern as blueprint generation: kicked off the moment the interview completes, not when someone opens the report.
 - Every score must cite transcript evidence (quotes + timestamps). No evidence → mark "insufficient signal," never invent.
+- **Scoring runs once, at the end, against the complete saved transcript.** Never incrementally, never between turns, never on the conversational path. It is triggered in the bot's shutdown path *after* the transcript commit and outside its try block — the transcript is the thing that must survive, and a scoring failure must never be able to take it down with it. `POST /interviews/{id}/feedback` is a retry for when the process was killed mid-scoring, not the trigger.
+- **Quotes are verified in code, not trusted** (`feedback/score.py`). A model asked for verbatim evidence will occasionally produce a plausible sentence the candidate never said, and a fabricated quote inside a hiring record is the worst failure this product has. So:
+  - Every quote is matched against the transcript on lowercase alphanumerics — loose enough to survive the model tidying punctuation, strict enough to catch invention.
+  - A quote found at a different turn than claimed is **re-anchored**, not dropped: the model miscounted, but the words were said.
+  - A quote found nowhere is dropped. If that leaves a score with no evidence, the score is **downgraded to insufficient signal** rather than published on the strength of something invented.
+  - Only candidate turns count. Otherwise the bot's own question becomes the candidate's answer.
+  - An unevidenced red flag is dropped entirely — it is an accusation, not a finding.
+  - Verified against a real transcript: 6/6 quotes independently confirmed, and a deliberately poisoned report had its invented quote, its invented red flag ("Admitted to falsifying metrics") and its inflated `strong_evidence_for` all removed.
+- **Confidence is capped by weighted coverage, not by count.** A confident signal requires ≥75% of the spec *by employer weight* to have been assessed; below that the recommendation is capped at `limited_evidence`. Covering one of two competencies means something different depending on whether it was the 60% one or the 40% one, and counting cannot tell them apart.
+- **A candidate is scored against the spec snapshot inside their own blueprint**, not the profile's current spec. This is what makes the M5 revision rule safe: revise a profile and an already-interviewed candidate's report still measures them against what they were actually asked.
+- Report layout is scores-and-evidence first, written summary last (employer's call). A reader who only looks at the top should see what the transcript supports, not a paragraph telling them what to think.
 - **DoD:** report generated for the Milestone 3 mock interview; JSON retrievable via API; report reads as fair and grounded when checked against the transcript by a human.
 
 ### Milestone 5 — Frontend

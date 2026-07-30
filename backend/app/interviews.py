@@ -21,7 +21,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -31,6 +31,7 @@ from app.capacity import AtCapacity, registry
 from app.db import (
     BlueprintStatus,
     Candidate,
+    FeedbackStatus,
     Interview,
     InterviewStatus,
     get_sessionmaker,
@@ -113,6 +114,8 @@ class InterviewView(BaseModel):
     section_outcomes: list[dict] | None = None
     session_metrics: dict | None = None
     feedback_report: dict | None = None
+    feedback_status: str = "pending"
+    feedback_error: str | None = None
 
 
 def _settings() -> Settings:
@@ -365,7 +368,44 @@ async def get_interview(interview_id: str) -> InterviewView:
             section_outcomes=interview.section_outcomes,
             session_metrics=interview.session_metrics,
             feedback_report=interview.feedback_report,
+            feedback_status=interview.feedback_status,
+            feedback_error=interview.feedback_error,
         )
+
+
+@router.post("/interviews/{interview_id}/feedback", dependencies=ADMIN_ONLY)
+async def regenerate_feedback(interview_id: str, background: BackgroundTasks) -> dict:
+    """Retry scoring for a finished interview.
+
+    Scoring normally happens by itself the moment the transcript is saved. This
+    exists for the case where that did not survive — the bot process was killed
+    by a redeploy, or the model call failed. It is a retry, not the trigger: an
+    interview nobody opens still gets scored.
+    """
+    async with get_sessionmaker()() as session:
+        interview = await session.get(Interview, interview_id)
+        if interview is None:
+            raise HTTPException(status_code=404, detail=f"No interview '{interview_id}'.")
+        if interview.status != InterviewStatus.COMPLETED:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"This interview is {interview.status}. Only a completed "
+                    "interview has a full transcript to score."
+                ),
+            )
+        if interview.feedback_status == FeedbackStatus.GENERATING:
+            raise HTTPException(
+                status_code=409, detail="Scoring is already running for this interview."
+            )
+        interview.feedback_status = FeedbackStatus.PENDING
+        interview.feedback_error = None
+        await session.commit()
+
+    from feedback.run import generate_feedback
+
+    background.add_task(generate_feedback, interview_id)
+    return {"interview_id": interview_id, "feedback_status": FeedbackStatus.PENDING}
 
 
 @router.delete("/interviews/{interview_id}", dependencies=ADMIN_ONLY)

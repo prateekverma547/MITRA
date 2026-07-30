@@ -635,12 +635,154 @@ async function viewInterview(interviewId) {
       ${iv.failure_reason ? `<div class="err">${esc(iv.failure_reason)}</div>` : ""}
     </div>
 
+    ${done ? reportCard(iv) : ""}
     ${done ? brainCard(iv, metrics, latency) : `<div class="card muted">
       Waiting for the candidate to join. Mitra starts when they do — this page
       refreshes on its own.</div>`}
   `;
 
+  const retry = document.getElementById("rescore");
+  if (retry) {
+    retry.onclick = async () => {
+      retry.disabled = true;
+      await api(`/interviews/${interviewId}/feedback`, { method: "POST" });
+      render();
+    };
+  }
+
+  // Poll while the interview is live, and while scoring is still running.
   if (!done) poll(5000);
+  else if (["pending", "generating"].includes(iv.feedback_status)) poll(4000);
+}
+
+// -- the report -------------------------------------------------------------
+//
+// Scores and the evidence behind them come first; the written assessment sits
+// at the bottom. A reader who only looks at the top should see what the
+// transcript actually supports, not a paragraph telling them what to think.
+
+const SIGNAL_TEXT = {
+  strong_evidence_for: "Strong evidence gathered",
+  some_evidence_for: "Some evidence gathered",
+  mixed: "Mixed evidence",
+  limited_evidence: "Limited evidence gathered",
+  insufficient_signal: "Not enough signal to judge",
+};
+
+function reportCard(iv) {
+  if (iv.feedback_status === "failed") {
+    return `<div class="card note">
+      <div class="spread">
+        <div>
+          <strong>Scoring did not complete.</strong>
+          <div class="small muted" style="margin-top:4px">${esc(iv.feedback_error || "")}</div>
+        </div>
+        <button id="rescore">Try again</button>
+      </div>
+      <p class="small muted" style="margin-bottom:0">The transcript is saved and
+        unaffected — only the report needs rebuilding.</p>
+    </div>`;
+  }
+  if (!iv.feedback_report) {
+    return `<div class="card muted">
+      Scoring the transcript… this page updates itself.
+      <span class="small">(${esc(iv.feedback_status)})</span></div>`;
+  }
+
+  const r = iv.feedback_report;
+  const scored = r.competency_scores.filter((s) => s.score !== null);
+  const average = scored.length
+    ? scored.reduce((a, s) => a + s.score, 0) / scored.length
+    : null;
+
+  return `
+    <div class="card">
+      <div class="spread">
+        <div>
+          <h3 style="margin:0">Assessment</h3>
+          <div class="small muted" style="margin-top:4px">
+            ${esc(r.role_title)} · ${scored.length} of ${r.competency_scores.length}
+            competencies evidenced
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div class="score-big">${average === null ? "—" : average.toFixed(1)}<span
+            class="score-max">/5</span></div>
+          <div class="small muted">${esc(SIGNAL_TEXT[r.recommendation] || r.recommendation)}</div>
+        </div>
+      </div>
+      <p class="small muted" style="margin:14px 0 0">
+        Evidence for a person to weigh — not a hiring decision. Every score below
+        is backed by quotes you can check against the transcript.</p>
+    </div>
+
+    ${r.competency_scores.map(competencyCard).join("")}
+
+    ${r.red_flags_observed?.length ? `<div class="card">
+      <h3 style="margin-top:0">Dealbreakers observed</h3>
+      ${r.red_flags_observed.map((f) => `
+        <div class="turn">
+          <strong>${esc(f.description)}</strong>
+          ${f.evidence.map(quoteBlock).join("")}
+        </div>`).join("")}
+    </div>` : ""}
+
+    ${r.contradictions?.length ? `<div class="card">
+      <h3 style="margin-top:0">Inconsistencies noted</h3>
+      <p class="small muted" style="margin-top:0">Recorded for you to weigh.
+        People misremember; this is not an accusation.</p>
+      ${r.contradictions.map((c) => `
+        <div class="turn small">
+          <div class="muted">Earlier: ${esc(c.earlier_claim)}</div>
+          <div class="muted">Later: ${esc(c.later_statement)}</div>
+          ${c.probed ? `<div class="small">Mitra asked about this during the interview.</div>` : ""}
+        </div>`).join("")}
+    </div>` : ""}
+
+    ${r.coverage_gaps?.length ? `<div class="card note">
+      <strong>What this report cannot tell you</strong>
+      <ul class="small" style="margin:8px 0 0;padding-left:19px">
+        ${r.coverage_gaps.map((g) => `<li>${esc(g)}</li>`).join("")}</ul>
+    </div>` : ""}
+
+    <div class="card">
+      <h3 style="margin-top:0">Written summary</h3>
+      <p style="margin-bottom:0;white-space:pre-wrap">${esc(r.summary)}</p>
+    </div>`;
+}
+
+function competencyCard(s) {
+  const pct = s.score === null ? 0 : (s.score / 5) * 100;
+  return `
+    <div class="card">
+      <div class="spread">
+        <div>
+          <strong>${esc(s.name)}</strong>
+          <div class="small muted" style="margin-top:3px">${esc(s.rationale)}</div>
+        </div>
+        <div style="text-align:right;min-width:74px">
+          ${s.score === null
+            ? `<span class="pill warn">no signal</span>`
+            : `<div class="score-mid">${s.score.toFixed(1)}<span class="score-max">/5</span></div>`}
+        </div>
+      </div>
+      ${s.score === null ? "" : `
+        <div class="meter"><div class="meter-fill" style="width:${pct}%"></div></div>`}
+      ${s.evidence?.length ? `
+        <details style="margin-top:12px">
+          <summary class="small muted" style="cursor:pointer">
+            ${s.evidence.length} quote${s.evidence.length === 1 ? "" : "s"} from the transcript</summary>
+          ${s.evidence.map(quoteBlock).join("")}
+        </details>` : ""}
+    </div>`;
+}
+
+function quoteBlock(q) {
+  return `<blockquote class="quote">
+    “${esc(q.text)}”
+    <span class="small muted">— ${Math.floor(q.at_seconds / 60)}:${
+      String(Math.round(q.at_seconds % 60)).padStart(2, "0")}, turn ${q.turn_index}</span>
+  </blockquote>`;
 }
 
 function brainCard(iv, metrics, latency) {
