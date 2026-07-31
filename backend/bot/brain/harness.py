@@ -181,6 +181,24 @@ def unheard_candidate() -> ScriptedCandidate:
     )
 
 
+def withdrawing_candidate() -> ScriptedCandidate:
+    """Someone who answers a little, then asks to stop.
+
+    The interview must end because they said so, not four refusals later and not
+    when they give up and close the tab themselves. The wording is deliberately
+    plain: this is what a person actually says.
+    """
+    return ScriptedCandidate(
+        replies=[
+            "Hi, yes, I can hear you.",
+            "I have been a product manager for about eight years.",
+            "Sorry, I do not want to continue the interview.",
+            "yes",
+        ],
+        max_turns=6,
+    )
+
+
 def off_topic_candidate() -> ScriptedCandidate:
     """Drifts off the role, to test the redirect."""
     return ScriptedCandidate(

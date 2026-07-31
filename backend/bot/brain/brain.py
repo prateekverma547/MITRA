@@ -30,6 +30,7 @@ from shared.contracts import (
 
 from bot.brain.refusal import is_substantive, looks_like_refusal
 from bot.brain.repair import RepairKind, classify as classify_repair
+from bot.brain.withdrawal import confirms_stopping, declines_stopping, wants_to_stop
 from bot.brain.state import BrainConfig, Section, build_sections
 
 #: Two attempts at the same question, then move on. A third time is an
@@ -126,6 +127,11 @@ class InterviewBrain:
         self._repair_attempts = 0
         self._question_to_repair: str = ""
         self._repairs_requested = 0
+        #: Set when they have said they want to stop and we have offered.
+        #: Nothing ends on a single detection: a false positive would end
+        #: somebody's interview, and that cannot be undone.
+        self._stop_offered = False
+        self._withdrew = False
         #: An interview begins when the interviewer opens it. Anything picked
         #: up before that is ambient room noise, not an answer.
         self._interviewer_has_spoken = False
@@ -251,6 +257,8 @@ class InterviewBrain:
             time_of_day=self.time_of_day,
             pending_repair=self._pending_repair,
             question_to_repair=self._question_to_repair,
+            offer_to_stop=self._stop_offered,
+            withdrew=self._withdrew,
         )
 
     def _is_last_competency(self, section: Section) -> bool:
@@ -288,6 +296,28 @@ class InterviewBrain:
         if candidate_text:
             self._append(section, "candidate", candidate_text)
 
+            # Leaving outranks everything else. Somebody who has said they want
+            # to stop must not be asked another question, and must certainly not
+            # be asked to repeat themselves.
+            if self._stop_offered:
+                if confirms_stopping(candidate_text):
+                    self._withdrew = True
+                    # Cleared, or the offer block keeps winning and the bot asks
+                    # "would you like to stop?" again instead of saying goodbye.
+                    self._stop_offered = False
+                    self._skip_to_closing("candidate_withdrew")
+                    return
+                if declines_stopping(candidate_text):
+                    self._stop_offered = False
+                    # Carry on as though it had not come up.
+                else:
+                    # Neither yes nor no. Take the answer at face value and keep
+                    # going rather than pressing them about leaving.
+                    self._stop_offered = False
+            elif wants_to_stop(candidate_text):
+                self._stop_offered = True
+                return
+
             repair = classify_repair(candidate_text)
             if repair is not RepairKind.NONE and self._repair_attempts < MAX_REPAIR_ATTEMPTS:
                 # A request to try again carries no answer. Counting it as a
@@ -316,6 +346,10 @@ class InterviewBrain:
                 if is_substantive(candidate_text):
                     section.substantive_turns += 1
 
+        if self._withdrew and section.kind == SectionKind.CLOSING and bot_text:
+            self._advance("candidate_withdrew")
+            return
+
         if candidate_text:
             self._maybe_request_judgment(section)
             self._maybe_advance(section)
@@ -332,6 +366,17 @@ class InterviewBrain:
             if turn.speaker == "interviewer":
                 return turn.text
         return ""
+
+    @property
+    def withdrew(self) -> bool:
+        """True when the candidate asked to end the interview and confirmed it.
+
+        Recorded separately from every other ending. "Chose to stop" says
+        something about a decision; it says nothing about their ability, and a
+        report must not blur the two. Same reason `declined_turns` is kept apart
+        from low coverage.
+        """
+        return self._withdrew
 
     @property
     def patience(self) -> float:
@@ -550,12 +595,23 @@ class InterviewBrain:
         for skipped in self._sections[self._index + 1 : closing_index]:
             skipped.coverage = CoverageLevel.NOT_STARTED
             skipped.coverage_shortfall = True
-            skipped.shortfall_reason = (
-                "Candidate declined to continue before this competency was "
-                "covered; no signal gathered."
-                if reason == "candidate_disengaged"
-                else "Interview reached its time limit before this competency was "
-                "covered; no signal gathered."
+            # Three different endings, three different sentences. A candidate
+            # who chose to leave must never be written up as one who ran out of
+            # time, and neither of those is a candidate who went quiet.
+            skipped.shortfall_reason = {
+                "candidate_withdrew": (
+                    "Candidate chose to end the interview before this competency "
+                    "was covered; no signal gathered. This reflects their "
+                    "decision to stop, not their ability."
+                ),
+                "candidate_disengaged": (
+                    "Candidate declined to continue before this competency was "
+                    "covered; no signal gathered."
+                ),
+            }.get(
+                reason,
+                "Interview reached its time limit before this competency was "
+                "covered; no signal gathered.",
             )
         self._index = closing_index
         self.current_section.started_at = self._now

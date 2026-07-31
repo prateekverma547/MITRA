@@ -244,6 +244,25 @@ appear on an interview scorecard, it is the wrong question for right now.
 """
 
 
+OFFER_TO_STOP = """
+=== MANDATORY: THEY HAVE ASKED TO STOP ===
+The candidate has just said they want to end the interview. Do not ask another
+question. Do not ask why. Do not try to keep them talking, and do not suggest
+that stopping has a cost.
+
+Say two things, warmly and in no more than two short sentences:
+  1. That is completely fine.
+  2. Ask whether they would like to end now, or carry on.
+
+Something close to: "Of course, that's completely fine. Would you like to end
+here, or would you rather carry on?"
+
+Offering rather than assuming is deliberate. If they meant something narrower,
+this costs one sentence. Ending an interview they wanted to continue cannot be
+undone.
+"""
+
+
 def _render_repair(kind, question: str) -> str:
     """The candidate could not hear or could not follow. Fix that, nothing else.
 
@@ -412,6 +431,8 @@ def render_section_prompt(
     time_of_day: str | None = None,
     pending_repair: "RepairKind | None" = None,
     question_to_repair: str = "",
+    offer_to_stop: bool = False,
+    withdrew: bool = False,
 ) -> str:
     """Build the system instruction for the section currently in progress."""
     spec = blueprint.evaluation_spec
@@ -429,6 +450,11 @@ Your manner should be {spec.tone}.
 {VOICE_RULES}
 {_render_domain_language(blueprint)}"""
 
+    # Leaving outranks everything, including a repair. Somebody who has asked
+    # to stop must not be asked to repeat themselves.
+    if offer_to_stop:
+        return OFFER_TO_STOP + "\n" + header
+
     # A repair outranks every other instruction. Nothing else this turn is
     # worth doing if they could not hear the question.
     if pending_repair is not None and question_to_repair:
@@ -438,6 +464,17 @@ Your manner should be {spec.tone}.
 
     if section.kind == SectionKind.OPENING:
         body = _render_opening(blueprint, section, time_of_day, candidate_first_name)
+    elif section.kind == SectionKind.CLOSING and withdrew:
+        body = """
+RIGHT NOW: CLOSING, BECAUSE THEY ASKED TO STOP
+They have chosen to end the interview. Thank them for their time in one or two
+short sentences and say goodbye warmly. Nothing else.
+
+Do not ask if they have questions: they asked to leave, and inviting more talk
+is not respecting that. Do not ask why. Do not say anything about the outcome,
+about what happens next, or about how much was covered.
+"""
+
     elif section.kind == SectionKind.CLOSING:
         body = """
 RIGHT NOW: CLOSING

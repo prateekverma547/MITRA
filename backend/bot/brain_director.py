@@ -28,6 +28,8 @@ import asyncio
 
 from loguru import logger
 from pipecat.frames.frames import (
+    BotStoppedSpeakingFrame,
+    EndWorkerFrame,
     Frame,
     LLMContextFrame,
     LLMUpdateSettingsFrame,
@@ -63,6 +65,9 @@ class BrainDirector(FrameProcessor):
         #: How many messages we wrote into the context last turn. Anything past
         #: this index on the next frame is new.
         self._written_count = 0
+        #: Set once the goodbye has been spoken and the session ended, so a
+        #: second BotStoppedSpeaking cannot end it twice.
+        self._ended = False
 
     @property
     def events(self) -> list[dict]:
@@ -81,6 +86,24 @@ class BrainDirector(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
+
+        # The interview finishing has to actually end the call. Nothing read
+        # `is_finished` before this, so a completed interview simply sat there
+        # after the goodbye until the candidate hung up, or until the silence
+        # ladder closed it two minutes later and recorded it as an abandonment.
+        #
+        # Ended here, on the bot having stopped speaking, so the goodbye is
+        # heard first. EndWorkerFrame flushes what is queued before shutting
+        # down, so nothing in flight is cut off.
+        if isinstance(frame, BotStoppedSpeakingFrame) and not self._ended:
+            if self._brain.is_finished:
+                self._ended = True
+                reason = "candidate_withdrew" if self._brain.withdrew else "interview_complete"
+                self._record("session_end", reason=reason)
+                logger.info(f"[{self._session_id}] interview over ({reason}); ending the call")
+                await self.push_frame(frame, direction)
+                await self.push_frame(EndWorkerFrame(reason=reason), direction)
+                return
 
         if not isinstance(frame, LLMContextFrame) or direction != FrameDirection.DOWNSTREAM:
             await self.push_frame(frame, direction)
