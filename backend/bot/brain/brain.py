@@ -39,6 +39,7 @@ from bot.brain.withdrawal import (
     declines_stopping,
 )
 from bot.brain.state import BrainConfig, Section, build_sections
+from shared.branding import BOT_NAME
 
 #: Two attempts at the same question, then move on. A third time is an
 #: interrogation, and recording that the ground was never covered is more
@@ -273,6 +274,7 @@ class InterviewBrain:
             question_to_repair=self._question_to_repair,
             offer_to_stop=self._stop_offered,
             withdrew=self._withdrew,
+            already_greeted=self._interviewer_has_spoken,
         )
 
     def _is_last_competency(self, section: Section) -> bool:
@@ -410,6 +412,31 @@ class InterviewBrain:
             if turn.speaker == "interviewer":
                 return turn.text
         return ""
+
+    def opening_line(self) -> str:
+        """The first thing the candidate hears, written here rather than generated.
+
+        This sentence was already spelled out word for word in the opening
+        prompt, and the model was reproducing it almost verbatim. Paying a full
+        round trip for a line we had already written cost several seconds of
+        somebody sitting in silence wondering whether the call was working.
+
+        Speaking it directly has a second benefit worth more than the speed. The
+        introduction can no longer be skipped, garbled, or pre-empted by a
+        candidate who says hello first: whoever is about to be interviewed by a
+        machine is told so in the first breath, every time.
+        """
+        first_name = (
+            self.blueprint.candidate_name.split()[0]
+            if self.blueprint.candidate_name
+            else None
+        )
+        greeting = f"Good {self.time_of_day}" if self.time_of_day else "Hello"
+        who = f"{greeting}, {first_name}." if first_name else f"{greeting}."
+        return (
+            f"{who} I'm {BOT_NAME}, an AI interviewer. "
+            f"I'll be speaking with you today. How are you doing?"
+        )
 
     def bot_finished_speaking(self, said: str = "") -> None:
         """The interviewer has stopped talking. Called from the live pipeline.

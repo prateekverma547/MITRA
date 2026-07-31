@@ -16,7 +16,7 @@ import sys
 import uuid
 
 from loguru import logger
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.frames.frames import LLMRunFrame, TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -226,6 +226,22 @@ async def run_bot(
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info(f"[{session_id}] candidate connected")
+
+        if use_brain:
+            # Spoken straight to TTS, with no inference in between. The greeting
+            # was already written word for word in the opening prompt and the
+            # model was reproducing it almost verbatim, so the round trip bought
+            # nothing and cost several seconds of somebody sitting in silence
+            # wondering whether the call had connected.
+            #
+            # It also means the introduction cannot be skipped or pre-empted. A
+            # candidate who says hello first used to consume the opening turn,
+            # and the interview would begin without ever saying who was asking.
+            greeting = brain.opening_line()
+            brain.observe(bot_text=greeting)
+            await worker.queue_frames([TTSSpeakFrame(greeting)])
+            return
+
         context.add_message(
             {
                 "role": "developer",

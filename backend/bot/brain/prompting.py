@@ -175,6 +175,7 @@ def _render_opening(
     section: Section,
     time_of_day: str | None,
     first_name: str | None,
+    already_greeted: bool = False,
 ) -> str:
     """Stage the opening across turns instead of packing it into one line.
 
@@ -188,7 +189,11 @@ def _render_opening(
     greeting = f"Good {time_of_day}" if time_of_day else "Hello"
     name = first_name or "them"
 
-    if section.turns_spent == 0:
+    # The greeting is spoken straight to TTS the moment the candidate
+    # connects, with no inference involved, so by the time the model is asked
+    # for anything it has already said hello. Without this guard a stray turn
+    # here would introduce the interviewer a second time.
+    if section.turns_spent == 0 and not already_greeted:
         return f"""
 RIGHT NOW: SAY HELLO AND INTRODUCE YOURSELF. NOTHING ELSE.
 This is the very first thing the candidate hears. Do not start the interview.
@@ -433,6 +438,7 @@ def render_section_prompt(
     question_to_repair: str = "",
     offer_to_stop: bool = False,
     withdrew: bool = False,
+    already_greeted: bool = False,
 ) -> str:
     """Build the system instruction for the section currently in progress."""
     spec = blueprint.evaluation_spec
@@ -463,7 +469,9 @@ Your manner should be {spec.tone}.
             return repair + "\n" + header
 
     if section.kind == SectionKind.OPENING:
-        body = _render_opening(blueprint, section, time_of_day, candidate_first_name)
+        body = _render_opening(
+            blueprint, section, time_of_day, candidate_first_name, already_greeted
+        )
     elif section.kind == SectionKind.CLOSING and withdrew:
         body = """
 RIGHT NOW: CLOSING, BECAUSE THEY ASKED TO STOP

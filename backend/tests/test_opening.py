@@ -172,3 +172,63 @@ def test_tts_speed_is_below_default():
     from bot.services.tts import TTS_SPEED
 
     assert 0.7 <= TTS_SPEED < 1.0
+
+
+# -- the greeting is spoken, not generated ------------------------------------
+
+
+def test_the_opening_line_is_written_not_generated():
+    """It was already spelled out word for word in the opening prompt and the
+    model reproduced it almost verbatim. A round trip for a line we had already
+    written cost seconds of somebody sitting in silence wondering whether the
+    call had connected."""
+    from bot.brain.brain import InterviewBrain
+    from bot.blueprint_source import load_blueprint
+    from shared.branding import BOT_NAME
+
+    brain = InterviewBrain(load_blueprint(), time_of_day="afternoon")
+    line = brain.opening_line()
+
+    assert line.startswith("Good afternoon")
+    assert BOT_NAME in line
+    assert "AI interviewer" in line
+    assert line.count("?") == 1
+
+
+def test_the_opening_line_works_without_a_time_of_day():
+    """Outside greeting hours there is no "good morning" to say."""
+    from bot.brain.brain import InterviewBrain
+    from bot.blueprint_source import load_blueprint
+
+    line = InterviewBrain(load_blueprint(), time_of_day=None).opening_line()
+
+    assert line.startswith("Hello")
+    assert "Good None" not in line
+
+
+def test_the_interviewer_never_introduces_itself_twice():
+    """A candidate who says hello first used to consume the opening turn, and
+    the interview began without ever saying who was asking. Now the greeting is
+    already out before anyone can pre-empt it, and the prompt must not ask for
+    another one."""
+    from bot.brain.brain import InterviewBrain
+    from bot.blueprint_source import load_blueprint
+
+    brain = InterviewBrain(load_blueprint(), time_of_day="afternoon")
+    brain.observe(bot_text=brain.opening_line())
+
+    assert "SAY HELLO AND INTRODUCE" not in brain.plan_turn().system_instruction
+
+
+def test_a_candidate_speaking_first_still_hears_the_introduction():
+    """The gate that drops audio before the interviewer speaks stays in force,
+    and the greeting no longer depends on a model turn that speech could
+    consume."""
+    from bot.brain.brain import InterviewBrain
+    from bot.blueprint_source import load_blueprint
+
+    brain = InterviewBrain(load_blueprint(), time_of_day="afternoon")
+    brain.observe(candidate_text="Hello? Are you there?")   # before the greeting
+
+    assert brain.current_section.turns_spent == 0
+    assert "AI interviewer" in brain.opening_line()
