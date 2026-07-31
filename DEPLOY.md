@@ -23,7 +23,7 @@ Region: **US**, per CLAUDE.md.
 In the Railway dashboard: **New → Database → PostgreSQL**.
 
 **Then link it to the app service.** Railway does *not* share a database's
-`DATABASE_URL` with other services automatically — the Postgres service gets it,
+`DATABASE_URL` with other services automatically, the Postgres service gets it,
 the app service does not. On the **MITRA service → Variables**, add:
 
 ```
@@ -35,7 +35,7 @@ exactly this).
 
 Miss this and the app refuses to start, deliberately. It would otherwise fall
 back to local SQLite and write every interview to a container filesystem that
-the next deploy erases — green health checks, working interviews, and silent
+the next deploy erases, green health checks, working interviews, and silent
 total data loss.
 
 The code rewrites Railway's `postgresql://` scheme to `postgresql+asyncpg://`,
@@ -50,7 +50,7 @@ railway variables --set ELEVENLABS_VOICE_ID=oO7sLA3dWfQXsKeSAjpA
 railway variables --set DAILY_API_KEY=...
 ```
 
-Optional, defaults shown — see the model tiering policy in CLAUDE.md:
+Optional, defaults shown, see the model tiering policy in CLAUDE.md:
 
 ```bash
 railway variables --set OPENAI_LLM_MODEL=gpt-4.1-mini
@@ -121,5 +121,5 @@ day of the project and still have no evidence for:
   the files under `backend/sessions/` vanish with the container.
 - **Image size ~2.5GB.** Down from what it would have been: the
   `local-smart-turn` extra was dropped because it pulls torch, torchaudio,
-  transformers and coremltools — around 570MB, none of it loaded at runtime,
+  transformers and coremltools, around 570MB, none of it loaded at runtime,
   since smart-turn v3 runs through onnxruntime.
