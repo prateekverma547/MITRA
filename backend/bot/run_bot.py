@@ -44,7 +44,7 @@ from bot.tools import TOOLS, register as register_tools
 from bot.presence import RoomPresence, attach as attach_presence
 from bot.silence import SilenceEscalation
 from bot.services.llm import build_llm
-from bot.services.stt import build_stt
+from bot.services.stt import build_stt, stt_provider
 from bot.services.tts import VoiceUnavailable, build_tts, verify_voice
 from bot.turn_taking import build_turn_strategies, build_vad_analyzer
 
@@ -116,7 +116,7 @@ async def run_bot(
     )
     logger.info(
         f"[{session_id}] mode={'sectioned-brain' if use_brain else 'M1 static prompt'} "
-        f"| llm={settings.llm_model}"
+        f"| llm={settings.llm_model} | stt={stt_provider()}"
     )
     tts = build_tts(
         api_key=settings.elevenlabs_api_key,
@@ -295,6 +295,10 @@ async def run_bot(
                     # least reliable source available.
                     "repairs_requested": brain.repairs_requested if director else 0,
                     "llm_model": settings.llm_model,
+                    # Which vendor produced these latency numbers. Without
+                    # it a comparison across sessions depends on somebody
+                    # remembering when the key was added.
+                    "stt_provider": stt_provider(),
                 },
             )
 
