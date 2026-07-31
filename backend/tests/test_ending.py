@@ -201,3 +201,77 @@ def test_the_ender_is_registered_as_an_observer_not_a_pipeline_processor():
     # And it is not in the pipeline processor list.
     pipeline_block = source[source.index("pipeline = Pipeline("):source.index("worker = PipelineWorker(")]
     assert "ender" not in pipeline_block
+
+
+# -- why the call stayed open, twice -----------------------------------------
+
+
+def driven_to_closing():
+    """A brain that has interviewed normally and reached the closing."""
+    from bot.brain.brain import InterviewBrain
+    from bot.brain.state import BrainConfig
+    from tests.test_brain import tiny_blueprint
+
+    brain = InterviewBrain(tiny_blueprint(), config=BrainConfig(floor_turns=1, ceiling_turns=1))
+    for i in range(20):
+        if brain.current_section.kind == "closing":
+            return brain
+        brain.observe(bot_text=f"Question {i}?")
+        brain.observe(candidate_text="We shipped it and retention improved by about a third.")
+    raise AssertionError("never reached the closing")
+
+
+def test_a_goodbye_finishes_the_interview():
+    """The bug, reported live twice.
+
+    The closing section advanced on candidate turns like every other section.
+    After a goodbye nobody replied to, `turns_spent` never reached its ceiling,
+    `is_finished` stayed False, and the call sat open with both of them in it.
+    An interview is over when the interviewer has finished closing it, not when
+    the candidate happens to speak again.
+    """
+    brain = driven_to_closing()
+
+    brain.observe(bot_text="Thank you for your time. I wish you all the best in your future endeavours.")
+
+    assert brain.is_finished is True
+
+
+def test_a_closing_that_invites_a_question_waits_for_it():
+    """The normal close asks whether they want to ask anything. Ending on that
+    turn would cut them off mid-question."""
+    brain = driven_to_closing()
+
+    brain.observe(bot_text="Thanks for your time. Is there anything you would like to ask me?")
+    assert brain.is_finished is False
+
+    brain.observe(candidate_text="No, nothing from me.")
+    brain.observe(bot_text="Understood. All the best, goodbye.")
+    assert brain.is_finished is True
+
+
+def test_the_closing_cannot_run_on_forever():
+    """Two interviewer turns is the limit. More than that is keeping somebody
+    on a call that is already over."""
+    from bot.brain.brain import MAX_CLOSING_TURNS
+
+    brain = driven_to_closing()
+    for i in range(MAX_CLOSING_TURNS):
+        brain.observe(bot_text=f"Anything else you would like to ask? ({i})")
+        brain.observe(candidate_text="No.")
+
+    assert brain.is_finished is True
+
+
+def test_saying_hello_after_the_goodbye_does_not_restart_the_interview():
+    """Live, the candidate said hello after the goodbye and the bot started
+    talking again, because nothing considered the interview over."""
+    brain = driven_to_closing()
+    brain.observe(bot_text="Thank you for your time. All the best.")
+
+    assert brain.is_finished is True
+
+    brain.observe(candidate_text="hello")
+
+    assert brain.is_finished is True
+    assert brain.current_section.kind == "closing"

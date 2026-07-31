@@ -38,6 +38,11 @@ from bot.brain.state import BrainConfig, Section, build_sections
 #: honest than grinding at someone who cannot hear it.
 MAX_REPAIR_ATTEMPTS = 2
 
+#: The interviewer gets at most this many turns in the closing: one to thank
+#: them and invite a last question, one to answer it and say goodbye. Any more
+#: and it is keeping somebody on a call that is already over.
+MAX_CLOSING_TURNS = 2
+
 
 @dataclass
 class Turn:
@@ -132,6 +137,8 @@ class InterviewBrain:
         #: somebody's interview, and that cannot be undone.
         self._stop_offered = False
         self._withdrew = False
+        #: How many times the interviewer has spoken in the closing.
+        self._closing_bot_turns = 0
         #: An interview begins when the interviewer opens it. Anything picked
         #: up before that is ambient room noise, not an answer.
         self._interviewer_has_spoken = False
@@ -346,9 +353,26 @@ class InterviewBrain:
                 if is_substantive(candidate_text):
                     section.substantive_turns += 1
 
-        if self._withdrew and section.kind == SectionKind.CLOSING and bot_text:
-            self._advance("candidate_withdrew")
-            return
+        # The interview ends when the interviewer has finished closing it, not
+        # when the candidate happens to speak again.
+        #
+        # This is what kept every call open. The closing section advanced on
+        # candidate turns like any other, so after a goodbye nobody replied to,
+        # `turns_spent` never reached its ceiling, `is_finished` stayed False,
+        # and the call sat there with both of them in it. Reported live twice.
+        if section.kind == SectionKind.CLOSING and bot_text:
+            self._closing_bot_turns += 1
+            # A closing turn that asks something is inviting a last question, so
+            # wait for it. One that does not is a goodbye, and there is nothing
+            # left to wait for.
+            invited_a_question = "?" in bot_text
+            if (
+                self._withdrew
+                or self._closing_bot_turns >= MAX_CLOSING_TURNS
+                or not invited_a_question
+            ):
+                self._advance("candidate_withdrew" if self._withdrew else "closing_delivered")
+                return
 
         if candidate_text:
             self._maybe_request_judgment(section)
