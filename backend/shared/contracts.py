@@ -435,17 +435,32 @@ class ConversationHealth(BaseModel):
         """Plain language for the report, or None when there is nothing to say."""
         if not self.degraded:
             return None
+        def plural(n: int, one: str, many: str) -> str:
+            return one if n == 1 else many
+
         parts = []
         if self.repair_requests:
-            parts.append(f"was asked to repeat themselves {self.repair_requests} times")
+            parts.append(
+                f"was asked to repeat themselves {self.repair_requests} "
+                f"{plural(self.repair_requests, 'time', 'times')}"
+            )
         if self.fragmentary_turns:
-            parts.append(f"had {self.fragmentary_turns} answers arrive incomplete")
+            parts.append(
+                f"had {self.fragmentary_turns} "
+                f"{plural(self.fragmentary_turns, 'answer', 'answers')} arrive incomplete"
+            )
         if self.echo_turns:
             parts.append("was heard through their own speakers")
         if self.prompted_silences:
-            parts.append(f"had {self.prompted_silences} long silences")
+            parts.append(
+                f"had {self.prompted_silences} long "
+                f"{plural(self.prompted_silences, 'silence', 'silences')}"
+            )
         if self.disconnects:
-            parts.append(f"dropped out of the call {self.disconnects} times")
+            parts.append(
+                f"dropped out of the call {self.disconnects} "
+                f"{plural(self.disconnects, 'time', 'times')}"
+            )
         if not parts:
             return None
         joined = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]

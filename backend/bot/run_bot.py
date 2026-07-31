@@ -240,6 +240,10 @@ async def run_bot(
                     "turns": [t.to_dict() for t in latency_observer.turns],
                     "silence_events": silence.events,
                     "brain_events": director.events if director else [],
+                    # Counted by the brain, not inferred from the transcript:
+                    # guessing at our own behaviour from our own words is the
+                    # least reliable source available.
+                    "repairs_requested": brain.repairs_requested if director else 0,
                     "llm_model": settings.llm_model,
                 },
             )

@@ -228,6 +228,58 @@ appear on an interview scorecard, it is the wrong question for right now.
 """
 
 
+def _render_repair(kind, question: str) -> str:
+    """The candidate could not hear or could not follow. Fix that, nothing else.
+
+    Written the way the contradiction block is written, and for the same
+    measured reason: an instruction that leaves the natural alternative
+    available gets ignored in favour of it. A live run showed the interviewer
+    answer "sorry, you cut out there" by dropping the question entirely and
+    asking a different one, which loses the answer and the coverage with it.
+    So the alternative is removed explicitly rather than discouraged.
+    """
+    from bot.brain.repair import RepairKind
+
+    if kind is RepairKind.REPEAT:
+        return f"""
+=== MANDATORY: THEY DID NOT HEAR YOU ===
+They could not hear your last question. Do not move on. Do not ask anything
+new. Do not change the subject.
+
+Say a brief acknowledgement, then ask THE SAME QUESTION AGAIN, in shorter and
+plainer words but asking for exactly the same thing:
+
+  "{question}"
+
+They heard nothing, so the wording was never the problem. Keep what you were
+asking for identical.
+"""
+
+    if kind is RepairKind.SIMPLIFY:
+        return f"""
+=== MANDATORY: THEY DID NOT FOLLOW THE QUESTION ===
+They heard you but the question did not land. Do not move on. Do not ask
+anything new. Do not repeat it word for word, that will not help.
+
+Ask for the same thing in simpler, more concrete words. This was the question:
+
+  "{question}"
+
+Shorten it. Drop any abstraction. If it helps, name the kind of example you are
+looking for. Ask for one thing only.
+"""
+
+    if kind is RepairKind.ECHO:
+        return """
+=== MANDATORY: YOU ARE HEARING YOURSELF ===
+Your own words are coming back through their microphone. Say, warmly and
+briefly, that you can hear an echo and suggest headphones if they have them.
+Then ask your question again. Do not treat the echo as something they said.
+"""
+
+    return ""
+
+
 def _render_red_flags(spec) -> str:
     """The employer's dealbreakers, shown while probing a competency.
 
@@ -312,6 +364,8 @@ def render_section_prompt(
     has_substantive_answers: bool = True,
     consecutive_refusals: int = 0,
     time_of_day: str | None = None,
+    pending_repair: "RepairKind | None" = None,
+    question_to_repair: str = "",
 ) -> str:
     """Build the system instruction for the section currently in progress."""
     spec = blueprint.evaluation_spec
@@ -328,6 +382,13 @@ Your manner should be {spec.tone}.
 
 {VOICE_RULES}
 """
+
+    # A repair outranks every other instruction. Nothing else this turn is
+    # worth doing if they could not hear the question.
+    if pending_repair is not None and question_to_repair:
+        repair = _render_repair(pending_repair, question_to_repair)
+        if repair:
+            return repair + "\n" + header
 
     if section.kind == SectionKind.OPENING:
         body = _render_opening(blueprint, section, time_of_day, candidate_first_name)

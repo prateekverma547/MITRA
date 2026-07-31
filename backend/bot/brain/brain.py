@@ -29,7 +29,13 @@ from shared.contracts import (
 )
 
 from bot.brain.refusal import is_substantive, looks_like_refusal
+from bot.brain.repair import RepairKind, classify as classify_repair
 from bot.brain.state import BrainConfig, Section, build_sections
+
+#: Two attempts at the same question, then move on. A third time is an
+#: interrogation, and recording that the ground was never covered is more
+#: honest than grinding at someone who cannot hear it.
+MAX_REPAIR_ATTEMPTS = 2
 
 
 @dataclass
@@ -114,6 +120,12 @@ class InterviewBrain:
         self._verdicts: dict[str, Judgment] = {}
         self._probed_contradictions: set[str] = set()
         self._consecutive_refusals = 0
+        #: What the candidate needs repeated, and how many times we have
+        #: already tried. Reset the moment a real answer arrives.
+        self._pending_repair: RepairKind = RepairKind.NONE
+        self._repair_attempts = 0
+        self._question_to_repair: str = ""
+        self._repairs_requested = 0
         #: An interview begins when the interviewer opens it. Anything picked
         #: up before that is ambient room noise, not an answer.
         self._interviewer_has_spoken = False
@@ -237,6 +249,8 @@ class InterviewBrain:
             has_substantive_answers=self.has_substantive_answers,
             consecutive_refusals=self._consecutive_refusals,
             time_of_day=self.time_of_day,
+            pending_repair=self._pending_repair,
+            question_to_repair=self._question_to_repair,
         )
 
     def _is_last_competency(self, section: Section) -> bool:
@@ -273,6 +287,25 @@ class InterviewBrain:
 
         if candidate_text:
             self._append(section, "candidate", candidate_text)
+
+            repair = classify_repair(candidate_text)
+            if repair is not RepairKind.NONE and self._repair_attempts < MAX_REPAIR_ATTEMPTS:
+                # A request to try again carries no answer. Counting it as a
+                # turn would let the depth ramp advance on nothing and would
+                # spend the section's budget on silence.
+                self._pending_repair = repair
+                self._repair_attempts += 1
+                self._repairs_requested += 1
+                self._question_to_repair = self._last_interviewer_text()
+                return
+
+            # Either a real answer, or we have already tried twice. Two goes at
+            # the same question is the limit; a third is an interrogation, and
+            # it is better to move on and record that it was never reached.
+            self._pending_repair = RepairKind.NONE
+            self._repair_attempts = 0
+            self._question_to_repair = ""
+
             section.turns_spent += 1
 
             if looks_like_refusal(candidate_text):
@@ -286,6 +319,28 @@ class InterviewBrain:
         if candidate_text:
             self._maybe_request_judgment(section)
             self._maybe_advance(section)
+
+    def _last_interviewer_text(self) -> str:
+        """The question that needs repeating.
+
+        Held explicitly because the model cannot be trusted to remember what it
+        just asked. A live run showed it answering a repair by abandoning the
+        question and asking a different one, which loses the answer and the
+        coverage with it.
+        """
+        for turn in reversed(self._transcript):
+            if turn.speaker == "interviewer":
+                return turn.text
+        return ""
+
+    @property
+    def repairs_requested(self) -> int:
+        """How many times the candidate asked for something again.
+
+        Reported so a poor connection is visible in the feedback report rather
+        than showing up as a candidate who could not answer.
+        """
+        return self._repairs_requested
 
     def _append(self, section: Section, speaker: str, text: str) -> None:
         self._transcript.append(

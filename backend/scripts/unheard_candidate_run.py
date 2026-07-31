@@ -44,8 +44,10 @@ async def main():
     transcript = build_transcript(
         interview_id="scripted-unheard", turns=run.transcript, duration_seconds=600
     )
-    health = assess(transcript, {})
+    health = assess(transcript, {}, repair_requests=brain.repairs_requested)
     print()
+    print()
+    print("repairs the brain counted:", brain.repairs_requested)
     print("=" * 74)
     print("WHAT THE CHANNEL LOOKED LIKE")
     print("=" * 74)

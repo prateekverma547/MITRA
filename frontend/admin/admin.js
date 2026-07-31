@@ -847,12 +847,17 @@ function reportCard(iv) {
 /** Why the recording, rather than the candidate, may explain a thin report.
  *  Built here rather than sent as prose so the panel can word it its own way. */
 function healthSentence(h) {
+  const plural = (n, one, many) => (n === 1 ? one : many);
   const parts = [];
-  if (h.repair_requests) parts.push(`was asked to repeat themselves ${h.repair_requests} times`);
-  if (h.fragmentary_turns) parts.push(`had ${h.fragmentary_turns} answers arrive incomplete`);
+  if (h.repair_requests) parts.push(
+    `was asked to repeat themselves ${h.repair_requests} ${plural(h.repair_requests, "time", "times")}`);
+  if (h.fragmentary_turns) parts.push(
+    `had ${h.fragmentary_turns} ${plural(h.fragmentary_turns, "answer", "answers")} arrive incomplete`);
   if (h.echo_turns) parts.push("was heard through their own speakers rather than headphones");
-  if (h.prompted_silences) parts.push(`went quiet ${h.prompted_silences} times long enough to be prompted`);
-  if (h.disconnects) parts.push(`dropped out of the call ${h.disconnects} times`);
+  if (h.prompted_silences) parts.push(
+    `went quiet ${h.prompted_silences} ${plural(h.prompted_silences, "time", "times")} long enough to be prompted`);
+  if (h.disconnects) parts.push(
+    `dropped out of the call ${h.disconnects} ${plural(h.disconnects, "time", "times")}`);
   const list = parts.length > 1
     ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1]
     : parts[0] || "could not be heard clearly";

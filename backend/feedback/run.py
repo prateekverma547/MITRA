@@ -133,6 +133,10 @@ def _repairs(metrics: dict) -> int:
     own behaviour from our own transcript would be the least reliable source
     available.
     """
+    recorded = metrics.get("repairs_requested")
+    if recorded is not None:
+        return int(recorded)
+    # Interviews recorded before the brain counted these.
     events = metrics.get("brain_events") or []
     return sum(1 for e in events if e.get("kind") == "repair")
 
