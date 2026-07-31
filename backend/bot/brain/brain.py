@@ -334,6 +334,35 @@ class InterviewBrain:
         return ""
 
     @property
+    def patience(self) -> float:
+        """How much thinking the question just asked deserves, as a multiplier.
+
+        A uniform silence threshold treats "what are you working on?" and "tell
+        me about a decision you regret" as the same question. The second is
+        somebody searching their memory, and prompting into that is the
+        interruption problem arriving slowly. The brain is the only thing that
+        knows which kind of question it just planned.
+
+        Only the first rung of the ladder moves. The later rungs are about the
+        channel and the session, not about thinking.
+        """
+        from bot.silence import SilenceLadder
+
+        section = self.current_section
+        if section.kind in (SectionKind.OPENING, SectionKind.CLOSING):
+            # Pleasantries and wrap-up. Silence here means something is wrong,
+            # not that they are thinking hard about their own name.
+            return SilenceLadder.easy_question_factor
+
+        if section.kind == SectionKind.COMPETENCY and section.turns_spent >= 1:
+            # Past the opening question of a section the interviewer is probing
+            # for specifics: a named decision, a number, what they would change.
+            # That is recall, and recall is slow.
+            return SilenceLadder.deep_question_factor
+
+        return 1.0
+
+    @property
     def repairs_requested(self) -> int:
         """How many times the candidate asked for something again.
 

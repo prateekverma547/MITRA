@@ -39,6 +39,7 @@ from bot.observers import (
 from bot.persistence import build_transcript, save_interview_result
 from bot.persona import build_system_instruction
 from bot.services.daily import build_transport
+from bot.presence import RoomPresence, attach as attach_presence
 from bot.silence import SilenceEscalation
 from bot.services.llm import build_llm
 from bot.services.stt import build_stt
@@ -120,7 +121,16 @@ async def run_bot(
         voice_id=settings.elevenlabs_voice_id,
     )
 
-    silence = SilenceEscalation(session_id=session_id)
+    # Daily reports who is in the room; without listening, the ladder was
+    # nudging empty rooms and then blaming the candidate's silence for it.
+    presence = attach_presence(transport, RoomPresence())
+    silence = SilenceEscalation(
+        session_id=session_id,
+        presence=presence,
+        # The brain knows whether it just asked a pleasantry or asked someone to
+        # recall a decision they regret. The ladder does not.
+        patience=(lambda: brain.patience) if use_brain else None,
+    )
 
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
@@ -239,6 +249,7 @@ async def run_bot(
                     "latency_summary": latency_observer.summary(),
                     "turns": [t.to_dict() for t in latency_observer.turns],
                     "silence_events": silence.events,
+                    **presence.summary(),
                     "brain_events": director.events if director else [],
                     # Counted by the brain, not inferred from the transcript:
                     # guessing at our own behaviour from our own words is the
