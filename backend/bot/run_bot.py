@@ -39,6 +39,7 @@ from bot.observers import (
 from bot.persistence import build_transcript, save_interview_result
 from bot.persona import build_system_instruction
 from bot.services.daily import build_transport
+from bot.ending import SessionEnder
 from bot.presence import RoomPresence, attach as attach_presence
 from bot.silence import SilenceEscalation
 from bot.services.llm import build_llm
@@ -159,6 +160,10 @@ async def run_bot(
         else None
     )
 
+    # Ends the call once the interview is over. An observer, not a pipeline
+    # processor: it has to see BotStoppedSpeakingFrame, which comes from the
+    # output transport, and a processor upstream of that never does.
+    ender = SessionEnder(brain=brain if use_brain else None, session_id=session_id)
     transcript_observer = TranscriptObserver()
     latency_observer = TurnLatencyObserver()
 
@@ -190,11 +195,12 @@ async def run_bot(
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
-        observers=[transcript_observer, latency_observer, silence],
+        observers=[transcript_observer, latency_observer, silence, ender],
         idle_timeout_secs=IDLE_TIMEOUT_SECS,
         conversation_id=session_id,
     )
     silence.attach(worker)
+    ender.attach(worker)
 
     @user_aggregator.event_handler("on_user_turn_idle")
     async def on_user_turn_idle(aggregator):
