@@ -83,9 +83,18 @@ TOOLS = ToolsSchema(standard_tools=[_END_INTERVIEW_SCHEMA])
 def register(llm, brain, on_called=None) -> None:
     """Wire the tool into the live LLM service.
 
-    The handler runs on the brain, which owns whether the interview is over.
-    It deliberately does not speak: the closing prompt does that, so the
-    goodbye stays consistent with every other way an interview can end.
+    The handler moves the brain to the closing and then returns a result, which
+    is what makes the interviewer actually say goodbye.
+
+    **Returning nothing does not work**, and it failed live exactly that way.
+    Pipecat only runs the follow-up completion `if frame.result:`, so a handler
+    returning None produces no speech at all: the candidate asked to stop, the
+    tool fired correctly, and then thirty seconds of silence while the brain sat
+    in the closing waiting for a goodbye that was never generated. The result
+    below is deliberately truthy for that reason.
+
+    What it says is left to the closing prompt, which the brain has already
+    switched to, so the farewell reads the same however the interview ended.
     """
 
     async def handle_end_interview(params) -> None:
@@ -118,8 +127,21 @@ def register(llm, brain, on_called=None) -> None:
         if on_called is not None:
             on_called(said=said, explicit=explicit)
 
-        # Nothing is returned to the model. The next turn is planned by the
-        # brain, which is now in the closing, so it says goodbye there.
-        await params.result_callback(None)
+        # Truthy, or Pipecat never runs the completion that speaks the
+        # goodbye. See the docstring: returning None is silence.
+        await params.result_callback(
+            {
+                "ended": act_now,
+                "next": (
+                    "The interview is over. Thank them for their time in one or "
+                    "two short sentences and say goodbye. Do not ask anything."
+                )
+                if act_now
+                else (
+                    "Ask, in one short sentence, whether they would like to end "
+                    "here or carry on. Do not ask why."
+                ),
+            }
+        )
 
     llm.register_function(END_INTERVIEW, handle_end_interview)

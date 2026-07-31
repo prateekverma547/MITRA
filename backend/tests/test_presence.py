@@ -199,3 +199,62 @@ async def test_a_broken_patience_reading_never_stops_the_ladder():
     assert escalation.initial_timeout > 0
     await escalation.handle_idle(aggregator=None)
     assert len(worker.of_type(TTSSpeakFrame)) == 1
+
+
+# -- backstop for a goodbye that never arrives --------------------------------
+
+
+async def test_a_finished_interview_is_ended_rather_than_nudged():
+    """The call ending depends on the interviewer actually delivering a
+    goodbye, and that chain has broken more than once. If the interview is
+    already over and the room has gone quiet, there is nothing to nudge anybody
+    about."""
+    from pipecat.frames.frames import EndWorkerFrame, TTSSpeakFrame
+
+    presence = RoomPresence()
+    presence.joined("cand-1")
+    escalation = SilenceEscalation(
+        ladder=SilenceLadder(), session_id="t",
+        presence=presence, interview_over=lambda: True,
+    )
+    worker = FakeWorker()
+    escalation.attach(worker)
+
+    await escalation.handle_idle(aggregator=None)
+
+    assert worker.of_type(TTSSpeakFrame) == []
+    ended = worker.of_type(EndWorkerFrame)
+    assert ended and ended[0].reason == "interview_complete"
+
+
+async def test_a_live_interview_is_still_nudged_normally():
+    from pipecat.frames.frames import EndWorkerFrame, TTSSpeakFrame
+
+    presence = RoomPresence()
+    presence.joined("cand-1")
+    escalation = SilenceEscalation(
+        ladder=SilenceLadder(), session_id="t",
+        presence=presence, interview_over=lambda: False,
+    )
+    worker = FakeWorker()
+    escalation.attach(worker)
+
+    await escalation.handle_idle(aggregator=None)
+
+    assert len(worker.of_type(TTSSpeakFrame)) == 1
+    assert worker.of_type(EndWorkerFrame) == []
+
+
+async def test_a_broken_over_check_never_stops_the_ladder():
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    def explode():
+        raise RuntimeError("no")
+
+    escalation = SilenceEscalation(session_id="t", interview_over=explode)
+    worker = FakeWorker()
+    escalation.attach(worker)
+
+    await escalation.handle_idle(aggregator=None)
+
+    assert len(worker.of_type(TTSSpeakFrame)) == 1

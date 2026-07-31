@@ -130,18 +130,40 @@ async def test_a_soft_call_asks_once_instead_of_ending():
     assert "THEY HAVE ASKED TO STOP" in brain.plan_turn().system_instruction
 
 
-async def test_the_tool_returns_nothing_to_the_model():
-    """The goodbye comes from the closing prompt, so it reads the same however
-    the interview ended. Letting the model improvise one here would give two
-    different farewells for the same event."""
+async def test_the_tool_returns_something_or_nothing_is_ever_said():
+    """Returning None is silence, and it failed live exactly that way.
+
+    Pipecat only runs the follow-up completion `if frame.result:`. With a None
+    result the candidate asked to stop, the tool fired correctly, and then
+    thirty seconds of nothing while the brain sat in the closing waiting for a
+    goodbye that was never generated.
+    """
     brain = InterviewBrain(tiny_blueprint())
+    brain.observe(bot_text="Tell me about a project.")
+    brain.observe(candidate_text="Just end this interview.")
     llm = FakeLLM()
     register(llm, brain)
 
     params = FakeParams(said="end the interview", explicit=True)
     await llm.registered[END_INTERVIEW](params)
 
-    assert params.result is None
+    assert params.result, "a falsy result means the interviewer never speaks"
+    assert params.result["ended"] is True
+    assert "say goodbye" in params.result["next"]
+
+
+async def test_an_unconfirmed_call_is_told_to_ask_rather_than_farewell():
+    brain = InterviewBrain(tiny_blueprint())
+    brain.observe(bot_text="Tell me about a project.")
+    brain.observe(candidate_text="Can we wrap this up?")
+    llm = FakeLLM()
+    register(llm, brain)
+
+    params = FakeParams(said="Can we wrap this up?", explicit=True)
+    await llm.registered[END_INTERVIEW](params)
+
+    assert params.result["ended"] is False
+    assert "end here or carry on" in params.result["next"]
 
 
 async def test_calling_it_twice_is_harmless():

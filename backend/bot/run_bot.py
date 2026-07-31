@@ -132,6 +132,9 @@ async def run_bot(
         # The brain knows whether it just asked a pleasantry or asked someone to
         # recall a decision they regret. The ladder does not.
         patience=(lambda: brain.patience) if use_brain else None,
+        # Backstop. If the interview is over and the room has gone quiet,
+        # end it rather than asking whether they are still there.
+        interview_over=(lambda: brain.is_finished or brain.withdrew) if use_brain else None,
     )
 
     # The interviewer can end the interview itself. A phrase list only ever

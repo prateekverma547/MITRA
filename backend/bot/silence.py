@@ -151,6 +151,7 @@ class SilenceEscalation(BaseObserver):
         session_id: str = "",
         presence=None,
         patience=None,
+        interview_over=None,
     ):
         super().__init__()
         self._ladder = ladder or SilenceLadder()
@@ -162,6 +163,11 @@ class SilenceEscalation(BaseObserver):
         #: Callable returning how much thinking the current question deserves.
         #: The brain knows; the ladder does not.
         self._patience = patience
+        #: Callable saying the interview is already over. A backstop: the call
+        #: ending depends on the interviewer actually delivering a goodbye, and
+        #: that chain has broken more than once. If the interview is finished
+        #: and nothing is happening, there is nothing to nudge anybody about.
+        self._interview_over = interview_over
         self._worker = None
         self._stage = 0
         self._started_at = time.time()
@@ -229,6 +235,19 @@ class SilenceEscalation(BaseObserver):
         self._dead_air_before_stage = thresholds[min(self._stage, len(thresholds) - 1)]
         stage = self._stage
         self._stage += 1
+
+        # Already over. Do not nudge somebody whose interview has finished;
+        # end it. This is the backstop for a goodbye that never arrived.
+        if self._interview_over is not None:
+            try:
+                over = bool(self._interview_over())
+            except Exception:  # noqa: BLE001
+                over = False
+            if over:
+                self._record(stage + 1, "ended_interview_over", "interview already finished")
+                await self._inject(UserIdleTimeoutUpdateFrame(timeout=0))
+                await self._inject(EndWorkerFrame(reason="interview_complete"))
+                return
 
         # Certain knowledge beats a guess. If the room is empty there is nobody
         # to nudge, and closing while they reconnect would end an interview over
