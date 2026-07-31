@@ -281,7 +281,13 @@ def test_section_prompt_stays_small_and_bounded():
 
     # Milestone 1 sent ~1,800 tokens of prompt *plus* the whole conversation so
     # far, growing to roughly 10,000 by the end of a 40-minute interview.
-    assert max(sizes) < 1600
+    #
+    # The bound was 1,600 and moved to 1,800 when the repair, domain-language
+    # and one-question blocks landed. Moved deliberately and not far: the
+    # benchmark is Milestone 1's static prompt, and the point is that this one
+    # matches it while resetting every section instead of growing all interview.
+    # If this needs raising again, the honest question is what to cut.
+    assert max(sizes) < 1800
     # Flatness is the property that matters, not the absolute number: turn
     # twenty must cost no more than turn one.
     assert sizes[-1] <= sizes[0] + 150

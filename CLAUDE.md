@@ -27,6 +27,17 @@ This is a POC. Prioritize a working end-to-end flow over polish, but keep the da
 - **Model tiering is explicit policy.** Three model roles, all env-configurable, never collapsed into one:
   - `OPENAI_LLM_MODEL` — **live conversation.** Default `gpt-4.1-mini`. Rationale: the sectioned-brain design front-loads intelligence into the blueprint and keeps live context small, so a mini-tier model should be viable — we are betting on our own architecture.
     - **Guardrail:** once the sectioned brain passes its suites on mini, run the scripted-candidate behaviour tests (shallow-answer probe, cross-section contradiction, off-topic redirect, instruction adherence over a long scripted session) against **both** `gpt-4.1-mini` and `gpt-4.1` through the text harness, and report both transcripts side by side. If mini complies lazily — accepts hollow answers, drifts, softens redirects — the default shifts to `gpt-4.1`, no debate. **Quality of probing outranks speed and cost.**
+    - **Run and settled: `gpt-4.1-mini` stays.** Measured over four scripted scenarios once the repair, domain-language and silence blocks had landed, which is exactly the heavier prompt this guardrail was written to test.
+    - The one failure found was **stacking two questions into one turn**, which matters out loud because the candidate hears both, holds neither, and answers the easier one. Rate of turns containing more than one question mark:
+      | scenario | mini before | mini after | 4.1 before | 4.1 after |
+      | --- | --- | --- | --- | --- |
+      | thin answer | 35% | **0%** | 13% | 0% |
+      | contradiction | 9% | **0%** | 0% | 0% |
+      | off topic | 22% | **0%** | 0% | 0% |
+      | repair | 38% | **0%** | 8% | 0% |
+    - The fix was the prompt, not the model. The rule had been a bullet inside a list; it is now its own block at the top of `VOICE_RULES`, naming the tempting move ("ask broad, then narrow in the same breath") and forbidding it with a say-this/not-this pair. **The contradiction lesson again: structure beats emphasis, and removing the alternative beats asking nicely.**
+    - Nothing else regressed: turn counts identical, contradictions still detected and probed, answers slightly shorter, which suits voice.
+    - Re-run with `uv run python scripts/compare_models.py` after any edit to `VOICE_RULES` or the mandatory blocks.
   - `OPENAI_BLUEPRINT_MODEL` — **blueprint generation (M2).** Reasoning-tier; latency irrelevant. This is the product's IP: deep CV analysis, per-claim verification targets, questions designed against the CV's thin spots — not merely reformatting the JD into sections.
   - `OPENAI_FEEDBACK_MODEL` — **feedback scoring (M4).** Reasoning-tier, off-path.
   - **Never put a reasoning model on the live conversation path.**

@@ -28,6 +28,7 @@ from bot.brain.harness import (  # noqa: E402
     off_topic_candidate,
     run_interview,
     thin_answer_candidate,
+    unheard_candidate,
     write_run,
 )
 from bot.brain.state import BrainConfig  # noqa: E402
@@ -48,6 +49,11 @@ SCENARIOS = {
     "off_topic": (
         off_topic_candidate,
         "Repeatedly steers away from the role. Does the redirect hold?",
+    ),
+    "repair": (
+        unheard_candidate,
+        "Keeps asking for the question again. Does the interviewer return to "
+        "the SAME question, or quietly abandon it and ask something else?",
     ),
 }
 
@@ -76,7 +82,63 @@ def signals(run, brain) -> dict:
             if o["kind"] == "competency"
         },
         "shortfalls": [o["section_id"] for o in run.outcomes if o["coverage_shortfall"]],
+        # Added when the repair and register blocks landed: the guardrail is
+        # about instruction adherence under a heavier prompt, and these are the
+        # instructions that made it heavier.
+        "repairs_requested": brain.repairs_requested,
+        "returned_to_the_question": _returned_to_the_question(run),
+        "field_words_used": _field_words_used(joined, brain.blueprint),
     }
+
+
+def _returned_to_the_question(run) -> str:
+    """After a repair, did the next question ask for the same thing?
+
+    Reported as a fraction rather than a verdict. Judging "same thing" properly
+    needs a human reading the transcript, which is what the files are for.
+    """
+    from bot.brain.repair import RepairKind, classify
+
+    turns = run.transcript
+    asked_again = 0
+    opportunities = 0
+    for i, turn in enumerate(turns):
+        if turn["speaker"] == "candidate" and classify(turn["text"]) is RepairKind.REPEAT:
+            before = next(
+                (t["text"] for t in reversed(turns[:i]) if t["speaker"] == "interviewer"), ""
+            )
+            after = next(
+                (t["text"] for t in turns[i + 1:] if t["speaker"] == "interviewer"), ""
+            )
+            if not before or not after:
+                continue
+            opportunities += 1
+            shared = set(_content_words(before)) & set(_content_words(after))
+            if len(shared) >= 3:
+                asked_again += 1
+    return f"{asked_again}/{opportunities}" if opportunities else "n/a"
+
+
+def _content_words(text: str) -> list[str]:
+    import re
+
+    stop = {
+        "the", "a", "an", "and", "or", "you", "your", "that", "this", "was",
+        "were", "did", "do", "can", "could", "would", "about", "with", "for",
+        "what", "how", "why", "tell", "me", "of", "to", "in", "on", "it", "is",
+        "sorry", "i", "my", "we", "they", "at", "as", "so", "but", "if", "not",
+    }
+    words = re.sub(r"[^a-z ]+", " ", text.lower()).split()
+    return [w for w in words if w not in stop and len(w) > 2]
+
+
+def _field_words_used(joined: str, blueprint) -> str:
+    """How much of the borrowed vocabulary the interviewer actually reached for."""
+    register = getattr(blueprint, "domain_language", None)
+    if register is None or not register.vocabulary:
+        return "n/a"
+    used = sum(1 for term in register.vocabulary if term.lower() in joined)
+    return f"{used}/{len(register.vocabulary)}"
 
 
 async def run_one(scenario: str, model: str, settings: Settings) -> tuple:
