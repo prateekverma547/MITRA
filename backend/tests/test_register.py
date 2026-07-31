@@ -128,3 +128,60 @@ def test_a_blueprint_without_a_register_says_nothing_about_language():
     instruction = InterviewBrain(tiny_blueprint()).plan_turn().system_instruction
 
     assert "THE LANGUAGE OF THIS FIELD" not in instruction
+
+
+# -- refinement must not quietly undo it -------------------------------------
+
+
+async def test_refining_a_plan_keeps_the_vocabulary():
+    """Refinement changes the plan, not the field.
+
+    The revision payload carries no vocabulary, so without carrying it across,
+    one refinement would strip the interview of the language it was taught and
+    nothing would say so.
+
+    Calls the real `refine()` with a stubbed model. An earlier version of this
+    test reimplemented the carry-across inline and would have passed with the
+    fix deleted.
+    """
+    import json
+    from types import SimpleNamespace
+
+    from blueprint.refine import BlueprintRefiner
+    from shared.contracts import InterviewRegister
+    from tests.test_brain import tiny_blueprint
+
+    blueprint = tiny_blueprint()
+    blueprint.domain_language = InterviewRegister(
+        domain="business analysis in retail banking", vocabulary=["BRD"]
+    )
+
+    payload = {
+        "candidate_name": "A",
+        "candidate_summary": "B",
+        "claims_to_verify": [],
+        "suggested_opening": "Hello.",
+        "interviewing_guidance": [],
+        "competency_plans": [
+            {"competency_id": c.id, "name": c.name, "target_depth": "deep",
+             "emphasis": 1.0, "seed_questions": ["q"]}
+            for c in blueprint.evaluation_spec.competencies
+        ],
+        "reply": "Spent less time on the second one.",
+    }
+
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            message = SimpleNamespace(content=json.dumps(payload))
+            return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    refiner = BlueprintRefiner(api_key="unused", model="unused")
+    refiner._client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
+
+    result = await refiner.refine(
+        blueprint=blueprint, cv_text="a CV that mentions BRD", message="less time on beta"
+    )
+
+    assert result.blueprint.domain_language is not None
+    assert result.blueprint.domain_language.vocabulary == ["BRD"]
+    assert result.blueprint.domain_language.domain == "business analysis in retail banking"

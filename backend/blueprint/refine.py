@@ -147,6 +147,13 @@ class BlueprintRefiner:
                 f"That change would leave the plan unusable, so it was not applied: {exc}"
             ) from exc
 
+        # Refinement changes the plan, never the field. The revision payload has
+        # no vocabulary in it, so without carrying it across, one refinement
+        # would quietly strip the interview of the language it was taught, and
+        # nothing would say so.
+        if revised.domain_language is None:
+            revised.domain_language = blueprint.domain_language
+
         return RefinedBlueprint(blueprint=revised, reply=reply)
 
 
