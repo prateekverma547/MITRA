@@ -40,6 +40,7 @@ from bot.persistence import build_transcript, save_interview_result
 from bot.persona import build_system_instruction
 from bot.services.daily import build_transport
 from bot.ending import SessionEnder
+from bot.tools import TOOLS, register as register_tools
 from bot.presence import RoomPresence, attach as attach_presence
 from bot.silence import SilenceEscalation
 from bot.services.llm import build_llm
@@ -133,7 +134,20 @@ async def run_bot(
         patience=(lambda: brain.patience) if use_brain else None,
     )
 
+    # The interviewer can end the interview itself. A phrase list only ever
+    # contains what somebody thought of in advance, and measured against
+    # sixteen natural ways of asking to stop it caught none of them. The model
+    # reading those sentences understands every one; this gives it a way to act
+    # rather than leaving the understanding trapped in prose.
+    #
+    # Not a second model and not a second request: the same inference call the
+    # interviewer was already making, plus a few tokens of schema.
+    if use_brain:
+        register_tools(llm, brain)
+
     context = LLMContext()
+    if use_brain:
+        context.set_tools(TOOLS)
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(

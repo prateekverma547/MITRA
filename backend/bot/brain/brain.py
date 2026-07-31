@@ -19,6 +19,8 @@ This module must not import Pipecat.
 
 from dataclasses import dataclass, field
 
+from loguru import logger
+
 from shared.contracts import (
     Contradiction,
     CoverageLevel,
@@ -332,17 +334,12 @@ class InterviewBrain:
                     # Neither yes nor no. Take the answer at face value and keep
                     # going rather than pressing them about leaving.
                     self._stop_offered = False
-            elif intent is StopIntent.EXPLICIT:
-                # An instruction, not a hint. Asking somebody who has just said
-                # "just end this interview" whether they are sure is the insult,
-                # and live it was asked twice more after exactly that.
-                self._withdrew = True
-                self._skip_to_closing("candidate_withdrew")
-                return
-            elif intent is StopIntent.SOFT:
-                # Could be about a topic rather than the interview. Worth one
-                # question, and only one.
-                self._stop_offered = True
+            elif intent is not StopIntent.NONE:
+                # The instant path. Same handling as the model's tool call, so
+                # the two cannot drift into different behaviour.
+                self.candidate_asked_to_stop(
+                    said=candidate_text, explicit=intent is StopIntent.EXPLICIT
+                )
                 return
 
             repair = classify_repair(candidate_text)
@@ -411,6 +408,37 @@ class InterviewBrain:
             if turn.speaker == "interviewer":
                 return turn.text
         return ""
+
+    def last_candidate_text(self) -> str:
+        """What the candidate most recently said, verbatim."""
+        for turn in reversed(self._transcript):
+            if turn.speaker == "candidate":
+                return turn.text
+        return ""
+
+    def candidate_asked_to_stop(self, *, said: str = "", explicit: bool = True) -> None:
+        """The candidate wants to leave. Called by both paths.
+
+        One entry point on purpose. The patterns in `withdrawal.py` catch the
+        obvious wording instantly and for free; the live model calls this
+        through its `end_interview` tool for everything a phrase list was never
+        going to contain. Sharing this method is what stops the two drifting
+        into different behaviour.
+
+        `explicit` decides whether they are taken at their word or asked once.
+        Somebody who said "just end this interview" and then gets asked whether
+        they are sure has been ignored, which is what happened live.
+        """
+        if self._withdrew:
+            return
+        if explicit:
+            self._withdrew = True
+            self._stop_offered = False
+            self._skip_to_closing("candidate_withdrew")
+        else:
+            self._stop_offered = True
+        if said:
+            logger.debug(f"candidate asked to stop (explicit={explicit}): {said!r}")
 
     @property
     def withdrew(self) -> bool:
