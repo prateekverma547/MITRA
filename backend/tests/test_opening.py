@@ -232,3 +232,27 @@ def test_a_candidate_speaking_first_still_hears_the_introduction():
 
     assert brain.current_section.turns_spent == 0
     assert "AI interviewer" in brain.opening_line()
+
+
+def test_the_audio_path_is_given_time_to_settle():
+    """`on_client_connected` fires before the candidate's browser has subscribed
+    to our audio track, so anything spoken immediately is not carried. Reported
+    live as the greeting starting mid-word, with "Good" missing from "Good
+    morning".
+
+    It was hidden while the greeting went through the model, because the round
+    trip took seconds and the path settled inside it. Speaking immediately
+    removed that accidental delay and exposed the gap.
+    """
+    import inspect
+
+    from bot import run_bot
+
+    assert run_bot.GREETING_SETTLE_SECONDS >= 0.5, (
+        "too short and the first word is clipped again"
+    )
+    assert run_bot.GREETING_SETTLE_SECONDS <= 1.5, (
+        "the whole point was that the greeting arrives promptly"
+    )
+    source = inspect.getsource(run_bot)
+    assert "asyncio.sleep(GREETING_SETTLE_SECONDS)" in source

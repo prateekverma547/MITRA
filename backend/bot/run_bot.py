@@ -55,6 +55,25 @@ from shared.branding import BOT_NAME  # noqa: E402
 
 
 
+# How long to let the audio path settle before the first word.
+#
+# `on_client_connected` fires the instant a participant joins, which is before
+# their browser has finished subscribing to our audio track. Anything spoken in
+# that window is not carried: reported live as the greeting starting mid-word,
+# with "Good" missing from "Good morning".
+#
+# This was invisible while the greeting went through the model, because the
+# round trip took a second or two and the path settled inside it. Speaking
+# immediately removed that accidental delay and exposed the gap, so here it is
+# deliberately, at a fraction of the size.
+#
+# Daily exposes no "ready to receive" event, so the value is empirical, and it
+# errs long on purpose. Losing the first word is a far worse first impression
+# than waiting another fraction of a second, and the path this replaced took
+# roughly seven seconds to produce the same sentence. If a first word ever
+# goes missing again, raise this before looking anywhere else.
+GREETING_SETTLE_SECONDS = 1.0
+
 # Cancel the session after this long with neither party speaking. A candidate
 # gathering their thoughts must never trip this, so it sits far above any
 # plausible pause; it exists only to reap a session someone abandoned.
@@ -239,6 +258,9 @@ async def run_bot(
             # and the interview would begin without ever saying who was asking.
             greeting = brain.opening_line()
             brain.observe(bot_text=greeting)
+            # Let the audio path settle, or the first word is lost. See
+            # GREETING_SETTLE_SECONDS.
+            await asyncio.sleep(GREETING_SETTLE_SECONDS)
             await worker.queue_frames([TTSSpeakFrame(greeting)])
             return
 
