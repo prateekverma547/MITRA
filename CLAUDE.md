@@ -32,42 +32,18 @@ This is a POC. Prioritize a working end-to-end flow over polish, but keep the da
 ## Architecture decisions (already made, do not revisit without asking)
 
 - **Voice framework:** Pipecat (self-hosted), NOT Vapi and NOT OpenAI Realtime speech-to-speech. Pipeline architecture: STT → LLM → TTS. Rationale: model control, transcript as auditable ground truth, cost at 40-min sessions.
-- **STT:** OpenAI realtime/streaming transcription (existing API key). Build against OpenAI only, no Deepgram integration, no dual code paths, no runtime provider switch. Deepgram is a documented fallback and nothing more. Keep the STT service isolated behind its single adapter file so a future swap, if it ever happens, is a one-file change.
-  - **STT vendor decision rule (data-driven, not preference-driven).** The `stt_lag` instrumentation in `bot/observers.py` measures, per segment, the time from the true end of candidate speech to the arrival of the transcript. Decide from the measured median:
-    - **~300-500ms** → keep OpenAI. Set the finalization wait (`ttfs_p99_latency` in `bot/services/stt.py`) from the measurement plus margin.
-    - **consistently ~1s or more** → OpenAI's finalization is structurally slow for conversational turn-taking. Run a Deepgram trial through the existing STT adapter (single-file change) and compare the same metrics on an equivalent session.
-  - **Measurement outcome (session `dev-42b6ab2a`, 12 samples): median 1.04s, p90 1.08s, max 1.08s, min 0.83s.** A tight distribution, not a noisy average, OpenAI's finalization is a structural ~1s floor. **This lands in the "~1s or more" bucket, so the rule fires: run the Deepgram trial.** **The trial is now running** (`DEEPGRAM_API_KEY` set: present → Deepgram, absent → OpenAI, and that is the entire switch, so reverting needs no deploy). Interim action taken meanwhile: `ttfs_p99_latency` lowered from Pipecat's generic 1.66s default to a measured 1.25s, cutting ~0.4s from every turn. Blocked on obtaining a `DEEPGRAM_API_KEY`.
-  - **The mechanism is a protocol gap, not accuracy.** Ending a turn needs to know the transcript is complete, and a provider says so by confirming finalisation. Verified in Pipecat's source: `confirm_finalize()` is called zero times by the OpenAI service and once by Deepgram's. Without it Pipecat waits out a fixed timer on every turn however fast the words arrived, which is why Pipecat's own defaults are 1.66s for OpenAI and **0.35s** for Deepgram.
-  - **Deepgram is also cheaper.** Nova-3 streaming at $0.0048/min against `gpt-realtime-whisper` at $0.0170/min: about **$0.19 per 40-minute interview instead of $0.68**, a 72% reduction. Note we had deliberately chosen OpenAI's most expensive transcription model for speed (`gpt-4o-transcribe` is $0.006, `gpt-4o-mini-transcribe` $0.003) and still waited out the timeout, because none of the three confirm. New Deepgram accounts get $200 of credit, roughly 1,000 interviews, so the trial itself is free.
-  - Judge it on the same `stt_lag` measurement, on an equivalent session. `stt_provider` is recorded in the session metrics so a comparison can say which vendor produced which numbers.
-  - **Trial result (session `int_3c38981d581a`, 10 samples): Deepgram wins decisively, and the target that was declared unreachable was reached.**
-    | | OpenAI | Deepgram | |
-    | --- | --- | --- | --- |
-    | `stt_lag` median | 1.04s | **0.27s** | -74% |
-    | `stt_lag` max | 1.08s | **0.31s** | -71% |
-    | endpointing median | 1483ms | **378ms** | -74% |
-    | TTFA median | 2430ms | **1694ms** | -30% |
-
-    That is ~736ms off every turn, roughly half a minute of dead air removed from a 40-turn interview. One turn measured **1450ms**, under the < 1.5s DoD target that this rule previously recorded as unreachable on OpenAI STT. It was unreachable because of the vendor, not the architecture.
-  - `DEEPGRAM_FINALIZATION_WAIT_SECONDS` is 0.35s (Pipecat's default) against a measured max of 0.31s. That clears it, but by only 0.04s and on a 63-second session. Re-measure over a full-length interview before tightening, and never below the observed max: the timer firing on a fragment means the interviewer answers half a sentence, which costs more than the latency saves.
-  - **The remaining latency is endpointing, not STT.** The one outlier in that session was 5734ms, of which 4321ms was `SMART_TURN_STOP_SECS`. The log shows why and it is the system working: the candidate answered haltingly ("That's where I have" / "to" / "learn about"), smart-turn tolerated five separate pauses without cutting her off, then waited out the full four seconds. That is the deliberate trade, and it is rule (1) of the tuning order. Lowering it is a decision to be taken deliberately, not a tuning tweak.
-  - Context: Pipecat's turn-stop strategy waits for a finalized transcript before ending a turn. OpenAI's Realtime STT never sets `finalized=True`, so every turn falls back to a fixed safety-net timeout (`OPENAI_REALTIME_TTFS_P99` = 1.66s, minus VAD `stop_secs`). That constant is a generic default, not a measurement of our deployment, hence the rule above.
+- **STT:** Deepgram Nova-3 streaming, with OpenAI still present behind the same adapter. `DEEPGRAM_API_KEY` is the entire switch: present → Deepgram, absent → OpenAI. Keep the service isolated in `bot/services/stt.py` so a vendor change stays a one-file change.
+  - **This replaced OpenAI on measured evidence, not preference.** A decision rule was written first (median `stt_lag` of 300-500ms keeps OpenAI, ~1s or more triggers a trial), it came in at 1.04s, and the rule fired. Deepgram measured 0.27s median, cut ~736ms off every turn, and reached the < 1.5s TTFA target this project had recorded as unreachable. **Full table in [docs/DECISIONS.md](docs/DECISIONS.md).**
+  - **The mechanism is a protocol gap, not accuracy.** `confirm_finalize()` is called zero times by Pipecat's OpenAI service and once by Deepgram's. Without it every turn waits out a fixed timer however fast the words arrived. Do not attempt to fix this by tuning timers on OpenAI; it is structural.
+  - **Do not tighten `DEEPGRAM_FINALIZATION_WAIT_SECONDS` below the observed max.** It is 0.35s against a measured 0.31s, on a 63-second session. A timer firing on a fragment means the interviewer answers half a sentence, which costs far more than the latency saves.
+  - Still open: a full-length session on Deepgram, after which the OpenAI path should be deleted. It is a trial, not an abstraction layer.
 - **Turn-taking:** Smart-turn / semantic endpointing enabled alongside VAD. This is one listening configuration in Pipecat, not a second implementation, do not build a parallel turn-detection path.
 - **LLM (interview brain):** OpenAI text model via Pipecat's OpenAI LLM service. Must remain swappable to Anthropic in one place.
 - **Model tiering is explicit policy.** Three model roles, all env-configurable, never collapsed into one:
   - `OPENAI_LLM_MODEL`, **live conversation.** Default `gpt-4.1-mini`. Rationale: the sectioned-brain design front-loads intelligence into the blueprint and keeps live context small, so a mini-tier model should be viable, we are betting on our own architecture.
-    - **Guardrail:** once the sectioned brain passes its suites on mini, run the scripted-candidate behaviour tests (shallow-answer probe, cross-section contradiction, off-topic redirect, instruction adherence over a long scripted session) against **both** `gpt-4.1-mini` and `gpt-4.1` through the text harness, and report both transcripts side by side. If mini complies lazily, accepts hollow answers, drifts, softens redirects, the default shifts to `gpt-4.1`, no debate. **Quality of probing outranks speed and cost.**
-    - **Run and settled: `gpt-4.1-mini` stays.** Measured over four scripted scenarios once the repair, domain-language and silence blocks had landed, which is exactly the heavier prompt this guardrail was written to test.
-    - The one failure found was **stacking two questions into one turn**, which matters out loud because the candidate hears both, holds neither, and answers the easier one. Rate of turns containing more than one question mark:
-      | scenario | mini before | mini after | 4.1 before | 4.1 after |
-      | --- | --- | --- | --- | --- |
-      | thin answer | 35% | **0%** | 13% | 0% |
-      | contradiction | 9% | **0%** | 0% | 0% |
-      | off topic | 22% | **0%** | 0% | 0% |
-      | repair | 38% | **0%** | 8% | 0% |
-    - The fix was the prompt, not the model. The rule had been a bullet inside a list; it is now its own block at the top of `VOICE_RULES`, naming the tempting move ("ask broad, then narrow in the same breath") and forbidding it with a say-this/not-this pair. **The contradiction lesson again: structure beats emphasis, and removing the alternative beats asking nicely.**
-    - Nothing else regressed: turn counts identical, contradictions still detected and probed, answers slightly shorter, which suits voice.
-    - Re-run with `uv run python scripts/compare_models.py` after any edit to `VOICE_RULES` or the mandatory blocks.
+    - **Settled on measured evidence: `gpt-4.1-mini` stays.** A guardrail required comparing mini against `gpt-4.1` on scripted candidates once the prompt was at full weight. The only failure found was **stacking two questions into one turn**, which matters out loud because the candidate hears both, holds neither, and answers the easier one. The fix was the prompt, not the model, and it took the rate to 0% on both. **Table in [docs/DECISIONS.md](docs/DECISIONS.md).**
+    - **Quality of probing outranks speed and cost.** If mini ever starts complying lazily, accepting hollow answers, drifting or softening redirects, the default shifts to `gpt-4.1`, no debate.
+    - Re-run `uv run python scripts/compare_models.py` after any edit to `VOICE_RULES` or the mandatory blocks.
   - `OPENAI_BLUEPRINT_MODEL`, **blueprint generation (M2).** Reasoning-tier; latency irrelevant. This is the product's IP: deep CV analysis, per-claim verification targets, questions designed against the CV's thin spots, not merely reformatting the JD into sections.
   - `OPENAI_FEEDBACK_MODEL`, **feedback scoring (M4).** Reasoning-tier, off-path.
   - **Never put a reasoning model on the live conversation path.**
@@ -83,19 +59,22 @@ This is a POC. Prioritize a working end-to-end flow over polish, but keep the da
 ```
 interviewer/
 ├── backend/
-│   ├── app/            # FastAPI: routes, auth (meeting ID+password), uploads,
-│   │                   # clarification chat, bot spawning, feedback jobs
+│   ├── app/            # FastAPI: routes, auth, uploads, clarification chat,
+│   │                   # bot spawning, feedback jobs
 │   ├── blueprint/      # JD+CV parsing and interview blueprint generation
 │   ├── bot/            # Pipecat pipeline + interview brain
 │   ├── feedback/       # post-interview scoring: runs once, at the end, from
 │   │                   # the complete transcript. Never on the live path.
 │   ├── shared/         # Pydantic contracts (see Data contracts)
-│   └── requirements.txt
+│   ├── scripts/        # real-conversation harnesses and measurement tools
+│   ├── tests/
+│   └── pyproject.toml  # uv; there is no requirements.txt
 ├── frontend/
 │   ├── candidate/      # join page, consent gate, in-call interview UI
-│   └── admin/          # admin panel: JD, clarification, CV, blueprint, interviews
-│                       # Plain HTML/JS for the POC; React + Vite when it settles.
-│                       # Served by FastAPI; the Docker image mirrors this layout.
+│   ├── admin/          # admin panel: JD, clarification, CV, blueprint, interviews
+│   │                   # Plain HTML/JS for the POC; React + Vite when it settles.
+│   └── assets/         # brand artwork
+├── docs/               # architecture, brain, decisions, operations
 ├── CLAUDE.md
 └── railway config files
 ```
@@ -229,13 +208,7 @@ Pipecat bot that joins a Daily room and conducts a spoken interview for a fixed 
   - **`declined_turns` is recorded separately from low coverage.** "Declined to answer" and "answered shallowly" mean different things about a person, and only one is about their ability. A report must not conflate them.
   - **Coverage must never flatter.** Opening and closing are not scored, but a live session recorded the opening as `sufficient` for a candidate who refused to speak. Non-competency sections now report `insufficient` when nothing substantive was said.
   - **Contradictions.** Record always; probe at most once, neutrally phrased, curious rather than prosecutorial ("how does that fit with the earlier X?"). Never voice a verdict.
-    - **Callback raise rate is measured, not assumed** (`scripts/contradiction_rate.py`). Instruction strength is the whole story, and it is not intuitive, a *stronger* model complied less. Measured over 10 trials per model:
-      | prompt version | gpt-4.1-mini | gpt-4.1 |
-      | --- | --- | --- |
-      | "raise it once, only if it fits naturally" | 0% | 0% |
-      | "your next question MUST be about it" | 80% | 27% |
-      | forbids the alternative question + supplies the sentence + placed at top of prompt | **100%** | **100%** |
-      Every failure at the middle version looked identical: the model asked the natural conversational follow-up instead. Removing the alternative beat adding emphasis. Re-measure after any edit to this block.
+    - **Callback raise rate is measured, not assumed** (`scripts/contradiction_rate.py`). Compliance went 0% → 80% → 100% across three phrasings of the same instruction, and the lesson is the one that governs every mandatory block in this repo: **removing the alternative beats adding emphasis.** Every failure at the middle version looked identical, the model asked the natural conversational follow-up instead. Note also that the *stronger* model complied *less* there, instruction strength is not intuitive. **Table in [docs/DECISIONS.md](docs/DECISIONS.md).** Re-measure after any edit to this block.
     - **Judge precision is measured too** (`tests/test_judge_precision.py`, 12 labelled cases). Genuine contradictions must be separated from hedges, non-answers, and legitimate opinion revision, revision is candour and flagging it punishes honesty. Precision went 0.50 → 1.00 (recall 1.00) once the judge prompt listed the exclusions explicitly. Precision is weighted above recall: a false contradiction becomes a written claim about a real person's honesty, while a missed one can still be caught by the human reading the transcript.
   - **Over-run policy.** Weighted squeeze against configured duration + grace. Squeeze remaining sections proportionally by weight; if a section would fall below its floor, shrink the lowest-weight section first and log a **coverage-shortfall event** so the feedback report can state which competencies got insufficient signal. Silently blowing past the time limit is worse than honestly reporting a gap.
 - Brain must be testable in text mode: a pytest harness that runs a scripted mock candidate through the brain without any audio, including a candidate who **contradicts himself across sections** to exercise callback detection.
