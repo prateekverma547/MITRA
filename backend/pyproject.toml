@@ -24,6 +24,11 @@ dependencies = [
     "aiosqlite>=0.20",
     "pypdf>=5.0",
     "python-docx>=1.1",
+    # The container image carries no system timezone database, so ZoneInfo
+    # cannot resolve names the candidate's browser sends. A live session sent
+    # "Asia/Calcutta", a perfectly valid alias, and it only produced the right
+    # greeting because the fallback happened to be the same place.
+    "tzdata>=2024.1",
 ]
 
 [dependency-groups]
