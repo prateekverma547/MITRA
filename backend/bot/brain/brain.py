@@ -377,7 +377,9 @@ class InterviewBrain:
         # candidate turns like any other, so after a goodbye nobody replied to,
         # `turns_spent` never reached its ceiling, `is_finished` stayed False,
         # and the call sat there with both of them in it. Reported live twice.
-        # Read fresh: the candidate's turn above may have moved us here.
+        # Read fresh: the candidate's turn above may have moved us here. This
+        # is the text-mode path; live, `bot_finished_speaking` does it, because
+        # nothing observes an utterance nobody answers.
         if self.current_section.kind == SectionKind.CLOSING and bot_text:
             self._closing_bot_turns += 1
             # A closing turn that asks something is inviting a last question, so
@@ -408,6 +410,37 @@ class InterviewBrain:
             if turn.speaker == "interviewer":
                 return turn.text
         return ""
+
+    def bot_finished_speaking(self, said: str = "") -> None:
+        """The interviewer has stopped talking. Called from the live pipeline.
+
+        The brain otherwise only learns what the interviewer said when the
+        *candidate* speaks next, because that is what produces a new context
+        frame. The closing goodbye is the one utterance nobody replies to, so it
+        was never observed: the interview stayed unfinished and the call hung
+        until the silence backstop closed it fifteen seconds later. Reported
+        live, with the goodbye visible in the transcript at 20.9 seconds and the
+        session ending at 36.
+
+        Idempotent, and a no-op outside the closing, so it is safe to call after
+        every utterance.
+        """
+        if self._finished:
+            return
+        section = self.current_section
+        if section.kind != SectionKind.CLOSING:
+            return
+
+        self._closing_bot_turns += 1
+        # A closing turn that asks something is inviting a last question and
+        # waits for it. One that does not is a goodbye.
+        invited_a_question = "?" in (said or "")
+        if (
+            self._withdrew
+            or self._closing_bot_turns >= MAX_CLOSING_TURNS
+            or not invited_a_question
+        ):
+            self._advance("candidate_withdrew" if self._withdrew else "closing_delivered")
 
     def last_candidate_text(self) -> str:
         """What the candidate most recently said, verbatim."""

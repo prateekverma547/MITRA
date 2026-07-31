@@ -21,7 +21,7 @@ shutting down, so nothing in flight is cut off either.
 from dataclasses import dataclass, field
 
 from loguru import logger
-from pipecat.frames.frames import BotStoppedSpeakingFrame, EndWorkerFrame
+from pipecat.frames.frames import BotStoppedSpeakingFrame, EndWorkerFrame, TTSTextFrame
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 
 
@@ -45,6 +45,12 @@ class SessionEnder(BaseObserver):
     _worker: object = field(default=None, init=False)
     _ended: bool = field(default=False, init=False)
     _seen: set = field(default_factory=set, init=False)
+    #: What the interviewer is currently saying, collected as it is spoken.
+    #: The brain needs the words to tell a goodbye from an invitation to ask a
+    #: last question, and nothing else hands them over: the context frame that
+    #: would carry them only arrives when the candidate speaks, and nobody
+    #: replies to a goodbye.
+    _spoken: list = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
         super().__init__()
@@ -67,12 +73,26 @@ class SessionEnder(BaseObserver):
         frame = data.frame
         if self._ended or self.brain is None:
             return
+
+        if isinstance(frame, TTSTextFrame):
+            if frame.id not in self._seen:
+                self._seen.add(frame.id)
+                self._spoken.append(frame.text or "")
+            return
+
         if not isinstance(frame, BotStoppedSpeakingFrame):
             return
         # The same frame is pushed by more than one processor.
         if frame.id in self._seen:
             return
         self._seen.add(frame.id)
+
+        # Tell the brain what was just said before asking whether it is done.
+        # Without this the interview never finished on its own.
+        # TTS text arrives in fragments that already carry their spacing.
+        said = " ".join("".join(self._spoken).split())
+        self._spoken.clear()
+        self.brain.bot_finished_speaking(said)
 
         if not self.brain.is_finished:
             return

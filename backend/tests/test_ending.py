@@ -28,9 +28,27 @@ from bot.ending import SessionEnder
 
 
 class FakeBrain:
-    def __init__(self, finished=True, withdrew=False):
-        self.is_finished = finished
+    """Mirrors the real brain closely enough to be worth trusting.
+
+    In particular it only becomes finished when told the interviewer has
+    stopped speaking, which is the behaviour the live failure hinged on: the
+    brain never learned about an utterance nobody replied to.
+    """
+
+    def __init__(self, finished=True, withdrew=False, needs_goodbye=False):
+        self._finished = finished and not needs_goodbye
         self.withdrew = withdrew
+        self.heard = []
+
+    @property
+    def is_finished(self):
+        return self._finished
+
+    def bot_finished_speaking(self, said=""):
+        self.heard.append(said)
+        # A goodbye finishes it; a question does not.
+        if said and "?" not in said:
+            self._finished = True
 
 
 class FakeWorker:
@@ -275,3 +293,99 @@ def test_saying_hello_after_the_goodbye_does_not_restart_the_interview():
 
     assert brain.is_finished is True
     assert brain.current_section.kind == "closing"
+
+
+# -- the brain has to be told the interviewer spoke ---------------------------
+
+
+async def test_the_brain_is_told_what_was_said_before_being_asked_if_it_is_done():
+    """The live failure. The brain only learns what the interviewer said when
+    the candidate speaks next, and nobody replies to a goodbye. So the goodbye
+    was spoken at 20.9 seconds, the interview stayed unfinished, and the call
+    hung until the silence backstop closed it at 36."""
+    from pipecat.frames.frames import TTSTextFrame
+
+    brain = FakeBrain(finished=False, needs_goodbye=True)
+    worker = FakeWorker()
+    ender = ender_with(brain, worker)
+
+    for part in ("Thank you for your time today. ", "I wish you all the best. Goodbye."):
+        await ender.on_push_frame(pushed(TTSTextFrame(part, aggregated_by=None)))
+    await ender.on_push_frame(pushed(BotStoppedSpeakingFrame()))
+
+    assert brain.heard == ["Thank you for your time today. I wish you all the best. Goodbye."]
+    assert worker.ended(), "the call must end on the goodbye, not fifteen seconds later"
+
+
+async def test_a_closing_that_asks_something_does_not_end_the_call():
+    """"Is there anything you would like to ask me?" is an invitation, and
+    hanging up on it would cut them off mid-question."""
+    from pipecat.frames.frames import TTSTextFrame
+
+    brain = FakeBrain(finished=False, needs_goodbye=True)
+    worker = FakeWorker()
+    ender = ender_with(brain, worker)
+
+    await ender.on_push_frame(pushed(TTSTextFrame("Is there anything you would like to ask me?", aggregated_by=None)))
+    await ender.on_push_frame(pushed(BotStoppedSpeakingFrame()))
+
+    assert worker.ended() == []
+
+
+async def test_spoken_text_does_not_leak_between_turns():
+    from pipecat.frames.frames import TTSTextFrame
+
+    brain = FakeBrain(finished=False, needs_goodbye=True)
+    ender = ender_with(brain)
+
+    await ender.on_push_frame(pushed(TTSTextFrame("First question?", aggregated_by=None)))
+    await ender.on_push_frame(pushed(BotStoppedSpeakingFrame()))
+    await ender.on_push_frame(pushed(TTSTextFrame("Goodbye.", aggregated_by=None)))
+    await ender.on_push_frame(pushed(BotStoppedSpeakingFrame()))
+
+    assert brain.heard == ["First question?", "Goodbye."]
+
+
+async def test_the_whole_chain_through_a_real_pipeline():
+    """Goodbye spoken, brain finishes, call ends. All of it, in one place.
+
+    Each of the four failures so far broke a different link in this chain and
+    each was invisible to tests that exercised only one link: the check in the
+    wrong processor, the unhashable observer, the brain never finishing, and the
+    brain never hearing the goodbye.
+    """
+    from pipecat.frames.frames import TTSTextFrame
+    from pipecat.tests.utils import run_test
+
+    from bot.brain.brain import InterviewBrain
+    from tests.test_brain import tiny_blueprint
+
+    brain = InterviewBrain(tiny_blueprint())
+    brain.observe(bot_text="Tell me about a project you led.")
+    brain.observe(candidate_text="Just end this interview.")
+    assert brain.withdrew is True
+    assert brain.is_finished is False, "not until the goodbye is actually said"
+
+    worker = FakeWorker()
+    ender = ender_with(brain, worker)
+
+    class Speaker(FrameProcessor):
+        """Stands in for the TTS and output transport at the pipeline's end."""
+
+        async def process_frame(self, frame, direction):
+            await super().process_frame(frame, direction)
+            await self.push_frame(frame, direction)
+            if isinstance(frame, TextFrame) and not isinstance(frame, TTSTextFrame):
+                await self.push_frame(
+                    TTSTextFrame(frame.text, aggregated_by=None), FrameDirection.DOWNSTREAM
+                )
+                await self.push_frame(BotStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+
+    await run_test(
+        Speaker(name="speaker"),
+        frames_to_send=[TextFrame("Thank you for your time today. Goodbye.")],
+        observers=[ender],
+    )
+
+    assert brain.is_finished is True
+    assert worker.ended()[0].reason == "candidate_withdrew"
