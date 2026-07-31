@@ -52,7 +52,7 @@ class StubGenerator:
     def __init__(self, *args, **kwargs):
         pass
 
-    async def generate(self, *, blueprint_id, spec, cv_text):
+    async def generate(self, *, blueprint_id, spec, cv_text, jd_text=""):
         from blueprint.generate import build_blueprint
 
         return build_blueprint(

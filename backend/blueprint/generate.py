@@ -16,16 +16,20 @@ decide *relative emphasis* and compute the minutes ourselves.
 """
 
 import json
+import re
 from dataclasses import dataclass
 
+from loguru import logger
 from openai import AsyncOpenAI
 
 from shared.branding import PROSE_STYLE
+
 from shared.contracts import (
     ClaimToVerify,
     CompetencyPlan,
     EvaluationSpec,
     InterviewBlueprint,
+    InterviewRegister,
 )
 
 #: Reserved so the interview can open and close like a conversation rather than
@@ -78,6 +82,17 @@ Return JSON only:
     "Instructions to the interviewer, calibrated to this candidate's seniority
      and this CV's particular weak points."
   ],
+  "domain_language": {
+    "domain": "one short phrase for the field, e.g. 'business analysis in
+               retail banking' or 'backend engineering in fintech'",
+    "vocabulary": [
+      "Up to twelve terms this field actually uses, COPIED FROM the job
+       description or the CV. Copy them exactly as they are written there.
+       Do NOT invent plausible-sounding jargon: every term is checked against
+       those documents and anything not found is discarded. An empty list is a
+       perfectly good answer."
+    ]
+  },
   "competency_plans": [
     {
       "competency_id": "must match a competency id from the spec",
@@ -137,6 +152,7 @@ class BlueprintGenerator:
         blueprint_id: str,
         spec: EvaluationSpec,
         cv_text: str,
+        jd_text: str = "",
     ) -> InterviewBlueprint:
         user = (
             f"EVALUATION SPEC:\n{spec.model_dump_json(indent=2)}\n\n"
@@ -157,11 +173,75 @@ class BlueprintGenerator:
         except Exception as exc:  # noqa: BLE001
             raise BlueprintGenerationError(f"Blueprint model call failed: {exc}") from exc
 
-        return build_blueprint(blueprint_id=blueprint_id, spec=spec, payload=payload)
+        # The documents are the only authority on what this field calls
+        # things, so verification reads them rather than the model's word.
+        return build_blueprint(
+            blueprint_id=blueprint_id,
+            spec=spec,
+            payload=payload,
+            source_text=f"{jd_text}\n{cv_text}\n{spec.model_dump_json()}",
+        )
+
+
+#: A cap on how much field vocabulary reaches the live prompt. The live context
+#: is kept small on purpose, and an interviewer reciting thirty terms sounds
+#: like it is showing off rather than listening.
+MAX_VOCABULARY = 12
+
+
+def verify_vocabulary(proposed: list, source_text: str) -> list[str]:
+    """Keep only the terms the documents actually use.
+
+    The same shape as quote verification in the feedback scorer, for the same
+    reason. A model asked for the vocabulary of a field will happily supply
+    plausible terms nobody in this particular workplace uses, and jargon used
+    wrongly is far worse than plain language: a specialist hears one misused
+    term and stops trusting the interview. Borrowing only what the JD and the CV
+    already say makes that impossible rather than unlikely.
+    """
+    haystack = re.sub(r"[^a-z0-9]+", " ", (source_text or "").lower())
+    kept: list[str] = []
+    seen: set[str] = set()
+
+    for raw in proposed or []:
+        if not isinstance(raw, str):
+            continue
+        term = raw.strip()
+        needle = re.sub(r"[^a-z0-9]+", " ", term.lower()).strip()
+        if not needle or needle in seen:
+            continue
+        # A trailing "s" is the same term. The JD says "produce BRDs" and the
+        # model proposes "BRD"; refusing that would discard the field's most
+        # characteristic word on a grammatical technicality. Kept deliberately
+        # narrow: anything looser stops being verification.
+        forms = {needle, f"{needle}s", needle[:-1] if needle.endswith("s") else needle}
+        if not any(f" {form} " in f" {haystack} " for form in forms if form):
+            logger.info(f"dropped invented vocabulary: {term!r}")
+            continue
+        seen.add(needle)
+        kept.append(term)
+        if len(kept) >= MAX_VOCABULARY:
+            break
+    return kept
+
+
+def build_register(payload: dict, source_text: str) -> InterviewRegister | None:
+    raw = payload.get("domain_language")
+    if not isinstance(raw, dict):
+        return None
+    vocabulary = verify_vocabulary(raw.get("vocabulary"), source_text)
+    domain = str(raw.get("domain") or "").strip()
+    if not domain and not vocabulary:
+        return None
+    return InterviewRegister(domain=domain, vocabulary=vocabulary)
 
 
 def build_blueprint(
-    *, blueprint_id: str, spec: EvaluationSpec, payload: dict
+    *,
+    blueprint_id: str,
+    spec: EvaluationSpec,
+    payload: dict,
+    source_text: str = "",
 ) -> InterviewBlueprint:
     """Assemble and validate a blueprint from the model's raw output.
 
@@ -222,6 +302,7 @@ def build_blueprint(
                 for line in (payload.get("interviewing_guidance") or [])
                 if isinstance(line, str) and line.strip()
             ],
+            domain_language=build_register(payload, source_text),
         )
     except Exception as exc:  # noqa: BLE001
         raise BlueprintGenerationError(f"Assembled blueprint failed validation: {exc}") from exc

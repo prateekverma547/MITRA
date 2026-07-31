@@ -90,6 +90,28 @@ class ClaimToVerify(BaseModel):
     source: str = Field(default="cv", description="Where the claim came from.")
 
 
+class InterviewRegister(BaseModel):
+    """How someone in this field actually talks about the work.
+
+    A generic interview sounds like it was written by someone who has never done
+    the job. An interviewer for a business analyst should say "requirement
+    gathering" and "sign-off", not "process improvement activities".
+
+    **Every term is drawn from the job description or the CV and verified against
+    them in code.** Jargon used wrongly is far worse than plain language: a
+    specialist hears one misused term and stops trusting the interview. Borrowing
+    the documents' own words makes that structurally impossible, in the same way
+    that verifying quotes against the transcript makes a fabricated quote
+    impossible in the feedback report.
+    """
+
+    #: One short phrase: "business analysis in retail banking".
+    domain: str = ""
+    #: Terms the interviewer may use, every one of them found in the source
+    #: documents. Empty is a fine answer and means plain language.
+    vocabulary: list[str] = Field(default_factory=list)
+
+
 class InterviewBlueprint(BaseModel):
     """The candidate-specific interview plan the bot executes.
 
@@ -115,6 +137,11 @@ class InterviewBlueprint(BaseModel):
     competency_plans: list[CompetencyPlan]
     suggested_opening: str
     interviewing_guidance: list[str] = Field(default_factory=list)
+
+    #: The vocabulary of the field, borrowed from the JD and the CV. Optional:
+    #: an interview with none of it just speaks plainly, which is never wrong.
+    #: Not named `register`, which shadows a Pydantic attribute.
+    domain_language: InterviewRegister | None = None
 
     @model_validator(mode="after")
     def _budgets_fit_configured_duration(self) -> "InterviewBlueprint":

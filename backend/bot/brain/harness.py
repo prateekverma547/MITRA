@@ -174,7 +174,10 @@ def unheard_candidate() -> ScriptedCandidate:
             "the hard part was",
             "Sorry, I did not catch that.",
             "grounding every answer in ticket history",
-        ]
+        ],
+        # Leave rather than repeat the last line forever, which made the tail of
+        # every run look like a bot failure that was really a script artifact.
+        max_turns=12,
     )
 
 

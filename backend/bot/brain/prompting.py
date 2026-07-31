@@ -280,6 +280,36 @@ Then ask your question again. Do not treat the echo as something they said.
     return ""
 
 
+def _render_domain_language(blueprint) -> str:
+    """Speak the way this field speaks.
+
+    Every term here was copied out of the job description or the CV and checked
+    against them, so using one cannot be a mistake about the field. The caution
+    at the end is the important part: a term used wrongly costs more credibility
+    than plain language ever would, and the candidate is the authority on their
+    own work.
+    """
+    register = getattr(blueprint, "domain_language", None)
+    if register is None or (not register.domain and not register.vocabulary):
+        return ""
+
+    lines = ["\nTHE LANGUAGE OF THIS FIELD"]
+    if register.domain:
+        lines.append(f"This is an interview in {register.domain}.")
+    if register.vocabulary:
+        lines.append(
+            "These are the words this workplace uses, taken from their own job "
+            "description and CV. Use them where they fit naturally:"
+        )
+        lines.append("  " + ", ".join(register.vocabulary))
+    lines.append(
+        "Do not reach for jargon beyond these. Plain language is always safe; a "
+        "term used slightly wrongly tells the candidate you do not know their "
+        "work. If they use a word you were not given, follow their lead."
+    )
+    return "\n".join(lines) + "\n"
+
+
 def _render_red_flags(spec) -> str:
     """The employer's dealbreakers, shown while probing a competency.
 
@@ -381,7 +411,7 @@ Seniority: {spec.seniority}. Expected experience: {spec.experience_expectation}.
 Your manner should be {spec.tone}.
 
 {VOICE_RULES}
-"""
+{_render_domain_language(blueprint)}"""
 
     # A repair outranks every other instruction. Nothing else this turn is
     # worth doing if they could not hear the question.

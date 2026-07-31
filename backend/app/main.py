@@ -597,6 +597,9 @@ async def generate_blueprint_task(candidate_id: str) -> None:
         candidate.spec_version = job.spec_version
         spec_payload = job.evaluation_spec
         cv_text = candidate.cv_text
+        # The JD is half the vocabulary of the field, and generation could not
+        # see it before.
+        jd_text = job.jd_text
         await session.commit()
 
     try:
@@ -606,7 +609,7 @@ async def generate_blueprint_task(candidate_id: str) -> None:
             api_key=settings.openai_api_key, model=settings.blueprint_model
         )
         blueprint = await generator.generate(
-            blueprint_id=candidate_id, spec=spec, cv_text=cv_text
+            blueprint_id=candidate_id, spec=spec, cv_text=cv_text, jd_text=jd_text
         )
     except (BlueprintGenerationError, Exception) as exc:  # noqa: BLE001
         logger.error(f"[{candidate_id}] blueprint generation failed: {exc}")

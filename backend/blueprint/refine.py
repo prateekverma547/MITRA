@@ -137,7 +137,10 @@ class BlueprintRefiner:
         # The gate: a revision that cannot be interviewed is not applied.
         try:
             revised = build_blueprint(
-                blueprint_id=blueprint.blueprint_id, spec=spec, payload=payload
+                blueprint_id=blueprint.blueprint_id,
+                spec=spec,
+                payload=payload,
+                source_text=cv_text,
             )
         except BlueprintGenerationError as exc:
             raise RefinementError(
