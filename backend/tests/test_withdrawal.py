@@ -14,7 +14,14 @@ ends someone's interview and cannot be undone.
 import pytest
 
 from bot.brain.brain import InterviewBrain
-from bot.brain.withdrawal import confirms_stopping, declines_stopping, wants_to_stop
+from bot.brain.withdrawal import (
+    StopIntent,
+    asked_explicitly,
+    classify,
+    confirms_stopping,
+    declines_stopping,
+    wants_to_stop,
+)
 from tests.test_brain import tiny_blueprint
 
 
@@ -223,3 +230,90 @@ def test_an_apology_before_a_real_answer_is_still_an_answer(said):
     """"Sorry" is not a filler elsewhere and must not become one: it opens
     plenty of genuine answers."""
     assert wants_to_stop(said) is False
+
+
+# -- verbatim from the session where this failed -----------------------------
+#
+# Four requests to stop in under a minute. None were detected, and the
+# interviewer answered the third by asking a fresh question about learning new
+# business domains. The first detector matched whole utterances against a fixed
+# phrase list, so it caught "I want to stop" and nothing anybody actually says.
+
+LIVE_TRANSCRIPT = [
+    "I don't want to continue this interview. Just end this interview.",
+    "Just end in the interview.",
+    "In the interview, I don't want to continue the interview",
+    "No, just end the interview.",
+]
+
+
+@pytest.mark.parametrize("said", LIVE_TRANSCRIPT)
+def test_what_was_actually_said_is_detected(said):
+    assert wants_to_stop(said) is True
+
+
+@pytest.mark.parametrize("said", LIVE_TRANSCRIPT)
+def test_what_was_actually_said_is_an_instruction_not_a_hint(said):
+    """Being asked "are you sure?" after this is the insult. It was asked twice
+    more after the first of these."""
+    assert asked_explicitly(said) is True
+
+
+def test_an_explicit_instruction_ends_it_without_asking_again():
+    brain = brain_for()
+    brain.observe(bot_text="So, tell me what you're working on at the moment.")
+    brain.observe(candidate_text="I don't want to continue this interview. Just end this interview.")
+
+    assert brain.withdrew is True
+    assert brain.current_section.kind == "closing"
+    # Not an offer. They already told us.
+    assert "THEY HAVE ASKED TO STOP" not in brain.plan_turn().system_instruction
+
+    brain.observe(bot_text="Thank you for your time. Take care.")
+    assert brain.is_finished is True
+
+
+def test_the_interviewer_never_asks_a_new_question_after_being_told_to_stop():
+    """Live it asked: "Before we wrap up, can you share an example of a time you
+    had to quickly learn a new business domain?" """
+    brain = brain_for()
+    brain.observe(bot_text="Tell me about a project you led.")
+    brain.observe(candidate_text="Just end the interview.")
+
+    instruction = brain.plan_turn().system_instruction
+
+    assert brain.current_section.kind == "closing"
+    assert "BECAUSE THEY ASKED TO STOP" in instruction
+    assert "Do not ask if they have questions" in instruction
+
+
+def test_repeating_the_request_is_taken_as_a_yes():
+    """Somebody who says it again has answered the offer, whatever words they
+    used. A third asking is not acceptable."""
+    brain = brain_for()
+    brain.observe(bot_text="Tell me about a project.")
+    brain.observe(candidate_text="I'm done")           # soft, so it offers
+    brain.observe(bot_text="Would you like to end here, or carry on?")
+    brain.observe(candidate_text="No, just end the interview.")
+
+    assert brain.withdrew is True
+
+
+# -- and the answers that must survive a looser detector ---------------------
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "I don't want to talk about my last employer",
+        "I don't want to continue down that line, what actually happened was different",
+        "I want to stop doing manual QA, that's why I moved",
+        "We had to end the project early because of budget",
+        "I'm done with that project now, it shipped last year",
+        "Sorry, I should explain, we actually built two of them.",
+    ],
+)
+def test_searching_inside_the_utterance_still_does_not_eat_answers(said):
+    """Every pattern names the interview, the call or the session. Ending a
+    project is not ending an interview."""
+    assert classify(said) is StopIntent.NONE

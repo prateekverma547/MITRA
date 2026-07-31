@@ -30,7 +30,12 @@ from shared.contracts import (
 
 from bot.brain.refusal import is_substantive, looks_like_refusal
 from bot.brain.repair import RepairKind, classify as classify_repair
-from bot.brain.withdrawal import confirms_stopping, declines_stopping, wants_to_stop
+from bot.brain.withdrawal import (
+    StopIntent,
+    classify as classify_stop,
+    confirms_stopping,
+    declines_stopping,
+)
 from bot.brain.state import BrainConfig, Section, build_sections
 
 #: Two attempts at the same question, then move on. A third time is an
@@ -306,6 +311,12 @@ class InterviewBrain:
             # Leaving outranks everything else. Somebody who has said they want
             # to stop must not be asked another question, and must certainly not
             # be asked to repeat themselves.
+            # Already leaving. Repeating themselves must not re-trigger the
+            # withdrawal path, which returned early and so never reached the
+            # closing check below: the goodbye was said over and over and the
+            # interview never registered as finished.
+            intent = StopIntent.NONE if self._withdrew else classify_stop(candidate_text)
+
             if self._stop_offered:
                 if confirms_stopping(candidate_text):
                     self._withdrew = True
@@ -321,7 +332,16 @@ class InterviewBrain:
                     # Neither yes nor no. Take the answer at face value and keep
                     # going rather than pressing them about leaving.
                     self._stop_offered = False
-            elif wants_to_stop(candidate_text):
+            elif intent is StopIntent.EXPLICIT:
+                # An instruction, not a hint. Asking somebody who has just said
+                # "just end this interview" whether they are sure is the insult,
+                # and live it was asked twice more after exactly that.
+                self._withdrew = True
+                self._skip_to_closing("candidate_withdrew")
+                return
+            elif intent is StopIntent.SOFT:
+                # Could be about a topic rather than the interview. Worth one
+                # question, and only one.
                 self._stop_offered = True
                 return
 
@@ -360,7 +380,8 @@ class InterviewBrain:
         # candidate turns like any other, so after a goodbye nobody replied to,
         # `turns_spent` never reached its ceiling, `is_finished` stayed False,
         # and the call sat there with both of them in it. Reported live twice.
-        if section.kind == SectionKind.CLOSING and bot_text:
+        # Read fresh: the candidate's turn above may have moved us here.
+        if self.current_section.kind == SectionKind.CLOSING and bot_text:
             self._closing_bot_turns += 1
             # A closing turn that asks something is inviting a last question, so
             # wait for it. One that does not is a goodbye, and there is nothing

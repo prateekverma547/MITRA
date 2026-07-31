@@ -192,8 +192,10 @@ def withdrawing_candidate() -> ScriptedCandidate:
         replies=[
             "Hi, yes, I can hear you.",
             "I have been a product manager for about eight years.",
-            "Sorry, I do not want to continue the interview.",
-            "yes",
+            # Verbatim from the session where none of this was detected.
+            "I don't want to continue this interview. Just end this interview.",
+            "Just end in the interview.",
+            "No, just end the interview.",
         ],
         max_turns=6,
     )
