@@ -150,6 +150,14 @@ class InterviewBrain:
         #: An interview begins when the interviewer opens it. Anything picked
         #: up before that is ambient room noise, not an answer.
         self._interviewer_has_spoken = False
+        #: True once the interviewer has asked something nobody has answered
+        #: yet. A turn is an *exchange*, not an utterance: everything the
+        #: candidate says between two interviewer turns is one answer.
+        self._awaiting_answer = False
+        #: Per-exchange bookkeeping, so a later fragment can correct what the
+        #: first one looked like without counting twice.
+        self._exchange_refused = False
+        self._credited_substantive = False
         self._ignored_before_start: list[str] = []
         self._started_at = now
         self._now = now
@@ -299,6 +307,7 @@ class InterviewBrain:
         if bot_text:
             self._append(section, "interviewer", bot_text)
             self._interviewer_has_spoken = True
+            self._awaiting_answer = True
 
         # Audio captured before the interviewer has said a word is not an
         # answer. A live session picked up a bystander in the room saying
@@ -362,15 +371,44 @@ class InterviewBrain:
             self._repair_attempts = 0
             self._question_to_repair = ""
 
-            section.turns_spent += 1
+            # A turn is an *exchange*, not an utterance. Speech reaches us in
+            # fragments — "So that" / "I get to know what their businesses are."
+            # / "I try to make a conversation with a client" is one answer, and
+            # counting each piece as its own turn spends the section on a single
+            # reply. Live, `int_0a7ca5d0aca5` ran eight fragments of one answer
+            # straight through the opening and most of the section after it
+            # while the interviewer said nothing at all, and a 40-minute
+            # interview reached its closing in 291 seconds with every section
+            # marked `insufficient`.
+            #
+            # So: only the first utterance after an interviewer turn spends a
+            # turn. The rest are the same answer still arriving.
+            continuation = not self._awaiting_answer
+            self._awaiting_answer = False
 
-            if looks_like_refusal(candidate_text):
-                self._consecutive_refusals += 1
-                section.declined_turns += 1
+            refused = looks_like_refusal(candidate_text)
+
+            if not continuation:
+                section.turns_spent += 1
+                self._exchange_refused = refused
+                self._credited_substantive = False
+
+            if refused:
+                if not continuation:
+                    self._consecutive_refusals += 1
+                    section.declined_turns += 1
             else:
+                # A leading "No." followed by "that's not how it went, what we
+                # did was…" is an answer, and the fragments arrive separately.
+                # Reading it as a refusal is the error that matters here.
+                if continuation and self._exchange_refused and is_substantive(candidate_text):
+                    self._exchange_refused = False
+                    self._consecutive_refusals = max(0, self._consecutive_refusals - 1)
+                    section.declined_turns = max(0, section.declined_turns - 1)
                 self._consecutive_refusals = 0
-                if is_substantive(candidate_text):
+                if is_substantive(candidate_text) and not self._credited_substantive:
                     section.substantive_turns += 1
+                    self._credited_substantive = True
 
         # The interview ends when the interviewer has finished closing it, not
         # when the candidate happens to speak again.

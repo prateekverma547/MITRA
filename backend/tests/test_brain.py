@@ -641,3 +641,90 @@ def test_turn_detection_does_not_pull_in_torch():
         "torch was imported while building turn detection — the "
         "local-smart-turn extra is probably back in pyproject.toml"
     )
+
+
+# -- fragmented speech ------------------------------------------------------
+#
+# Live session `int_0a7ca5d0aca5`, a Business Analyst interview booked for 40
+# minutes, reached its closing after 291 seconds with every section marked
+# `insufficient`. Nothing crashed: the brain genuinely believed it had finished.
+#
+# Deepgram delivers a halting speaker in fragments, and `turns_spent` was
+# incremented once per utterance. One answer arrived as eight of them, so a
+# six-turn section was spent on a single reply. Across the real transcript, 12
+# interviewer turns drew 52 candidate utterances, and all eight sections were
+# burned through.
+#
+# The text-mode harness could never catch this: a ScriptedCandidate replies once
+# per question, so an answer is never split.
+
+ONE_ANSWER_IN_FRAGMENTS = [
+    "I",
+    "under I tried to understand the client 1st.",
+    "So that",
+    "I get to know what their businesses are.",
+    "I try to make a conversation with a client",
+    "on a regular basis.",
+    "When they got comfortable with me,",
+    "they told me all the pain areas.",
+]
+
+
+def test_one_answer_arriving_in_fragments_spends_one_turn():
+    brain = InterviewBrain(load_blueprint())
+    brain.observe(bot_text="What steps did you take to understand the client?")
+    section = brain.current_section
+
+    for fragment in ONE_ANSWER_IN_FRAGMENTS:
+        brain.observe(candidate_text=fragment)
+
+    assert brain.current_section is section, (
+        "eight fragments of one answer walked the interview into another section"
+    )
+    assert section.turns_spent == 1
+
+
+def test_fragments_do_not_race_the_interview_to_its_closing():
+    """The shape of the live session: 12 questions, 52 fragmented utterances.
+
+    That is roughly five minutes of a forty-minute interview, and it must not
+    get anywhere near the closing. Live it reached the closing and hung up.
+    """
+    brain = InterviewBrain(load_blueprint())
+    entered = []
+
+    for _ in range(12):
+        brain.observe(bot_text="Can you give me a specific example of that?")
+        for fragment in ONE_ANSWER_IN_FRAGMENTS[:4]:  # 12 x 4 ~= the real 52
+            brain.observe(candidate_text=fragment)
+        if brain.current_section.id not in entered:
+            entered.append(brain.current_section.id)
+
+    assert not brain.is_finished
+    assert brain.current_section.kind is not SectionKind.CLOSING
+    # Twelve answers cannot legitimately cover eight sections.
+    assert len(entered) <= 3, f"burned through {entered}"
+
+
+def test_a_leading_no_is_not_a_refusal_when_the_answer_follows_in_the_next_fragment():
+    """"No." then "that's not how it went…" is one answer, split by the vendor.
+
+    Whole-utterance matching is what keeps "no" apart from "no, but…". Fragments
+    defeat it by turning the "no" into the whole utterance, so the correction
+    has to survive arriving late.
+    """
+    brain = InterviewBrain(load_blueprint())
+    brain.observe(bot_text="Was your documentation ever challenged?")
+    section = brain.current_section
+
+    brain.observe(candidate_text="No.")
+    brain.observe(
+        candidate_text=(
+            "The client did scrutinise it, and we walked through every "
+            "acceptance criterion together before sign-off."
+        )
+    )
+
+    assert section.turns_spent == 1
+    assert section.declined_turns == 0
+    assert section.substantive_turns == 1

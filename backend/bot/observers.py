@@ -42,6 +42,13 @@ from pipecat.metrics.metrics import TurnMetricsData
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 
 
+#: A turn that ends and is resumed within this many seconds did not end because
+#: the candidate finished. Set above the tolerated-pause range so a genuine
+#: think-then-continue is not counted, and well below the gap a real reply
+#: would leave.
+FALSE_TURN_END_SECONDS = 2.0
+
+
 class _DedupObserver(BaseObserver):
     """Observers see each frame on every processor hop; count each one once."""
 
@@ -130,6 +137,8 @@ class TurnLatencyObserver(_DedupObserver):
         self._current: TurnRecord | None = None
         self._turn_index = 0
         self._bot_speaking = False
+        self._turn_ended_at: float | None = None
+        self._false_turn_ends: list[float] = []
         # Instant the candidate fell silent, while we are still deciding
         # whether that silence is a pause or the end of the turn.
         self._pending_silence_start: float | None = None
@@ -146,6 +155,26 @@ class TurnLatencyObserver(_DedupObserver):
             return
 
         if isinstance(frame, UserStartedSpeakingFrame):
+            # A turn that ended and is resumed almost immediately did not end
+            # because the candidate had finished. It ended because smart-turn
+            # read a clause boundary as the end of an answer, and the candidate
+            # simply carried on. Session `int_0a7ca5d0aca5` did this 74 times in
+            # 291 seconds to a speaker talking in short, complete-sounding
+            # clauses, which split one answer across many turns.
+            #
+            # A tolerated pause is the same silence handled correctly. The only
+            # difference is whether the turn survived it, so measuring both
+            # together is what tells us the endpointing is set wrong rather than
+            # the candidate being slow.
+            if self._turn_ended_at is not None:
+                gap = time.time() - self._turn_ended_at
+                if gap <= FALSE_TURN_END_SECONDS:
+                    self._false_turn_ends.append(gap)
+                    logger.info(
+                        f"[turn {self._turn_index}] ended, but the candidate "
+                        f"resumed {gap:.2f}s later; the answer was still coming"
+                    )
+            self._turn_ended_at = None
             self._turn_index += 1
             self._current = TurnRecord(index=self._turn_index)
             self._pending_silence_start = None
@@ -177,6 +206,7 @@ class TurnLatencyObserver(_DedupObserver):
         elif isinstance(frame, UserStoppedSpeakingFrame):
             # The turn detector has committed: the candidate is done.
             self._pending_silence_start = None
+            self._turn_ended_at = time.time()
             if self._current:
                 self._current.turn_finalized = time.time()
 
@@ -236,6 +266,15 @@ class TurnLatencyObserver(_DedupObserver):
             "tolerated_pauses_s": [round(p, 2) for p in pauses],
             "longest_tolerated_pause_s": _round(max(pauses), 2) if pauses else None,
             "interruptions_by_candidate": sum(1 for t in self._turns if t.was_interrupted),
+            # Turns that ended while the answer was still coming. High here means
+            # endpointing, not the candidate: see the note in on_push_frame.
+            "false_turn_ends": len(self._false_turn_ends),
+            "turns_started": self._turn_index,
+            "false_turn_end_rate": (
+                _round(len(self._false_turn_ends) / self._turn_index, 2)
+                if self._turn_index
+                else None
+            ),
         }
 
 

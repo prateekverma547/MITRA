@@ -89,6 +89,56 @@ Rule one of the tuning order: **never trade "doesn't interrupt" for "feels
 fast."** Lowering this is a decision to be taken deliberately with a listening
 session, not a tuning tweak.
 
+### A turn is an exchange, not an utterance
+
+Live session `int_0a7ca5d0aca5`, a Business Analyst interview booked for forty
+minutes, reached its closing after **291 seconds** with every section marked
+`insufficient`. Nothing crashed. The brain genuinely believed it had finished.
+
+The candidate spoke in short clauses with pauses between them. The transcript
+recorded 12 interviewer turns against **52 candidate utterances**, one answer
+arriving as eight of them:
+
+```
+[86s] I
+[88s] under I tried to understand the client 1st.
+[89s] So that
+[92s] I get to know what their businesses are.
+```
+
+`turns_spent` was incremented once per utterance, so a six-turn section was
+spent on a single reply. Replaying the real transcript through the brain:
+
+| | sections entered | ends in |
+|---|---|---|
+| counting utterances | 8 of 8 | `closing`, matching the live abort |
+| counting exchanges | 3 of 8 | `prioritization`, still interviewing |
+
+Only the first utterance after an interviewer turn now spends a turn. The rest
+are the same answer still arriving.
+
+**The text-mode harness could not have caught this**, and that is the general
+lesson rather than a detail: a `ScriptedCandidate` replies exactly once per
+question, so an answer is never split. The suite was 474 green before the fix
+and 474 green after it. Three tests now encode the live transcript.
+
+**The upstream cause is separate and still open.** `UserStartedSpeakingFrame`
+fired **74 times in 291 seconds**, so the turn really was starting and stopping
+every few seconds. Two things contribute:
+
+- `endpointing=False` on Deepgram disables `speech_final`, which is the signal
+  meaning *the speaker stopped*. Pipecat emits a `TranscriptionFrame` on every
+  `is_final`, which only means *these words will not change* and fires during
+  continuous speech. Verified in `services/deepgram/stt.py`.
+- Smart-turn v3 judges each falling-tone clause a finished turn for a speaker
+  who talks this way.
+
+`false_turn_ends` and `false_turn_end_rate` now measure it directly: a turn that
+ends and is resumed within 2.0s did not end because the candidate had finished.
+**Read that number off the next real session before touching
+`SMART_TURN_STOP_SECS` or `VAD_STOP_SECS`**, because rule one of the tuning
+order still applies and the audible behaviour was never the complaint here.
+
 ### Neither STT vendor does its own endpointing
 
 `turn_detection=False` on OpenAI, `endpointing=False` on Deepgram. Both offer
