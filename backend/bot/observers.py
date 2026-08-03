@@ -268,6 +268,13 @@ class TurnLatencyObserver(_DedupObserver):
             "interruptions_by_candidate": sum(1 for t in self._turns if t.was_interrupted),
             # Turns that ended while the answer was still coming. High here means
             # endpointing, not the candidate: see the note in on_push_frame.
+            # What smart-turn actually said, so TURN_END_CONFIDENCE can be set
+            # from a real session rather than from taste.
+            "turn_end_probabilities": sorted(
+                round(t.model_probability, 2)
+                for t in self._turns
+                if t.model_probability is not None
+            ),
             "false_turn_ends": len(self._false_turn_ends),
             "turns_started": self._turn_index,
             "false_turn_end_rate": (

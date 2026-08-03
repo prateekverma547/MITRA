@@ -133,7 +133,21 @@ every few seconds. Two things contribute:
 - Smart-turn v3 judges each falling-tone clause a finished turn for a speaker
   who talks this way.
 
-`false_turn_ends` and `false_turn_end_rate` now measure it directly: a turn that
+**Fixed on the second point.** Pipecat hardcodes `probability > 0.5` inside
+`LocalSmartTurnAnalyzerV3`, a coin flip: a clause that sounds 51% finished ends
+the turn. `ConfidentSmartTurnAnalyzer` raises that bar to `TURN_END_CONFIDENCE`
+(0.8), overriding the threshold only and leaving the model, its features and its
+inference untouched.
+
+This cannot hang a turn. `stop_secs` remains the backstop, so a candidate the
+model stays unsure about is released after the same 4s already accepted for a
+thinking pause. It also costs nothing on a clear ending, where the probability
+is high and the turn releases at the first VAD gap as before. The direction of
+the trade is deliberate: more patient, never less, per rule one.
+
+**0.8 is a starting point, not a measurement.** `turn_end_probabilities` records
+what the model actually said on every turn, so set it from a real session.
+`false_turn_ends` and `false_turn_end_rate` measure the symptom directly: a turn that
 ends and is resumed within 2.0s did not end because the candidate had finished.
 **Read that number off the next real session before touching
 `SMART_TURN_STOP_SECS` or `VAD_STOP_SECS`**, because rule one of the tuning

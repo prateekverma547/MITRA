@@ -244,3 +244,50 @@ async def test_transcript_flushes_pending_bot_speech(clock):
     turns = observer.turns
     assert len(turns) == 1
     assert turns[0]["text"] == "Tell me about your last role."
+
+
+# -- turn-end confidence ----------------------------------------------------
+
+
+def test_the_analyzer_needs_more_than_a_coin_flip_to_end_a_turn(monkeypatch):
+    """Pipecat ends the turn at `probability > 0.5`.
+
+    Live session `int_0a7ca5d0aca5` started 74 turns in 291 seconds against a
+    candidate speaking in short clauses, and each fragment reached the LLM on
+    its own. The model is untouched; only the bar it has to clear moves.
+
+    This drives the real `_predict_endpoint`, stubbing only the ONNX inference
+    underneath it, so the override itself is what is under test.
+    """
+    from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+
+    from bot.turn_taking import ConfidentSmartTurnAnalyzer
+
+    probability = 0.0
+
+    def fake_inference(self, audio_array):
+        return {"prediction": 1 if probability > 0.5 else 0, "probability": probability}
+
+    monkeypatch.setattr(LocalSmartTurnAnalyzerV3, "_predict_endpoint", fake_inference)
+    analyzer = ConfidentSmartTurnAnalyzer.__new__(ConfidentSmartTurnAnalyzer)
+    analyzer._confidence = 0.8
+
+    def ends_the_turn(p):
+        nonlocal probability
+        probability = p
+        return analyzer._predict_endpoint(None)["prediction"] == 1
+
+    # Pipecat would have ended the turn on all four of these.
+    assert not ends_the_turn(0.55), "a 55% guess cut the candidate off"
+    assert not ends_the_turn(0.79)
+    # A clear ending still releases immediately, so nothing gets slower.
+    assert ends_the_turn(0.80)
+    assert ends_the_turn(0.95)
+    # And the underlying model is still the one being asked.
+    assert not ends_the_turn(0.10)
+
+
+def test_the_confidence_bar_is_above_pipecats_coin_flip():
+    from bot.turn_taking import TURN_END_CONFIDENCE
+
+    assert 0.5 < TURN_END_CONFIDENCE < 1.0
