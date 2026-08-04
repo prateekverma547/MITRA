@@ -35,6 +35,13 @@ class RoomPresence:
     #: Ids seen at any point, so a rejoin is not counted as a fresh arrival.
     _seen: set[str] = field(default_factory=set)
 
+    #: Answers "has the interview already finished?", supplied by the brain.
+    #: Optional, and without it this counts every departure exactly as it used
+    #: to, which keeps a transport that cannot report presence, and the text
+    #: harness, working rather than broken. Same shape as the callables
+    #: `SilenceEscalation` already takes for the same reason.
+    interview_over: object = None
+
     disconnects: int = 0
     #: The most people in the room at once, besides the bot. Above one means
     #: somebody else was there.
@@ -52,14 +59,59 @@ class RoomPresence:
             f"{len(self._present)} in the room besides the interviewer"
         )
 
+    def _already_over(self) -> bool:
+        """Whether the interview had finished when somebody left.
+
+        A bad reading must never invent a disconnect, so anything unexpected
+        here falls back to counting the departure, which is the old behaviour
+        and the safe direction: over-reporting a dropped call is recoverable by
+        reading the transcript, and silencing a real one is not.
+        """
+        if self.interview_over is None:
+            return False
+        try:
+            return bool(self.interview_over())
+        except Exception:  # noqa: BLE001
+            return False
+
     def left(self, participant_id: str, reason: str = "") -> None:
-        if participant_id in self._present:
-            self._present.discard(participant_id)
-            self.disconnects += 1
+        """Record a departure, and decide whether it was a fault.
+
+        **An interview ends with the candidate leaving.** Counting every
+        departure therefore recorded a disconnect on every single interview,
+        and `disconnects > 0` is enough to mark a report degraded, so every
+        report claimed a poor recording on the strength of a normal goodbye.
+        Six of six stored interviews, no exceptions, no correct hits.
+
+        What separates them is not presence. A candidate whose connection dies
+        mid-answer and never returns looks identical at the end to one who hangs
+        up after being thanked: one departure, empty room. The brain is what
+        knows the difference, because it knows whether the interview had reached
+        its close, so it is asked.
+
+        Both directions matter. A departure before the interview finished is a
+        real drop and is still counted, whether or not they come back, because a
+        truncated interview is exactly when the report most needs to explain
+        itself.
+        """
+        if participant_id not in self._present:
+            return
+
+        self._present.discard(participant_id)
+        remaining = len(self._present)
+
+        if self._already_over():
             logger.info(
-                f"participant left ({reason or 'no reason given'}); "
-                f"{len(self._present)} left in the room"
+                f"participant left after the interview finished "
+                f"({reason or 'no reason given'}); not a disconnect"
             )
+            return
+
+        self.disconnects += 1
+        logger.info(
+            f"participant left mid-interview ({reason or 'no reason given'}); "
+            f"{remaining} left in the room"
+        )
 
     @property
     def candidate_present(self) -> bool:
