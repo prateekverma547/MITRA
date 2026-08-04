@@ -61,12 +61,47 @@ STT_FINALIZATION_WAIT_SECONDS = 1.25
 
 DEEPGRAM_MODEL = "nova-3"
 
-#: Deepgram confirms finalisation, so this is a safety net rather than the thing
-#: gating every turn. Left at Pipecat's own default on purpose: the trial is
-#: meant to measure what the vendor actually does, and tuning this first would
-#: measure our guess instead. Once `stt_lag` has been recorded on a real
-#: session, set it from that the way the OpenAI figure above was set.
-DEEPGRAM_FINALIZATION_WAIT_SECONDS = 0.35
+#: How long Pipecat waits for a final transcript once the turn model says the
+#: candidate is done. Deepgram confirms finalisation, so unlike the OpenAI figure
+#: above this is a **safety net rather than the thing gating a turn**: when
+#: confirmation lands at 0.48s the turn fires at 0.48s, whether the ceiling here
+#: is 0.35 or 0.65. Raising it therefore costs no latency on a healthy turn.
+#:
+#: This was Pipecat's own default of 0.35, left alone deliberately until a real
+#: session produced a number, exactly as this comment used to say it should be.
+#: Two full interviews have now produced one. Fourteen `stt_lag` samples,
+#: nova-3, from Greater Noida, India:
+#:
+#:     0.46  0.46  0.46  0.47  0.47  0.47  0.47
+#:     0.48  0.48  0.48  0.48  0.49  0.51  0.52
+#:
+#:     median 0.475   p90 0.51   max 0.52   min 0.46   n=14
+#:
+#: **Every sample exceeds 0.35.** This is not a slow tail, it is a consistent
+#: floor around 0.48s that the old ceiling never reached, so the timer fired
+#: first on every single turn. The same tight-distribution shape the OpenAI
+#: measurement showed, at a different number.
+#:
+#: What that cost: the timeout expiring before the transcript was complete split
+#: one spoken sentence into several turns. Words at the split were corrupted
+#: ("session management" became "recession management"), and the extra turns
+#: inflated the counts that decide when a section has had enough, so sections
+#: ended early. A batch-API run of the same speaker saying the same phrases
+#: produced none of those errors, which is what ruled out accent and pointed
+#: here.
+#:
+#: 0.65 is the measured max plus headroom, the same rule that put the OpenAI
+#: figure at 1.25 against a measured max of 1.08.
+#:
+#: **These samples are from India.** Finalisation latency includes a network
+#: round trip to Deepgram, so a deployment closer to their infrastructure will
+#: measure lower and one further away may measure higher. This number belongs to
+#: where the candidates are, not to the vendor.
+#:
+#: Would change the answer: `stt_lag` samples that sit clear of 0.65 on the
+#: deployment being run, or a Deepgram change that makes confirmation slower. Do
+#: NOT lower it below the measured max. Re-measure with `stt_lag` first.
+DEEPGRAM_FINALIZATION_WAIT_SECONDS = 0.65
 
 
 def using_deepgram() -> bool:
