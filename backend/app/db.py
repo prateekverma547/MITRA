@@ -114,6 +114,30 @@ class FeedbackStatus(StrEnum):
     FAILED = "failed"
 
 
+class RecordingStatus(StrEnum):
+    """What happened to the recording of one interview.
+
+    Six states rather than a nullable path, because the panel has to say
+    something different for each and a null tells it nothing. "Never recorded",
+    "recorded but we could not get it", "you deleted it" and "it aged out" are
+    four different sentences to show a reviewer, and collapsing them would put a
+    player on screen for a file that is not there.
+    """
+
+    #: No recording was attempted. Every interview from before this existed.
+    NOT_RECORDED = "not_recorded"
+    #: Daily accepted the start. The file is not ours yet.
+    RECORDING = "recording"
+    #: Downloaded, verified, and playable from our own disk.
+    STORED = "stored"
+    #: It was meant to exist and does not. The reason is in `recording_error`.
+    UNAVAILABLE = "unavailable"
+    #: A person deleted it deliberately.
+    DELETED = "deleted"
+    #: The retention window ran out and the sweep removed it.
+    EXPIRED = "expired"
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 
@@ -296,6 +320,56 @@ class Interview(Base):
     consent_accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # -- the recording ------------------------------------------------------
+    #
+    # Video and audio of the call, for a person to watch afterwards. Nothing
+    # reads it but a human: it is never scored, never analysed, and never sent
+    # to a model (CLAUDE.md keeps proctoring out of scope, and this does not
+    # reopen it).
+    #
+    # Daily records into its own storage, so the file arrives in two steps: the
+    # bot starts it, and a sweep downloads it once Daily has finished
+    # compositing and then deletes Daily's copy. Every column below is written by
+    # one of those two steps.
+
+    recording_status: Mapped[str] = mapped_column(
+        String(32),
+        default=RecordingStatus.NOT_RECORDED,
+        server_default=RecordingStatus.NOT_RECORDED,
+        index=True,
+    )
+    #: Daily's id for the finished recording, filled in when the sweep finds it.
+    #: Kept after the local copy exists so a later deletion can also remove
+    #: anything still sitting at Daily.
+    recording_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    recording_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: Seconds between the transcript's zero and the video's zero. Transcript
+    #: turns carry `at_seconds` from when the bot process started; the recording
+    #: begins a moment later, once the bot is actually in the room. Subtracting
+    #: this is what lets a click on a transcript line seek the video. Measured by
+    #: the bot rather than derived from Daily's timestamps, so it is good to
+    #: about a second: enough to find a moment, not enough to quote from.
+    recording_offset_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    #: Where the file sits, relative to `backend/sessions/`. Relative so the
+    #: record survives the directory moving, and so nothing in the database is a
+    #: usable absolute path into the host.
+    recording_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    recording_bytes: Mapped[int | None] = mapped_column(nullable=True)
+    #: When retention removes it. Ten days from the interview, not from the last
+    #: time somebody watched it: the promise made to the candidate is about how
+    #: long it is kept, and a clock that resets on access is not that promise.
+    recording_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    recording_deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: Why there is no recording, in words a reviewer can read. The panel shows
+    #: this instead of a player.
+    recording_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     candidate: Mapped[Candidate] = relationship(back_populates="interviews")
 

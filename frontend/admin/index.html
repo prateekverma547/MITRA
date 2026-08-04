@@ -71,6 +71,10 @@
     .turn { padding: 9px 0; border-bottom: 1px solid var(--line); }
     .turn .who { font-weight: 600; font-size: 13px; }
     .turn .who.int { color: var(--accent); }
+    /* Only applied when a recording is actually there to seek, so the cursor
+       never promises something that will not happen. */
+    .turn.seekable { cursor: pointer; }
+    .turn.seekable:hover { background: #f6f8fb; }
     .kv { display: grid; grid-template-columns: 200px 1fr; gap: 6px 14px; font-size: 14px; }
     .kv div:nth-child(odd) { color: var(--muted); }
     pre {

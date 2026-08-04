@@ -45,6 +45,20 @@ const when = (iso) =>
     day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
   });
 
+// Substituted at serve time from MIN/MAX_DURATION_MINUTES in shared/contracts.py,
+// the same way the product name is. Written here rather than typed as numbers so
+// the panel cannot drift from the contract it is describing. Shown wherever the
+// length appears, so the rule is visible while someone is deciding rather than
+// after a spec has been refused.
+const DURATION_MIN = {{DURATION_MIN}};
+const DURATION_MAX = {{DURATION_MAX}};
+
+// How long a recording is kept, from the same constant the sweep that deletes
+// them reads. Substituted here for the same reason as above: the candidate is
+// promised this number on the consent notice, and the panel must not be able to
+// tell a reviewer something different.
+const RETENTION_DAYS = {{RETENTION_DAYS}};
+
 const LABELS = {
   not_scheduled: "no session",
   in_progress: "in progress",
@@ -432,7 +446,9 @@ function specCard(spec, jobId) {
       <div class="kv" style="margin-top:14px">
         <div>Seniority</div><div>${esc(spec.seniority)}</div>
         <div>Experience</div><div>${esc(spec.experience_expectation)}</div>
-        <div>Length</div><div>${spec.duration_minutes} min</div>
+        <div>Length</div>
+        <div>${spec.duration_minutes} min
+          <span class="muted small">(${DURATION_MIN} to ${DURATION_MAX} allowed)</span></div>
       </div>
       <h3>Competencies</h3>
       ${spec.competencies.map((c) => `
@@ -706,10 +722,13 @@ async function viewInterview(interviewId) {
     </div>
 
     ${done ? reportCard(iv) : ""}
+    ${done ? recordingCard(iv) : ""}
     ${done ? brainCard(iv, metrics, latency) : `<div class="card muted">
       Waiting for the candidate to join. Mitra starts when they do, and this page
       refreshes on its own.</div>`}
   `;
+
+  wireRecording(iv);
 
   const retry = document.getElementById("rescore");
   if (retry) {
@@ -728,9 +747,131 @@ async function viewInterview(interviewId) {
     };
   }
 
-  // Poll while the interview is live, and while scoring is still running.
+  // Poll while the interview is live, while scoring is still running, and while
+  // the recording is still on its way over from the video service.
   if (!done) poll(5000);
   else if (["pending", "generating"].includes(iv.feedback_status)) poll(4000);
+  else if (iv.recording_status === "recording") poll(15000);
+}
+
+// -- the recording ----------------------------------------------------------
+//
+// For a person to watch. It is not scored, nothing reads it, and no model sees
+// it: it is here so a reviewer can hear how an answer was given, and judge
+// things a transcript cannot show them, including whether somebody had help.
+//
+// **When there is no recording, this says so in words.** Every branch below
+// ends in a sentence rather than an empty player. A video element with a broken
+// source looks like a bug in the panel, and a reviewer who cannot tell "there is
+// no recording" from "the recording will not load" has been told nothing.
+
+function recordingCard(iv) {
+  const status = iv.recording_status || "not_recorded";
+
+  if (status === "stored") {
+    const size = iv.recording_bytes
+      ? ` · ${(iv.recording_bytes / 1e6).toFixed(0)} MB` : "";
+    return `<div class="card">
+      <div class="spread">
+        <h3 style="margin:0">Watch it back</h3>
+        <button id="rec-delete" class="danger">Delete recording</button>
+      </div>
+      <video id="rec" controls preload="metadata" playsinline
+             style="width:100%;margin-top:12px;border-radius:8px;background:#000"
+             src="/interviews/${esc(iv.interview_id)}/recording/video"></video>
+      <p class="small muted" style="margin-bottom:0">
+        ${iv.recording_expires_at
+          ? `Kept until ${esc(when(iv.recording_expires_at))}, then deleted automatically.`
+          : `Kept for ${RETENTION_DAYS} days, then deleted automatically.`}${size}
+        Click any line of the transcript below to jump to that moment.</p>
+    </div>`;
+  }
+
+  if (status === "recording") {
+    return `<div class="card muted">
+      <h3 style="margin-top:0">Watch it back</h3>
+      <p style="margin-bottom:0">The recording is still being put together by the
+        video service. It usually takes a few minutes after the interview ends,
+        and this page checks on its own.</p>
+    </div>`;
+  }
+
+  if (status === "unavailable") {
+    return `<div class="card note">
+      <h3 style="margin-top:0">There is no recording of this interview</h3>
+      <p class="small muted" style="margin-bottom:0">${esc(
+        iv.recording_error || "The recording did not happen and no reason was recorded.")}
+        The transcript and the report are unaffected.</p>
+    </div>`;
+  }
+
+  if (status === "deleted") {
+    return `<div class="card muted">
+      <h3 style="margin-top:0">The recording was deleted</h3>
+      <p style="margin-bottom:0">Somebody deleted it${
+        iv.recording_deleted_at ? ` on ${esc(when(iv.recording_deleted_at))}` : ""
+      }. It cannot be recovered. The transcript is still here.</p>
+    </div>`;
+  }
+
+  if (status === "expired") {
+    return `<div class="card muted">
+      <h3 style="margin-top:0">The recording has been deleted</h3>
+      <p style="margin-bottom:0">Recordings are kept for ${RETENTION_DAYS} days and
+        this one has passed that${
+          iv.recording_deleted_at ? `, on ${esc(when(iv.recording_deleted_at))}` : ""
+        }. The transcript is still here.</p>
+    </div>`;
+  }
+
+  return `<div class="card muted">
+    <h3 style="margin-top:0">This interview was not recorded</h3>
+    <p style="margin-bottom:0">It ran before recording existed, so there is
+      nothing to watch back. The transcript is below.</p>
+  </div>`;
+}
+
+function wireRecording(iv) {
+  const video = document.getElementById("rec");
+
+  // A transcript line seeks the video. The offset is the gap between the
+  // transcript's clock, which starts when the bot process does, and the video's,
+  // which starts a moment later when it reaches the room. Without subtracting it
+  // every jump lands slightly early, and "slightly" is a whole answer when turns
+  // are short.
+  if (video) {
+    const offset = iv.recording_offset_seconds || 0;
+    for (const line of document.querySelectorAll("[data-at]")) {
+      line.addEventListener("click", () => {
+        video.currentTime = Math.max(0, Number(line.dataset.at) - offset);
+        video.play();
+        video.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    }
+  }
+
+  const remove = document.getElementById("rec-delete");
+  if (!remove) return;
+  remove.onclick = async () => {
+    if (!confirm(
+      "Delete the recording of this interview?\n\n" +
+      "The video file is removed for good and cannot be recovered. The " +
+      "transcript and the report are not affected."
+    )) return;
+    remove.disabled = true;
+    remove.textContent = "Deleting...";
+    try {
+      await api(`/interviews/${iv.interview_id}/recording`, { method: "DELETE" });
+    } catch (e) {
+      // The recording is still there. Say that, rather than leaving a disabled
+      // button that reads as though something happened.
+      remove.disabled = false;
+      remove.textContent = "Delete recording";
+      alert(`The recording was not deleted.\n\n${e.message}`);
+      return;
+    }
+    render();
+  };
 }
 
 // -- the report -------------------------------------------------------------
@@ -761,6 +902,25 @@ function reportCard(iv) {
         unaffected. Only the report needs rebuilding.</p>
     </div>`;
   }
+  // A report that was scored and saved, but could not be read back against the
+  // current shape, arrives as null with the status still "ready". Saying
+  // "scoring the transcript" there would be a system failure wearing the look
+  // of a normal state: nobody retries, nobody looks.
+  if (!iv.feedback_report && iv.feedback_status === "ready") {
+    return `<div class="card note">
+      <div class="spread">
+        <div>
+          <strong>This report could not be opened.</strong>
+          <div class="small muted" style="margin-top:4px">It was saved in an
+            older format that no longer matches how reports are read. Rebuilding
+            it from the transcript will fix it.</div>
+        </div>
+        <button id="rescore">Rebuild report</button>
+      </div>
+      <p class="small muted" style="margin-bottom:0">The transcript and the
+        session record are unaffected, and are shown below.</p>
+    </div>`;
+  }
   if (!iv.feedback_report) {
     return `<div class="card muted">
       Scoring the transcript… this page updates itself.
@@ -769,6 +929,9 @@ function reportCard(iv) {
 
   const r = iv.feedback_report;
   const health = r.conversation_health;
+  // Two independent degradations: the recording, and our own analysis of it.
+  // Both render, in that order, and neither hides the other.
+  const analysis = r.judgment_health;
   const scored = r.competency_scores.filter((s) => s.score !== null);
   const average = scored.length
     ? scored.reduce((a, s) => a + s.score, 0) / scored.length
@@ -795,8 +958,8 @@ function reportCard(iv) {
       <p class="small muted" style="margin:14px 0 0">
         Evidence for a person to weigh, not a hiring decision. Every score below
         is backed by quotes you can check against the transcript.</p>
-      ${health && health.degraded ? `<div class="note" style="margin:14px 0 0">
-        <strong>Read this first.</strong> ${esc(healthSentence(health))}</div>` : ""}
+      ${banner(health)}
+      ${banner(analysis)}
       <div class="spread" style="margin-top:16px;align-items:center">
         <span class="small muted">
           ${rebuilding
@@ -844,25 +1007,17 @@ function reportCard(iv) {
     </div>`;
 }
 
-/** Why the recording, rather than the candidate, may explain a thin report.
- *  Built here rather than sent as prose so the panel can word it its own way. */
-function healthSentence(h) {
-  const plural = (n, one, many) => (n === 1 ? one : many);
-  const parts = [];
-  if (h.repair_requests) parts.push(
-    `was asked to repeat themselves ${h.repair_requests} ${plural(h.repair_requests, "time", "times")}`);
-  if (h.fragmentary_turns) parts.push(
-    `had ${h.fragmentary_turns} ${plural(h.fragmentary_turns, "answer", "answers")} arrive incomplete`);
-  if (h.echo_turns) parts.push("was heard through their own speakers rather than headphones");
-  if (h.prompted_silences) parts.push(
-    `went quiet ${h.prompted_silences} ${plural(h.prompted_silences, "time", "times")} long enough to be prompted`);
-  if (h.disconnects) parts.push(
-    `dropped out of the call ${h.disconnects} ${plural(h.disconnects, "time", "times")}`);
-  const list = parts.length > 1
-    ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1]
-    : parts[0] || "could not be heard clearly";
-  return `The recording was poor: the candidate ${list}. Where the scores below `
-    + `are thin, the connection is a likely cause and not a conclusion about them.`;
+/** One "read this first" banner, from a health record on the report.
+ *
+ *  The sentence is written once, in shared/contracts.py, and sent. The panel
+ *  used to compose its own copy of the recording-quality one, which drifted:
+ *  the scoring model was told one wording and the employer read another, both
+ *  claiming to describe the same recording. Render what you are given.
+ */
+function banner(health) {
+  if (!health || !health.degraded || !health.as_sentence) return "";
+  return `<div class="note" style="margin:14px 0 0">
+    <strong>Read this first.</strong> ${esc(health.as_sentence)}</div>`;
 }
 
 function competencyCard(s) {
@@ -903,6 +1058,10 @@ function brainCard(iv, metrics, latency) {
   const turns = iv.transcript?.turns || [];
   const outcomes = (iv.section_outcomes || []).filter((o) => o.turns_spent > 0);
   const events = metrics.brain_events || [];
+  // Only make lines clickable when there is something for them to seek. A
+  // pointer cursor over text that does nothing is a worse offence than no
+  // feature at all.
+  const seekable = iv.recording_status === "stored";
 
   return `
     <div class="card">
@@ -951,7 +1110,8 @@ function brainCard(iv, metrics, latency) {
     <div class="card">
       <h3 style="margin-top:0">Transcript</h3>
       ${turns.map((t) => `
-        <div class="turn">
+        <div class="turn${seekable ? " seekable" : ""}"${
+          seekable ? ` data-at="${t.at_seconds}" title="Jump to this moment"` : ""}>
           <span class="who ${t.speaker === "interviewer" ? "int" : ""}">
             ${t.speaker === "interviewer" ? "Mitra" : "Candidate"}</span>
           <span class="muted small">${Math.round(t.at_seconds)}s</span>

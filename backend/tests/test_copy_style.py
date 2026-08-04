@@ -71,3 +71,24 @@ def test_the_style_rule_lives_in_one_place():
     from shared.branding import PROSE_STYLE
 
     assert "em dash" in PROSE_STYLE.lower()
+
+
+def test_the_panel_does_not_keep_its_own_copy_of_the_duration_rule():
+    """The interview-length range is in the contract. The panel is served the
+    numbers rather than typing them, the same way the product name is, so it
+    cannot end up stating a rule the backend does not enforce."""
+    from shared.contracts import MAX_DURATION_MINUTES, MIN_DURATION_MINUTES
+
+    source = (REPO / "frontend" / "admin" / "admin.js").read_text()
+
+    assert "{{DURATION_MIN}}" in source
+    assert "{{DURATION_MAX}}" in source
+    assert "const DURATION_MIN = 20" not in source
+    assert "const DURATION_MAX = 90" not in source
+
+    from app.main import _render_page
+
+    rendered = _render_page("admin/admin.js")
+    assert f"const DURATION_MIN = {MIN_DURATION_MINUTES};" in rendered
+    assert f"const DURATION_MAX = {MAX_DURATION_MINUTES};" in rendered
+    assert "{{DURATION_" not in rendered, "a token reached the browser unsubstituted"

@@ -18,6 +18,7 @@ Nothing here imports Pipecat.
 import json
 from dataclasses import dataclass, field
 
+from loguru import logger
 from openai import AsyncOpenAI
 
 from bot.brain.brain import Judgment, JudgmentRequest, TurnPlan
@@ -153,9 +154,20 @@ class OpenAIJudge:
                 max_tokens=700,
             )
             payload = json.loads(response.choices[0].message.content or "{}")
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             # A judge failure must never derail an interview — the brain simply
             # falls back to heuristics for this section.
+            #
+            # It must not be *invisible* either, which it was. Every judgement
+            # failing looks identical to a candidate who never said anything
+            # specific: no claims extracted, nothing carried between sections,
+            # no contradictions. The model name is logged because the likeliest
+            # cause is a bad OPENAI_BLUEPRINT_MODEL, whose name suggests it only
+            # affects offline work.
+            logger.warning(
+                f"judgement failed for section {request.section_id!r} "
+                f"on model {self.model!r}: {type(exc).__name__}: {exc}"
+            )
             return None
 
         return self._to_judgment(request, payload)

@@ -17,7 +17,7 @@ from loguru import logger
 
 from shared.contracts import EvaluationSpec, FeedbackReport, Transcript
 
-from feedback.health import assess
+from feedback.health import assess, assess_judgment
 from feedback.score import FeedbackError, FeedbackScorer
 
 
@@ -86,8 +86,10 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
             api_key=settings.openai_api_key, model=settings.feedback_model
         )
         # Derived here, not recorded live, so rebuilding an old report picks
-        # up whatever the heuristics have learned since.
+        # up whatever the heuristics have learned since. Both come off the same
+        # session metrics the bot already wrote; neither needs a new path.
         health = assess(transcript, metrics, repair_requests=_repairs(metrics))
+        judgment_health = assess_judgment(metrics, spec)
 
         report = await scorer.score(
             interview_id=interview_id,
@@ -97,6 +99,7 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
             section_outcomes=outcomes,
             contradictions=_contradictions(outcomes),
             health=health,
+            judgment_health=judgment_health,
         )
     except (FeedbackError, Exception) as exc:  # noqa: BLE001
         logger.error(f"[{interview_id}] feedback generation failed: {exc}")

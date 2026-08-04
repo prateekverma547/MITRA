@@ -7,8 +7,9 @@ is kicked off at CV upload, so the employer gets an immediate response and the
 blueprint is finished and stored long before anyone joins an interview.
 """
 
+import asyncio
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from functools import lru_cache
 from pathlib import Path
 from datetime import UTC, datetime
@@ -43,20 +44,43 @@ from blueprint.generate import BlueprintGenerationError, BlueprintGenerator
 from blueprint.refine import BlueprintRefiner, RefinementError
 from bot.config import Settings
 from shared.branding import BOT_FULL_NAME, BOT_NAME, FAVICON_URL, LOGO_URL, PRODUCT_TAGLINE
-from shared.contracts import EvaluationSpec, InterviewBlueprint
+from shared.contracts import (
+    MAX_DURATION_MINUTES,
+    MIN_DURATION_MINUTES,
+    RECORDING_RETENTION_DAYS,
+    EvaluationSpec,
+    InterviewBlueprint,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await create_all()
-    yield
+
+    # Recordings arrive from Daily after the call rather than during it, and
+    # they have to be deleted ten days later. Both are clock-driven, neither can
+    # hang off a request, and there is no queue in this project by decision, so
+    # they run as one background task for the life of the process. Started here
+    # so a redeploy also picks up anything the last one left behind.
+    from app.recordings import sweep_enabled, sweep_forever
+
+    sweeper = asyncio.create_task(sweep_forever()) if sweep_enabled() else None
+    try:
+        yield
+    finally:
+        if sweeper is not None:
+            sweeper.cancel()
+            with suppress(asyncio.CancelledError):
+                await sweeper
 
 
 app = FastAPI(title=f"{BOT_NAME}: {BOT_FULL_NAME}", lifespan=lifespan)
 
 from app.interviews import router as interviews_router  # noqa: E402
+from app.recordings import router as recordings_router  # noqa: E402
 
 app.include_router(interviews_router)
+app.include_router(recordings_router)
 
 
 def _settings() -> Settings:
@@ -680,6 +704,15 @@ def _render_page(name: str) -> str:
         ("{{PRODUCT_TAGLINE}}", PRODUCT_TAGLINE),
         ("{{LOGO_URL}}", LOGO_URL),
         ("{{FAVICON_URL}}", FAVICON_URL),
+        # The interview-length rule, so the panel states the same numbers the
+        # contract enforces instead of its own copy of them.
+        ("{{DURATION_MIN}}", str(MIN_DURATION_MINUTES)),
+        ("{{DURATION_MAX}}", str(MAX_DURATION_MINUTES)),
+        # How long a recording is kept. This one is a promise made to a
+        # candidate, and the sweep that deletes recordings reads the same
+        # constant, so the notice cannot end up describing a policy nothing
+        # enforces.
+        ("{{RETENTION_DAYS}}", str(RECORDING_RETENTION_DAYS)),
     ):
         html = html.replace(token, value)
     return html

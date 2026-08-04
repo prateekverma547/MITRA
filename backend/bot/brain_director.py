@@ -60,6 +60,25 @@ class BrainDirector(FrameProcessor):
         self._judgment_tasks: set[asyncio.Task] = set()
         self._events: list[dict] = []
         self._turn_count = 0
+        #: Judgement outcomes, counted here because this is what spawns the work.
+        #: All three are explicit on purpose, and they do not have to add up:
+        #:
+        #:     attempted - succeeded - failed = cancelled at teardown
+        #:
+        #: `cleanup()` cancels whatever is still in flight when the pipeline
+        #: comes down, which is correct — but `asyncio.CancelledError` inherits
+        #: from `BaseException`, so neither handler in `_run_judgment` nor the
+        #: one inside `assess` catches it. A cancelled judgement therefore
+        #: increments `attempted` and nothing else. Judgements spawned near the
+        #: close of an interview are exactly the ones likely to end that way.
+        #:
+        #: Read the gap as cancelled, never as success. `attempted` equal to
+        #: `failed` means no claims were extracted, nothing was carried between
+        #: sections and no contradictions were noticed, and the report will read
+        #: as a candidate who said nothing specific.
+        self._judgments_attempted = 0
+        self._judgments_succeeded = 0
+        self._judgments_failed = 0
         #: How many messages we wrote into the context last turn. Anything past
         #: this index on the next frame is new.
         self._written_count = 0
@@ -76,6 +95,18 @@ class BrainDirector(FrameProcessor):
         judge that never answered.
         """
         return list(self._events)
+
+    def judgment_summary(self) -> dict:
+        """Judge attempts and failures, for the session record.
+
+        Shaped like `RoomPresence.summary()` so `run_bot` can spread it into
+        `session_metrics` alongside the latency numbers.
+        """
+        return {
+            "judgments_attempted": self._judgments_attempted,
+            "judgments_succeeded": self._judgments_succeeded,
+            "judgments_failed": self._judgments_failed,
+        }
 
     def _record(self, kind: str, **fields) -> None:
         event = {"kind": kind, "at_seconds": round(self._brain.elapsed_seconds, 2), **fields}
@@ -194,16 +225,37 @@ class BrainDirector(FrameProcessor):
             task.add_done_callback(self._judgment_tasks.discard)
 
     async def _run_judgment(self, request) -> None:
+        self._judgments_attempted += 1
         try:
             judgment = await self._judge.assess(request)
         except Exception as exc:  # noqa: BLE001
+            # A judge that raises out of `assess` rather than swallowing it.
+            self._judgments_failed += 1
             logger.warning(f"[{self._session_id}] judgement failed for {request.section_id}: {exc}")
+            self._record(
+                "judgment_failed",
+                section=request.section_id,
+                request_kind=request.kind,
+                error=type(exc).__name__,
+            )
             return
         if judgment is None:
+            # `OpenAIJudge.assess` handles its own errors and reports them by
+            # returning None, so this is the branch a real failure arrives on.
+            # It used to return silently, which is why a dead judge left no
+            # trace anywhere: no event, and the warning above cannot fire
+            # because nothing propagated.
+            self._judgments_failed += 1
+            self._record(
+                "judgment_failed",
+                section=request.section_id,
+                request_kind=request.kind,
+            )
             return
 
         # Late is fine — the brain falls back to heuristics until this lands.
         self._brain.apply_judgment(judgment)
+        self._judgments_succeeded += 1
         self._record(
             "judgment",
             section=judgment.section_id,

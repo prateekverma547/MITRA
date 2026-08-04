@@ -67,7 +67,7 @@ async def main():
     print("WHAT THE REPORT SAYS")
     print("=" * 74)
     print("recommendation:", report.recommendation)
-    print("banner:", report.conversation_health.as_sentence())
+    print("banner:", report.conversation_health.as_sentence)
     print()
     for s in report.competency_scores[:3]:
         print(f"  {s.name}: {s.score if s.score is not None else 'no score'}")

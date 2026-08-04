@@ -627,12 +627,15 @@ async def test_the_join_page_is_served(client):
     assert response.status_code == 200
     body = response.text
     assert "AI interviewer" in body
-    assert "recorded and transcribed" in body
+    # The exact consent wording is not pinned here. It used to be, on two
+    # phrases that turned out to be untrue: the page promised a recording that
+    # was never made, and said the interview was voice only after the camera was
+    # switched on. What is asserted is that the candidate is told what happens
+    # to what they say, which stays true however the copy is worded.
+    assert "transcript" in body.lower()
     # The consent box must not be pre-ticked.
     assert 'type="checkbox" checked' not in body
     assert "daily.co" not in body.lower()
-    # Voice only: the candidate is told their camera is not used.
-    assert "voice only" in body.lower()
 
 
 async def test_the_bot_is_named_consistently_everywhere(client):
@@ -1175,3 +1178,217 @@ async def test_a_join_without_a_timezone_still_works(client):
 
     assert response.status_code == 200
     assert client.spawned[0]["timezone"] is None
+
+
+# -- stored reports are re-validated on read ---------------------------------
+#
+# A report is written once as JSON and never rewritten, so a computed field
+# added to the contract afterwards is missing from every report already stored.
+# The counts it derives from are there; nothing derived it. Validating on the
+# way out fixes that without touching the row.
+#
+# The guard around it is the load-bearing part. A stored report written under an
+# older contract must not take the whole interview record down with it.
+
+
+def a_stored_report(**overrides) -> dict:
+    """A report as `feedback/run.py` writes it: `model_dump(mode="json")`."""
+    from shared.contracts import (
+        CompetencyScore,
+        ConversationHealth,
+        CoverageLevel,
+        EvidenceQuote,
+        FeedbackReport,
+        RecommendationSignal,
+        Speaker,
+    )
+
+    report = FeedbackReport(
+        interview_id="int_1",
+        blueprint_id="cand_test1",
+        role_title="Lead Product Manager",
+        competency_scores=[
+            CompetencyScore(
+                competency_id="a",
+                name="A",
+                score=4.0,
+                coverage=CoverageLevel.SUFFICIENT,
+                rationale="Shipped and measured it.",
+                evidence=[
+                    EvidenceQuote(
+                        text="we shipped it",
+                        turn_index=1,
+                        at_seconds=30.0,
+                        speaker=Speaker.CANDIDATE,
+                    )
+                ],
+            )
+        ],
+        summary="Solid.",
+        recommendation=RecommendationSignal.SOME_EVIDENCE_FOR,
+        conversation_health=ConversationHealth(
+            candidate_turns=8, repair_requests=3, disconnects=1
+        ),
+    )
+    return {**report.model_dump(mode="json"), **overrides}
+
+
+async def with_stored_report(
+    client, payload: dict | None, *, candidate_id: str | None = None
+) -> str:
+    """A completed interview carrying exactly `payload` in its report column.
+
+    `candidate_id` reuses an existing candidate. `make_candidate` inserts fixed
+    ids, so a test needing two interviews has to make the candidate once.
+    """
+    from app import db
+
+    candidate_id = candidate_id or await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, created["interview_id"])
+        interview.status = db.InterviewStatus.COMPLETED
+        interview.feedback_status = db.FeedbackStatus.READY
+        interview.transcript = {"interview_id": "int_1", "turns": [], "duration_seconds": 0.0}
+        interview.session_metrics = {"stt_provider": "deepgram"}
+        interview.feedback_report = payload
+        await session.commit()
+    return created["interview_id"]
+
+
+async def test_a_report_stored_without_a_computed_field_gains_it_on_read(client):
+    """The reason this change exists: `degraded` is stored, its sentence was not."""
+    stored = a_stored_report()
+    # A report dumped before `degraded` was a computed field. The counts behind
+    # it are all still there.
+    del stored["conversation_health"]["degraded"]
+    interview_id = await with_stored_report(client, stored)
+
+    health = client.get(f"/interviews/{interview_id}").json()["feedback_report"][
+        "conversation_health"
+    ]
+
+    assert health["degraded"] is True, "computed from the stored counts on read"
+    assert health["repair_requests"] == 3  # and the stored counts are untouched
+
+
+async def test_a_current_report_round_trips_unchanged(client):
+    stored = a_stored_report()
+    interview_id = await with_stored_report(client, stored)
+
+    returned = client.get(f"/interviews/{interview_id}").json()["feedback_report"]
+
+    assert returned == stored
+
+
+async def test_an_interview_with_no_report_still_returns_normally(client):
+    interview_id = await with_stored_report(client, None)
+
+    view = client.get(f"/interviews/{interview_id}")
+
+    assert view.status_code == 200
+    assert view.json()["feedback_report"] is None
+
+
+async def test_an_unreadable_report_is_dropped_and_the_interview_survives(client):
+    """The load-bearing guard.
+
+    The deployed database may hold reports written under an older contract, and
+    there is no way to check from here. A report that cannot be validated must
+    cost the reader the report, never the whole record: the transcript, the
+    metrics and the status are precisely what somebody is looking at when they
+    open an interview that went wrong.
+    """
+    interview_id = await with_stored_report(
+        client, {"interview_id": "int_1", "this": "was written under an older contract"}
+    )
+
+    response = client.get(f"/interviews/{interview_id}")
+
+    assert response.status_code == 200, "an unreadable report took down the endpoint"
+    view = response.json()
+    assert view["feedback_report"] is None
+
+    # Everything else about the interview is still there. If a later change
+    # removes the guard, this is what will fail rather than a bare non-raise.
+    assert view["interview_id"] == interview_id
+    assert view["status"] == "completed"
+    assert view["feedback_status"] == "ready"
+    assert view["transcript"] == {
+        "interview_id": "int_1",
+        "turns": [],
+        "duration_seconds": 0.0,
+    }
+    assert view["session_metrics"] == {"stt_provider": "deepgram"}
+    assert view["meeting_id"] and view["password"]
+
+
+async def test_an_unreadable_report_is_logged_with_the_interview_id(client):
+    """Silently dropping it would be the same class of bug as the one this
+    whole line of work started from."""
+    from contextlib import contextmanager
+
+    from loguru import logger
+
+    @contextmanager
+    def captured_warnings():
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="WARNING")
+        try:
+            yield lines
+        finally:
+            logger.remove(sink)
+
+    interview_id = await with_stored_report(client, {"nonsense": True})
+
+    with captured_warnings() as warnings:
+        client.get(f"/interviews/{interview_id}")
+
+    assert any(interview_id in line for line in warnings)
+    assert any("does not match the current contract" in line for line in warnings)
+
+
+async def test_a_dropped_report_is_distinguishable_from_one_never_scored(client):
+    """Two different states that both arrive as `feedback_report: null`.
+
+    One is work in progress. The other is a report that exists and could not be
+    read, which nobody will retry if it is shown as the first. The pair that
+    tells them apart is already on the response: `feedback_status` is only
+    `ready` once a report has actually been stored, so `ready` with no report
+    means it was dropped on the way out.
+    """
+    from app import db
+
+    candidate_id = await make_candidate()
+    dropped = await with_stored_report(
+        client, {"written": "under an older contract"}, candidate_id=candidate_id
+    )
+    never = await with_stored_report(client, None, candidate_id=candidate_id)
+    async with db.get_sessionmaker()() as session:
+        row = await session.get(db.Interview, never)
+        row.feedback_status = db.FeedbackStatus.PENDING
+        await session.commit()
+
+    dropped_view = client.get(f"/interviews/{dropped}").json()
+    never_view = client.get(f"/interviews/{never}").json()
+
+    assert dropped_view["feedback_report"] is None
+    assert never_view["feedback_report"] is None
+    # The distinguishing signal, and it needs nothing new on the API.
+    assert dropped_view["feedback_status"] == "ready"
+    assert never_view["feedback_status"] == "pending"
+    assert dropped_view["feedback_status"] != never_view["feedback_status"]
+
+
+def test_the_panel_tells_a_dropped_report_apart_from_an_unscored_one():
+    """Inspected rather than executed, as test_copy_style.py already does.
+
+    Showing "scoring the transcript" for a report that cannot be read is a
+    system failure wearing the look of a normal state.
+    """
+    from pathlib import Path
+
+    panel = (Path(__file__).resolve().parents[2] / "frontend" / "admin" / "admin.js").read_text()
+
+    assert 'iv.feedback_status === "ready"' in panel
+    assert "could not be opened" in panel

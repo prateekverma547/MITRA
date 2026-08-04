@@ -44,6 +44,7 @@ from app.meeting import (
 )
 from bot.config import Settings
 from bot.services.daily import create_meeting_token, create_room
+from shared.contracts import FeedbackReport
 
 router = APIRouter(tags=["interviews"])
 
@@ -123,9 +124,54 @@ class InterviewView(BaseModel):
     feedback_error: str | None = None
     feedback_generated_at: datetime | None = None
 
+    #: The recording, for a person to watch back. The status is what the panel
+    #: renders from: there is a state for "never recorded", one for "still being
+    #: fetched from Daily" and one for "we could not get it", and each of those
+    #: is a different sentence to show rather than a player that will not play.
+    recording_status: str = "not_recorded"
+    recording_error: str | None = None
+    recording_expires_at: datetime | None = None
+    recording_deleted_at: datetime | None = None
+    recording_bytes: int | None = None
+    #: Seconds to subtract from a transcript timestamp to land in the right
+    #: place in the video. Without it, clicking a line seeks to roughly the
+    #: right moment and quietly misses by however long the bot took to join.
+    recording_offset_seconds: float | None = None
+
 
 def _settings() -> Settings:
     return Settings.load()
+
+
+def _validated_report(interview_id: str, stored: dict | None) -> dict | None:
+    """Re-validate a stored report on the way out, so computed fields exist.
+
+    A report is written once as JSON and never rewritten. Computed fields are
+    serialised at the moment of that write, so a field added to the contract
+    afterwards is missing from every report already in the database, forever:
+    the counts it derives from are stored, but nothing derives it. Validating
+    here recomputes them from those counts. Nothing is written back.
+
+    That matters concretely. `ConversationHealth.degraded` is stored and its
+    sentence was not, so a panel that trusted the report for both would announce
+    a problem and then have nothing to say about it.
+
+    **A report that no longer matches the contract must not take the interview
+    down with it.** The deployed database may hold reports written under an
+    older shape, and the transcript, the metrics and the status are exactly what
+    somebody is looking at when they open an interview that went wrong. Those
+    stay readable; the report is left out and the reason is logged.
+    """
+    if not stored:
+        return None
+    try:
+        return FeedbackReport.model_validate(stored).model_dump(mode="json")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            f"[{interview_id}] stored feedback report does not match the current "
+            f"contract, so it was left out of the response: {exc}"
+        )
+        return None
 
 
 @router.post("/candidates/{candidate_id}/interviews", response_model=InterviewCreated, dependencies=ADMIN_ONLY)
@@ -378,10 +424,16 @@ async def get_interview(interview_id: str) -> InterviewView:
             transcript=interview.transcript,
             section_outcomes=interview.section_outcomes,
             session_metrics=interview.session_metrics,
-            feedback_report=interview.feedback_report,
+            feedback_report=_validated_report(interview.id, interview.feedback_report),
             feedback_status=interview.feedback_status,
             feedback_error=interview.feedback_error,
             feedback_generated_at=interview.feedback_generated_at,
+            recording_status=interview.recording_status,
+            recording_error=interview.recording_error,
+            recording_expires_at=interview.recording_expires_at,
+            recording_deleted_at=interview.recording_deleted_at,
+            recording_bytes=interview.recording_bytes,
+            recording_offset_seconds=interview.recording_offset_seconds,
         )
 
 

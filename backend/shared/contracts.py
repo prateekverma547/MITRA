@@ -25,6 +25,15 @@ MIN_DURATION_MINUTES = 20
 MAX_DURATION_MINUTES = 90
 DEFAULT_DURATION_MINUTES = 40
 
+#: How long an interview recording is kept before it is deleted.
+#:
+#: This number is a promise made to a candidate on the consent notice, so it
+#: lives here rather than being typed into the copy: the page is rendered with
+#: this value substituted in, exactly as the interview-length rule is, and the
+#: sweep that actually deletes recordings reads the same constant. A promise on
+#: a screen and a job that enforces it must not be able to disagree.
+RECORDING_RETENTION_DAYS = 10
+
 
 class Competency(BaseModel):
     """One thing the interview is meant to evaluate."""
@@ -458,6 +467,13 @@ class ConversationHealth(BaseModel):
             )
         )
 
+    #: A computed field for the same reason `degraded` is one, and it was added
+    #: later for a worse reason: the panel wrote its own copy of this sentence
+    #: rather than being sent it. The two drifted, so the scoring model was told
+    #: one wording and the employer read another, both claiming to describe the
+    #: same recording. This is now the only place it is written.
+    @computed_field
+    @property
     def as_sentence(self) -> str | None:
         """Plain language for the report, or None when there is nothing to say."""
         if not self.degraded:
@@ -498,6 +514,125 @@ class ConversationHealth(BaseModel):
         )
 
 
+#: How much of the spec, by employer weight, may lose its analysis before the
+#: report stops being allowed to sound confident. The complement of
+#: `CONFIDENT_SIGNAL_REQUIRES_WEIGHT` in `feedback/score.py`, deliberately: that
+#: constant already draws the line at a quarter of what the employer cares about,
+#: and analysis that never ran leaves the same hole as ground that was never
+#: covered. Same boundary, no second judgement call.
+JUDGMENT_DEGRADED_ABOVE_WEIGHT = 0.25
+
+
+class JudgmentHealth(BaseModel):
+    """Evidence about our own analysis, not about the candidate.
+
+    During an interview a second, off-path model reads each competency and pulls
+    out the specific things the candidate claimed. Those extracted claims are
+    what carry between sections and what a report has to point at. When that step
+    fails, no claims are extracted, and the result is indistinguishable from a
+    candidate who said nothing specific.
+
+    This is the same class of problem as `ConversationHealth` one layer up, and
+    it is recorded the same way for the same reason. A technical failure must
+    never become evidence about a person. Degraded audio is stated at the top of
+    the report and caps the recommendation; so is this.
+
+    Derived from the session metrics the bot already writes, so an old interview
+    picks up a health record the next time its report is rebuilt.
+    """
+
+    schema_version: Literal[1] = SCHEMA_VERSION
+
+    #: Counted by `BrainDirector`. These three need not add up: the difference is
+    #: work cancelled when the pipeline came down, which is normal at the close
+    #: of an interview and is not a fault.
+    attempted: int = 0
+    succeeded: int = 0
+    failed: int = 0
+
+    #: Competencies, by name, where every judgement failed and none succeeded.
+    #: These are the topics the report has no extracted claims for.
+    unjudged_competencies: list[str] = Field(default_factory=list)
+    #: Their share of the spec by employer weight. Weight rather than count, for
+    #: the reason `_recommendation` already gives: losing the analysis on a 60%
+    #: competency is not the same as losing it on a 10% one.
+    unjudged_weight: float = 0.0
+
+    @computed_field
+    @property
+    def cancelled(self) -> int:
+        """Attempts that were neither completed nor failed.
+
+        `asyncio.CancelledError` inherits from `BaseException`, so a judgement
+        stopped at teardown is caught by nothing and recorded as neither. That is
+        correct behaviour and this is the honest name for the remainder.
+        """
+        return max(0, self.attempted - self.succeeded - self.failed)
+
+    #: A computed field rather than a plain property, for the same reason
+    #: `ConversationHealth.degraded` is one: the panel reads this over JSON, and
+    #: as a property it would be invisible to every consumer outside Python.
+    @computed_field
+    @property
+    def degraded(self) -> bool:
+        """True when enough of the analysis failed that the report is incomplete.
+
+        Keyed on failures alone. Cancellation at teardown is routine and must
+        never trip this, or the flag fires on healthy interviews and stops
+        meaning anything.
+
+        Two ways in. Everything failing needs no weighting to interpret: nothing
+        at all was extracted. Otherwise it is measured the way coverage already
+        is, by employer weight rather than by count.
+        """
+        if self.attempted == 0:
+            return False
+        if self.failed == self.attempted:
+            return True
+        return self.unjudged_weight > JUDGMENT_DEGRADED_ABOVE_WEIGHT
+
+    #: Computed, like the one on `ConversationHealth` and for the same reason.
+    #: The panel renders what it is sent; it does not write its own version.
+    @computed_field
+    @property
+    def as_sentence(self) -> str | None:
+        """Plain language for the report, or None when there is nothing to say.
+
+        Says what happened and what it means. It must not cast doubt on the
+        claims that did survive, which are real and were checked against the
+        transcript like any other, and it must not read as a remark about the
+        candidate.
+        """
+        if not self.degraded:
+            return None
+
+        names = self.unjudged_competencies
+        if self.failed == self.attempted or not names:
+            opening = (
+                "None of our own analysis of this interview finished. The step "
+                "that picks out what a candidate said failed throughout."
+            )
+            gap = "No claims or inconsistencies were drawn from any of it."
+        else:
+            # Listed after a colon rather than joined with "and". A competency
+            # can be called "Metrics and Experimentation", and "Stakeholders and
+            # Metrics and Experimentation" reads as three topics rather than two.
+            noun = "topic" if len(names) == 1 else "topics"
+            opening = (
+                f"Part of our own analysis is missing. The step that picks out "
+                f"what a candidate said did not finish for {len(names)} {noun}: "
+                f"{', '.join(names)}."
+            )
+            gap = f"No claims were drawn from {'that ' + noun if len(names) == 1 else 'those ' + noun}."
+
+        return (
+            f"{opening} {gap} The transcript itself is complete, and every quote "
+            f"below was checked against it in the usual way. Read the gaps as "
+            f"work that did not finish on our side, not as a candidate who had "
+            f"little to say."
+        )
+
+
 class FeedbackReport(BaseModel):
     """Structured evidence for a human decision-maker.
 
@@ -524,6 +659,11 @@ class FeedbackReport(BaseModel):
     #: How well the candidate could actually be heard. Read this before reading
     #: a low score: the two are easily confused and only one is about them.
     conversation_health: ConversationHealth | None = None
+
+    #: How much of our own analysis actually ran. Independent of the above and
+    #: never a substitute for it: a report can be degraded on both counts, and
+    #: one must not hide the other.
+    judgment_health: JudgmentHealth | None = None
 
     interview_duration_seconds: float = 0.0
 

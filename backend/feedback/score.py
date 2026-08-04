@@ -33,6 +33,7 @@ from shared.contracts import (
     EvaluationSpec,
     EvidenceQuote,
     FeedbackReport,
+    JudgmentHealth,
     ObservedRedFlag,
     RecommendationSignal,
     Speaker,
@@ -261,6 +262,7 @@ class FeedbackScorer:
         section_outcomes: list[dict] | None = None,
         contradictions: list[dict] | None = None,
         health: ConversationHealth | None = None,
+        judgment_health: JudgmentHealth | None = None,
     ) -> FeedbackReport:
         outcomes = section_outcomes or []
 
@@ -274,6 +276,7 @@ class FeedbackScorer:
                 spec=spec,
                 transcript=transcript,
                 health=health,
+                judgment_health=judgment_health,
                 reason=(
                     "The candidate did not say anything that was recorded, so "
                     "there is nothing to assess. This says nothing about them."
@@ -282,7 +285,7 @@ class FeedbackScorer:
 
         channel = ""
         if health is not None and health.degraded:
-            channel = f"RECORDING QUALITY:\n{health.as_sentence()}\n\n"
+            channel = f"RECORDING QUALITY:\n{health.as_sentence}\n\n"
 
         user = (
             f"EVALUATION SPEC:\n{spec.model_dump_json(indent=2)}\n\n"
@@ -313,6 +316,7 @@ class FeedbackScorer:
             payload=payload,
             contradictions=contradictions or [],
             health=health,
+            judgment_health=judgment_health,
         )
 
 
@@ -325,6 +329,7 @@ def build_report(
     payload: dict,
     contradictions: list[dict] | None = None,
     health: ConversationHealth | None = None,
+    judgment_health: JudgmentHealth | None = None,
 ) -> FeedbackReport:
     """Validate and anchor the model's report. Pure — no network, so it is testable.
 
@@ -421,9 +426,12 @@ def build_report(
         red_flags_observed=red_flags,
         contradictions=[Contradiction.model_validate(c) for c in (contradictions or [])],
         summary=str(payload.get("summary", "")).strip() or "No summary was produced.",
-        recommendation=_recommendation(payload.get("recommendation"), ordered, spec, health),
+        recommendation=_recommendation(
+            payload.get("recommendation"), ordered, spec, health, judgment_health
+        ),
         coverage_gaps=gaps,
         conversation_health=health,
+        judgment_health=judgment_health,
         interview_duration_seconds=transcript.duration_seconds,
     )
 
@@ -459,6 +467,7 @@ def _recommendation(
     scores: list[CompetencyScore],
     spec: EvaluationSpec,
     health: "ConversationHealth | None" = None,
+    judgment_health: "JudgmentHealth | None" = None,
 ) -> RecommendationSignal:
     """Trust the model's signal, but never let it overstate thin evidence.
 
@@ -479,6 +488,17 @@ def _recommendation(
     # not be heard through. Capped rather than discarded: what was captured is
     # still worth reading, it just cannot carry a strong claim.
     if health is not None and health.degraded and signal in (
+        RecommendationSignal.STRONG_EVIDENCE_FOR,
+        RecommendationSignal.SOME_EVIDENCE_FOR,
+    ):
+        return RecommendationSignal.LIMITED_EVIDENCE
+
+    # Nor from an interview most of whose analysis never ran. Same cap, same
+    # reasoning, one layer up: the evidence is thin for a reason that has
+    # nothing to do with the candidate, and the signal has to say so rather
+    # than let a quiet report read as a quiet person. Checked separately from
+    # the channel above so neither degradation can hide the other.
+    if judgment_health is not None and judgment_health.degraded and signal in (
         RecommendationSignal.STRONG_EVIDENCE_FOR,
         RecommendationSignal.SOME_EVIDENCE_FOR,
     ):
@@ -506,6 +526,7 @@ def _empty_report(
     transcript: Transcript,
     reason: str,
     health: ConversationHealth | None = None,
+    judgment_health: JudgmentHealth | None = None,
 ) -> FeedbackReport:
     return FeedbackReport(
         interview_id=interview_id,
@@ -527,5 +548,6 @@ def _empty_report(
         recommendation=RecommendationSignal.INSUFFICIENT_SIGNAL,
         coverage_gaps=[c.name for c in spec.competencies],
         conversation_health=health,
+        judgment_health=judgment_health,
         interview_duration_seconds=transcript.duration_seconds,
     )

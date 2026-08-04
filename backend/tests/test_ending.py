@@ -214,7 +214,15 @@ def test_the_ender_is_registered_as_an_observer_not_a_pipeline_processor():
     from bot import run_bot
 
     source = inspect.getsource(run_bot)
-    assert "observers=[transcript_observer, latency_observer, silence, ender]" in source
+
+    # Matched against the observers list rather than the whole line, which used
+    # to be asserted verbatim and broke the moment another observer was added.
+    # What matters is where `ender` is registered, not who else is beside it.
+    observers = source[source.index("observers=["):]
+    observers = observers[: observers.index("]") + 1]
+    for name in ("transcript_observer", "latency_observer", "silence", "ender"):
+        assert name in observers, f"{name} is no longer registered as an observer"
+
     assert "ender.attach(worker)" in source
     # And it is not in the pipeline processor list.
     pipeline_block = source[source.index("pipeline = Pipeline("):source.index("worker = PipelineWorker(")]

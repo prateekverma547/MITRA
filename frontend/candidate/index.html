@@ -61,7 +61,51 @@
     .consent input { margin-top: 3px; width: 17px; height: 17px; flex: none; }
     .error { color: #b3261e; margin-top: 16px; font-size: 15px; }
 
-    /* ---- Step 2: the interview itself. Full bleed, audio only. ---- */
+    /* ---- Step 1b: device check. ----
+       The one screen where a bit of meeting-app furniture is right, because it
+       is doing a meeting-app job. Kept brief: two devices, one playback, and a
+       way through. */
+    #check-wrap {
+      min-height: 100%;
+      display: flex; justify-content: center; align-items: flex-start;
+      padding: 40px 20px;
+    }
+    #check-wrap .card { max-width: 620px; }
+    .preview {
+      width: 100%; aspect-ratio: 4 / 3; background: #0f1117;
+      border-radius: 11px; overflow: hidden; margin-top: 18px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .preview video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    .preview .placeholder { color: #9aa3b5; font-size: 15px; padding: 20px; text-align: center; }
+    .device { margin-top: 20px; }
+    .device h2 { font-size: 15px; margin: 0 0 8px; }
+    select {
+      width: 100%; padding: 11px 12px; font-size: 15px;
+      border: 1px solid var(--line); border-radius: 9px; background: #fff;
+    }
+    /* The meter answers "is it hearing me" without needing words. */
+    .meter { height: 10px; background: #eceff4; border-radius: 999px; overflow: hidden; margin-top: 10px; }
+    .meter-fill { height: 100%; width: 0%; background: var(--live); transition: width .08s linear; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    button.plain {
+      padding: 11px 16px; font-size: 15px; font-weight: 600;
+      border: 1px solid var(--line); border-radius: 9px;
+      background: #fff; color: var(--ink); cursor: pointer;
+    }
+    button.plain:disabled { color: #a9b4cf; cursor: not-allowed; }
+    .status { font-size: 14px; color: var(--muted); margin-top: 10px; }
+    .status.good { color: var(--live); }
+    .status.warn { color: #8a6100; }
+    .status.bad { color: #b3261e; }
+
+    @media (max-width: 560px) {
+      .card { padding: 22px; }
+      .preview { aspect-ratio: 3 / 4; }
+    }
+
+    /* ---- Step 2: the interview itself. Full bleed, with the candidate's own
+       camera in the corner and no tile for the interviewer. ---- */
     #stage {
       min-height: 100%;
       display: flex; flex-direction: column;
@@ -90,6 +134,57 @@
     .orb span { font-size: 30px; }
     #speaker { font-size: 19px; font-weight: 600; }
     #hint { color: #9aa3b5; font-size: 15px; text-align: center; max-width: 460px; }
+    /* Captions. Deliberately a quiet panel under the orb rather than an overlay
+       across it: the candidate should still see an interview, not a meeting
+       app. Only the interviewer's speech appears here, never their own. */
+    #captions {
+      width: 100%; max-width: 640px;
+      max-height: 190px; overflow-y: auto;
+      background: #161a24; border: 1px solid #232733; border-radius: 11px;
+      padding: 14px 16px; text-align: left;
+    }
+    #captions p {
+      margin: 0 0 10px; font-size: 16px; line-height: 1.5; color: #d7dce8;
+    }
+    /* Every line here belongs to the same turn. The most recent sentence is
+       brighter so it is clear where the interviewer has got to in a long
+       question; the earlier sentences of that question stay fully readable,
+       because the candidate is answering all of it, not just the last line. */
+    #captions p:last-child { margin-bottom: 0; color: #fff; }
+    #captions .placeholder { color: #6f7891; font-style: normal; }
+    .cc-row { display: flex; justify-content: flex-end; width: 100%; max-width: 640px; }
+    button.cc {
+      background: none; border: 0; color: #9aa3b5; cursor: pointer;
+      font-size: 14px; padding: 4px 2px;
+    }
+    button.cc:hover { color: #fff; }
+
+    @media (max-width: 560px) {
+      #captions { max-height: 150px; font-size: 15px; }
+    }
+
+    /* The candidate's own camera, small and in the corner. A self-view is
+       ordinary; a participant grid is not, and the interviewer has no camera to
+       put in one anyway. */
+    #self {
+      position: fixed; right: 18px; bottom: 92px;
+      width: 148px; aspect-ratio: 4 / 3;
+      background: #0f1117; border: 1px solid #2b3244; border-radius: 10px;
+      overflow: hidden;
+    }
+    #self video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    #self .off {
+      position: absolute; inset: 0; display: none;
+      align-items: center; justify-content: center;
+      color: #9aa3b5; font-size: 13px; text-align: center; padding: 10px;
+    }
+    #self.camera-off video { display: none; }
+    #self.camera-off .off { display: flex; }
+
+    @media (max-width: 560px) {
+      #self { width: 104px; right: 12px; bottom: 84px; }
+    }
+
     .controls { display: flex; gap: 12px; padding: 22px; justify-content: center; border-top: 1px solid #232733; }
     .controls button {
       padding: 12px 22px; font-size: 15px; font-weight: 600;
@@ -98,6 +193,24 @@
     }
     .controls button.muted { background: #40202a; border-color: #6b2f3c; }
     .controls button.leave { background: #b3261e; border-color: #b3261e; }
+
+    /* Ending the interview cannot be undone: the bot exits, the transcript is
+       written, and there is no way back in. So the button asks first, and the
+       quiet option is the one that keeps the interview going. Someone reaching
+       for this may already be stressed, so it stays calm rather than alarming. */
+    .confirm {
+      display: flex; flex-direction: column; align-items: center; gap: 14px;
+      padding: 22px; border-top: 1px solid #232733; text-align: center;
+    }
+    .confirm p { margin: 0; font-size: 15px; }
+    .confirm .sub { color: #9aa3b5; font-size: 14px; }
+    .confirm .row { display: flex; gap: 12px; }
+    .confirm button {
+      padding: 12px 22px; font-size: 15px; font-weight: 600;
+      border-radius: 9px; border: 1px solid #2b3244;
+      background: #1b2030; color: #fff; cursor: pointer;
+    }
+    .confirm button.leave { background: #b3261e; border-color: #b3261e; }
 
     /* The lockup carries the name and what it stands for, so the copy beside
        it does not repeat them. A candidate about to be interviewed by a machine
@@ -131,14 +244,27 @@
       <label for="password">Password</label>
       <input id="password" type="text" autocapitalize="none" spellcheck="false" required />
 
+      <!-- This has to be true on the day it is read. It has now been wrong in
+           both directions: it once promised a recording that was never made,
+           and then, once the camera went on, it said the interview was voice
+           only. Recording is real as of this change, so the notice says so, and
+           the retention figure is substituted from the same constant the job
+           that deletes recordings reads. If that number is ever edited here by
+           hand, the promise and the enforcement have already come apart. -->
       <div class="notice">
         <h2>Before you begin</h2>
         <ul>
           <li>This interview is conducted by <strong>{{BOT_NAME}}</strong>, an AI interviewer ({{BOT_FULL_NAME}}), not a person.</li>
-          <li>It is <strong>voice only</strong>. Your camera is not used.</li>
-          <li>The conversation is <strong>recorded and transcribed</strong>.</li>
-          <li>The recording and transcript are shared with the employer to help
-              them evaluate your application.</li>
+          <li>Your camera and microphone are on, and the interview is
+              <strong>recorded, both video and sound</strong>. What you say is also
+              written down as a transcript.</li>
+          <li>The recording and the transcript are shared with the employer, along
+              with a report based on the transcript.
+              <strong>Someone there may watch the recording.</strong></li>
+          <li>The recording is <strong>kept for {{RETENTION_DAYS}} days</strong> and is
+              then deleted. The transcript is kept.</li>
+          <li>You are assessed on what you say. Your camera picture is not scored,
+              and nothing measures your face, your eyes or your expression.</li>
           <li>A person reviews the result. Nothing here decides the outcome on its own.</li>
         </ul>
         <label class="consent" for="consent">
@@ -147,9 +273,70 @@
         </label>
       </div>
 
-      <button id="submit" class="primary" type="submit" disabled>Start interview</button>
+      <!-- This no longer starts anything. The next screen checks the devices,
+           and the room is only booked once that is done. -->
+      <button id="submit" class="primary" type="submit" disabled>Continue</button>
       <div id="error" class="error hidden"></div>
     </form>
+  </section>
+</div>
+
+<!-- Step 1b: device check, before the room is booked -->
+<div id="check-wrap" class="hidden">
+  <section class="card">
+    <h1>Check your camera and microphone</h1>
+    <p class="sub">A quick check before you go in, so nothing surprises you once
+      the interview has started.</p>
+
+    <div id="ask">
+      <div class="notice">
+        <h2>Your browser will ask for permission</h2>
+        <ul>
+          <li>Your <strong>microphone</strong> is needed. The interview is a spoken conversation.</li>
+          <li>Your <strong>camera</strong> is on and recorded during the interview, so
+              check it here first. You can turn it off at any point once you are in.</li>
+          <li>This check itself is not recorded, and nothing leaves your device until
+              you join.</li>
+        </ul>
+      </div>
+      <button id="grant" class="primary" type="button">Allow microphone and camera</button>
+      <div id="grant-error" class="error hidden"></div>
+    </div>
+
+    <div id="devices" class="hidden">
+      <div class="preview" id="preview-box">
+        <video id="preview" autoplay playsinline muted></video>
+        <div class="placeholder hidden" id="no-preview">No camera preview. You can
+          still take the interview, and your camera will simply be off.</div>
+      </div>
+
+      <div class="device">
+        <h2>Microphone</h2>
+        <select id="mic-pick"></select>
+        <div class="meter"><div class="meter-fill" id="meter"></div></div>
+        <div class="status" id="mic-status">Say something and watch the bar move.</div>
+      </div>
+
+      <div class="device">
+        <h2>Hear yourself back</h2>
+        <p class="sub" style="margin:0 0 10px">A bar that moves tells you the microphone is
+          picking something up. Playing it back tells you how you actually sound.</p>
+        <div class="row">
+          <button id="record" class="plain" type="button">Record four seconds</button>
+          <button id="replay" class="plain" type="button" disabled>Play it back</button>
+        </div>
+        <div class="status" id="loop-status"></div>
+      </div>
+
+      <div class="device" id="cam-block">
+        <h2>Camera</h2>
+        <select id="cam-pick"></select>
+        <div class="status" id="cam-status"></div>
+      </div>
+
+      <button id="join" class="primary" type="button">Join the interview</button>
+      <div id="check-error" class="error hidden"></div>
+    </div>
   </section>
 </div>
 
@@ -163,10 +350,29 @@
     <div class="orb" id="orb"><span id="orb-icon">🎙️</span></div>
     <div id="speaker">Connecting…</div>
     <div id="hint">Take your time. There is no rush, and pausing to think is fine.</div>
+    <div class="cc-row">
+      <button id="cc-toggle" class="cc" type="button">Hide captions</button>
+    </div>
+    <div id="captions">
+      <p class="placeholder">What {{BOT_NAME}} says will appear here.</p>
+    </div>
   </div>
-  <div class="controls">
+  <div id="self" class="hidden">
+    <video id="selfview" autoplay playsinline muted></video>
+    <div class="off">Your camera is off</div>
+  </div>
+  <div class="controls" id="controls">
     <button id="mute" type="button">Mute</button>
+    <button id="camera" type="button">Camera off</button>
     <button id="leave" class="leave" type="button">End interview</button>
+  </div>
+  <div class="confirm hidden" id="confirm">
+    <p>Are you sure you want to end the interview?</p>
+    <p class="sub">This cannot be undone, and you will not be able to rejoin.</p>
+    <div class="row">
+      <button id="stay" type="button">No, keep going</button>
+      <button id="confirm-leave" class="leave" type="button">Yes, end it</button>
+    </div>
   </div>
 </section>
 
@@ -187,15 +393,8 @@
   // No pre-ticked box, and the button stays dead until it is ticked.
   consent.addEventListener("change", () => { submit.disabled = !consent.checked; });
 
-  function showError(message) {
-    $("error").textContent = message;
-    $("error").classList.remove("hidden");
-    submit.disabled = false;
-    submit.textContent = "Start interview";
-  }
-
   function show(section) {
-    for (const id of ["entry-wrap", "stage", "done"]) {
+    for (const id of ["entry-wrap", "check-wrap", "stage", "done"]) {
       $(id).classList.toggle("hidden", id !== section);
     }
   }
@@ -220,11 +419,237 @@
     if (call) { call.destroy(); call = null; }
   }
 
-  $("form").addEventListener("submit", async (event) => {
+  // ---- Step 1b: the device check -----------------------------------------
+  //
+  // It sits BEFORE the room is booked, deliberately. Joining spawns the
+  // interviewer as a process and takes one of a small number of concurrent
+  // slots, so checking devices afterwards would leave it sitting in an empty
+  // room, running its silence ladder, while somebody hunts for a headset.
+  //
+  // The cost of this order is that a wrong meeting ID is only found after the
+  // check, so that error is shown here with the way back.
+
+  let previewStream = null;   // camera + mic, local to this screen only
+  let meterLoop = null;
+  let audioContext = null;
+  let recorder = null;
+  let recordedUrl = null;
+  let heardSomething = false;
+
+  /** Everything on this screen is a preview. None of it may outlive the screen. */
+  function stopPreview() {
+    if (meterLoop) { cancelAnimationFrame(meterLoop); meterLoop = null; }
+    if (audioContext) { audioContext.close().catch(() => {}); audioContext = null; }
+    if (previewStream) {
+      for (const track of previewStream.getTracks()) track.stop();
+      previewStream = null;
+    }
+    if ($("preview")) $("preview").srcObject = null;
+    if (recordedUrl) { URL.revokeObjectURL(recordedUrl); recordedUrl = null; }
+  }
+
+  function setStatus(id, text, kind) {
+    const node = $(id);
+    node.textContent = text;
+    node.className = "status" + (kind ? " " + kind : "");
+  }
+
+  /** A moving bar answers "is it hearing me" without anyone reading anything. */
+  function startMeter(stream) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;                       // no meter, but the check still works
+    audioContext = new Ctx();
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 1024;
+    audioContext.createMediaStreamSource(stream).connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+
+    const tick = () => {
+      analyser.getByteTimeDomainData(samples);
+      let sum = 0;
+      for (const sample of samples) {
+        const centred = (sample - 128) / 128;
+        sum += centred * centred;
+      }
+      const level = Math.min(1, Math.sqrt(sum / samples.length) * 4);
+      $("meter").style.width = (level * 100).toFixed(0) + "%";
+      if (level > 0.06 && !heardSomething) {
+        heardSomething = true;
+        setStatus("mic-status", "That came through clearly.", "good");
+      }
+      meterLoop = requestAnimationFrame(tick);
+    };
+    tick();
+  }
+
+  async function listDevices() {
+    // Labels are empty until permission is granted, which is why this runs after.
+    let devices = [];
+    try {
+      devices = await navigator.mediaDevices.enumerateDevices();
+    } catch { return; }
+
+    for (const [kind, id] of [["audioinput", "mic-pick"], ["videoinput", "cam-pick"]]) {
+      const found = devices.filter((d) => d.kind === kind && d.deviceId);
+      const picker = $(id);
+      picker.innerHTML = "";
+      found.forEach((device, index) => {
+        const option = document.createElement("option");
+        option.value = device.deviceId;
+        option.textContent = device.label || `Option ${index + 1}`;
+        picker.appendChild(option);
+      });
+      // One device is not a choice, so do not present it as one.
+      picker.classList.toggle("hidden", found.length < 2);
+    }
+  }
+
+  /** Ask for both devices. The microphone decides whether they can go on. */
+  async function requestDevices(micId, camId) {
+    stopPreview();
+    heardSomething = false;
+    $("grant-error").classList.add("hidden");
+
+    let micStream;
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: micId ? { deviceId: { exact: micId } } : true,
+      });
+    } catch (err) {
+      $("grant-error").textContent = micDenialMessage(err);
+      $("grant-error").classList.remove("hidden");
+      $("grant").textContent = "Try again";
+      return false;
+    }
+
+    previewStream = micStream;
+    $("devices").classList.remove("hidden");
+    $("ask").classList.add("hidden");
+    startMeter(micStream);
+
+    // The camera is checked, not required. It is on during the interview, but
+    // nothing is scored from it, so refusing somebody an interview over a broken
+    // webcam would be a worse failure than the one this screen exists to
+    // prevent. They take it with the camera off instead.
+    // Reset from any previous attempt, so retrying after a failure can succeed.
+    $("preview").classList.remove("hidden");
+    $("no-preview").classList.add("hidden");
+    try {
+      const camStream = await navigator.mediaDevices.getUserMedia({
+        video: camId ? { deviceId: { exact: camId } } : true,
+      });
+      for (const track of camStream.getVideoTracks()) previewStream.addTrack(track);
+      $("preview").srcObject = previewStream;
+      setStatus("cam-status", "Your camera is working. It will be on during the interview.", "good");
+    } catch {
+      // Hidden, never removed. Replacing the box would delete the video element
+      // and a later retry would have nothing to draw into.
+      $("preview").classList.add("hidden");
+      $("no-preview").classList.remove("hidden");
+      setStatus("cam-status",
+        "We could not use your camera. You can still take the interview, and your camera will be off.",
+        "warn");
+    }
+
+    await listDevices();
+    return true;
+  }
+
+  function micDenialMessage(err) {
+    const name = err && err.name;
+    if (name === "NotFoundError" || name === "OverconstrainedError") {
+      return "We could not find a microphone. Plug one in or connect a headset, " +
+             "then try again. The interview is a spoken conversation, so one is needed.";
+    }
+    if (name === "NotAllowedError" || name === "SecurityError") {
+      return "Your browser is blocking the microphone. Look for the camera or lock " +
+             "icon in the address bar, allow access for this page, then try again. " +
+             "If you have already changed it, try again now.";
+    }
+    if (name === "NotReadableError") {
+      return "Your microphone is in use by another app. Close anything else that " +
+             "might be using it, like a video call, then try again.";
+    }
+    return "We could not reach your microphone. Check that one is connected, " +
+           "then try again.";
+  }
+
+  $("grant").addEventListener("click", () => requestDevices());
+
+  $("mic-pick").addEventListener("change", () =>
+    requestDevices($("mic-pick").value, $("cam-pick").value || undefined));
+  $("cam-pick").addEventListener("change", () =>
+    requestDevices($("mic-pick").value || undefined, $("cam-pick").value));
+
+  // Hearing yourself back catches what a meter cannot: a microphone that is
+  // picking up sound and sounds terrible.
+  $("record").addEventListener("click", () => {
+    if (!previewStream || !window.MediaRecorder) {
+      setStatus("loop-status",
+        "This browser cannot play your voice back. The bar above still tells you " +
+        "the microphone is working.", "warn");
+      return;
+    }
+    const audioOnly = new MediaStream(previewStream.getAudioTracks());
+    const chunks = [];
+    try {
+      recorder = new MediaRecorder(audioOnly);
+    } catch {
+      setStatus("loop-status",
+        "This browser cannot play your voice back. The bar above still tells you " +
+        "the microphone is working.", "warn");
+      return;
+    }
+    recorder.ondataavailable = (event) => chunks.push(event.data);
+    recorder.onstop = () => {
+      if (recordedUrl) URL.revokeObjectURL(recordedUrl);
+      recordedUrl = URL.createObjectURL(new Blob(chunks));
+      $("replay").disabled = false;
+      $("record").disabled = false;
+      $("record").textContent = "Record again";
+      setStatus("loop-status", "Ready. Play it back and listen.", "good");
+      $("replay").click();
+    };
+    recorder.start();
+    $("record").disabled = true;
+    $("replay").disabled = true;
+    setStatus("loop-status", "Recording. Say a sentence or two.");
+    setTimeout(() => { if (recorder && recorder.state === "recording") recorder.stop(); }, 4000);
+  });
+
+  $("replay").addEventListener("click", () => {
+    if (!recordedUrl) return;
+    new Audio(recordedUrl).play().catch(() => {
+      setStatus("loop-status",
+        "Your browser would not play that back. Tap the button again.", "warn");
+    });
+  });
+
+  // ---- Step 1: credentials and consent ------------------------------------
+
+  $("form").addEventListener("submit", (event) => {
     event.preventDefault();
     $("error").classList.add("hidden");
-    submit.disabled = true;
-    submit.textContent = "Connecting…";
+    show("check-wrap");
+  });
+
+  // ---- joining, once the devices are known to work ------------------------
+
+  $("join").addEventListener("click", async (event) => {
+    const joinButton = $("join");
+    $("check-error").classList.add("hidden");
+    joinButton.disabled = true;
+    joinButton.textContent = "Connecting…";
+
+    if (!heardSomething) {
+      // Warned, never blocked. Somebody who simply did not speak during the
+      // check has a working microphone and a flat bar, and locking them out of
+      // their own interview over that cannot be undone from their side.
+      setStatus("mic-status",
+        "We did not hear anything during the check. You can still go ahead, but " +
+        "if the interviewer cannot hear you, come back and check your microphone.",
+        "warn");
+    }
 
     let session;
     function browserTimezone() {
@@ -233,6 +658,13 @@
       } catch {
         return null;  // never block a join over a greeting
       }
+    }
+
+    function showJoinError(message) {
+      $("check-error").textContent = message;
+      $("check-error").classList.remove("hidden");
+      joinButton.disabled = false;
+      joinButton.textContent = "Join the interview";
     }
 
     try {
@@ -250,27 +682,71 @@
         }),
       });
       const body = await response.json();
-      if (!response.ok) { showError(body.detail || "Could not join the interview."); return; }
+      if (!response.ok) { showJoinError(body.detail || "Could not join the interview."); return; }
       session = body;
     } catch (err) {
-      showError("Could not reach the server. Check your connection and try again.");
+      showJoinError("Could not reach the server. Check your connection and try again.");
       return;
     }
+
+    // The preview has done its job. The call object opens the camera itself, and
+    // two things holding one device is how a candidate ends up with a black
+    // self-view, so this one is released before the room is joined.
+    stopPreview();
 
     $("role").textContent = "{{BOT_NAME}} · " + session.role_title;
     show("stage");
 
-    // A call *object*, not Daily's prebuilt iframe. This is a voice interview:
-    // there is no video, no participant grid, no screen share, and no Daily
-    // branding — the candidate should see an interview, not a meeting app.
+    // A call *object*, not Daily's prebuilt iframe. There is no participant
+    // grid, no screen share and no Daily branding: the candidate should see an
+    // interview, not a meeting app. The only picture on screen is their own,
+    // small and in the corner.
+    //
+    // This is a talking-head for a person to review afterwards, not a visual
+    // assessment: video is never scored. So it is capped at capture, at 640x480
+    // and 15 frames a second, which is ample to see a face and a room and is
+    // roughly a quarter of the pixels a default 720p30 webcam would push.
+    //
+    // One send layer at 200 kbps, rather than Daily's default simulcast ladder.
+    // Simulcast exists to serve subscribers at different qualities and there are
+    // no video subscribers at all here: the interviewer does not receive video.
+    // Sending three layers would be paying three times for a picture nothing
+    // watches.
+    //
+    // Sessions from this deployment have already shown fragmented audio and
+    // dropped connections, so the uplink is treated as scarce. Audio is what the
+    // assessment rests on and must never be starved to carry video.
     call = window.DailyIframe.createCallObject({
       audioSource: true,
-      videoSource: false,
+      videoSource: true,
+      dailyConfig: {
+        userMediaVideoConstraints: {
+          width: { ideal: 640, max: 640 },
+          height: { ideal: 480, max: 480 },
+          frameRate: { ideal: 15, max: 15 },
+        },
+      },
+      sendSettings: {
+        video: {
+          encodings: {
+            low: { maxBitrate: 200000, maxFramerate: 15, scaleResolutionDownBy: 1 },
+          },
+        },
+      },
     });
 
     // With a call object we own media playback, so remote audio has to be
     // attached by hand. Without this the bot is in the room and inaudible.
     call.on("track-started", (event) => {
+      // The candidate's own camera, shown back to them. If your camera is on you
+      // should be able to see that it is on, and see what it is pointing at.
+      // There is no tile for the interviewer: it has no camera, and inventing an
+      // avatar for it would be worse than the orb it already has.
+      if (event.track.kind === "video" && event.participant?.local) {
+        $("selfview").srcObject = new MediaStream([event.track]);
+        $("self").classList.remove("hidden");
+        return;
+      }
       if (event.track.kind !== "audio" || event.participant?.local) return;
       const audio = document.createElement("audio");
       audio.autoplay = true;
@@ -311,12 +787,94 @@
       $("hint").textContent = event?.errorMsg || "Something went wrong with the connection.";
     });
 
+    // Captions. The backend sends one message per finished sentence, as it is
+    // spoken, and sends nothing at all about what the candidate says. There is
+    // no filtering to do here beyond ignoring anything that is not ours.
+    call.on("app-message", (event) => {
+      const message = event?.data;
+      if (!message || message.label !== "rtvi-ai") return;
+      // One turn on screen at a time. The bot starts speaking, then its
+      // sentences follow, in that order.
+      if (message.type === "bot-started-speaking") startCaptionTurn();
+      else if (message.type === "bot-output") addCaption(message.data);
+    });
+
     try {
       await call.join({ url: session.room_url, token: session.token });
     } catch (err) {
       $("speaker").textContent = "Could not connect";
       $("hint").textContent = String(err?.message || err);
     }
+  });
+
+  // ---- captions -----------------------------------------------------------
+  //
+  // The interviewer's speech only. The candidate's own words are never sent by
+  // the backend and are not wanted here: nobody needs to read what they just
+  // said, and watching your own speech appear while you are still thinking is a
+  // distraction in the one place this product works hardest not to create one.
+  //
+  // **One turn at a time, cleared when the NEXT one begins.**
+  //
+  // Not cleared when the interviewer stops speaking, which is the obvious
+  // reading of "live captions" and is wrong here. The candidate answers after
+  // the question has finished, so a caption that vanishes the moment the bot
+  // stops would disappear at exactly the point it is needed most. The whole
+  // reason this exists is that somebody with rough audio can read the question
+  // while they answer it. So the question stays until it is replaced.
+  //
+  // Accumulating instead turned the panel into a transcript of the interview,
+  // which is a different thing and not what a candidate needs mid-answer.
+
+  const captionSegments = new Map();  // segment id -> the <p> showing it
+  let newTurn = false;
+
+  /** The interviewer has started a new turn. The old one goes when text arrives. */
+  function startCaptionTurn() {
+    // Flagged rather than cleared here, so a turn that makes audio but produces
+    // no text cannot leave the panel empty. The clear happens on the first
+    // sentence of the new turn, which is the moment there is something to
+    // replace it with.
+    newTurn = true;
+  }
+
+  function addCaption(data) {
+    const text = (data && data.text ? String(data.text) : "").trim();
+    if (!text) return;
+
+    const box = $("captions");
+    if (newTurn) {
+      box.innerHTML = "";
+      captionSegments.clear();
+      newTurn = false;
+    }
+    const placeholder = box.querySelector(".placeholder");
+    if (placeholder) placeholder.remove();
+
+    // A segment can be sent more than once as it is spoken, so each one owns a
+    // line and is updated in place. Appending every message would repeat the
+    // sentence a word at a time, which is exactly what captions must not do.
+    const key = data.segment_id;
+    let line = key === undefined || key === null ? null : captionSegments.get(key);
+    if (!line) {
+      line = document.createElement("p");
+      box.appendChild(line);
+      if (key !== undefined && key !== null) captionSegments.set(key, line);
+    }
+    line.textContent = text;
+
+    // Only ever one turn here, so following the newest sentence is always what
+    // is wanted. A long turn still scrolls rather than being cut off.
+    box.scrollTop = box.scrollHeight;
+  }
+
+  // On by default. An accessibility feature somebody has to discover is not one.
+  // Off is still offered, because live text is a distraction for some people
+  // while they are thinking.
+  $("cc-toggle").addEventListener("click", () => {
+    const box = $("captions");
+    const hidden = box.classList.toggle("hidden");
+    $("cc-toggle").textContent = hidden ? "Show captions" : "Hide captions";
   });
 
   $("mute").addEventListener("click", () => {
@@ -327,7 +885,48 @@
     $("mute").classList.toggle("muted", muted);
   });
 
-  $("leave").addEventListener("click", async () => {
+  // The candidate can turn their own camera off.
+  //
+  // The tension is real: a camera somebody can switch off is one they will
+  // switch off, and the point of having it is for a person to review the
+  // interview afterwards. It is still the right call.
+  //
+  // Video is never scored, which is a settled decision, so switching it off
+  // cannot change anybody's assessment. What it can do is rescue a candidate
+  // whose room stops being private halfway through an interview. Without this
+  // their only options are to stay on camera or abandon the interview, and an
+  // interview cannot be restarted. Consent is asked before joining and it is
+  // asked plainly; a person who agreed to be on camera and then needs a minute
+  // has not withdrawn that.
+  //
+  // Whether a camera that was off for most of an interview is worth telling the
+  // reviewer about is a question for the change that adds recording, and is
+  // deliberately not answered here.
+  $("camera").addEventListener("click", () => {
+    if (!call) return;
+    const on = call.localVideo();
+    call.setLocalVideo(!on);
+    $("camera").textContent = on ? "Camera on" : "Camera off";
+    $("camera").classList.toggle("muted", on);
+    $("self").classList.toggle("camera-off", on);
+  });
+
+  // Ending is unrecoverable, so the button only asks. Nothing leaves the call
+  // until the candidate says yes a second time, and "no" is the plain option.
+  // This is only the button: a candidate who SAYS they want to stop is handled
+  // by the bot, deliberately and differently.
+  $("leave").addEventListener("click", () => {
+    $("controls").classList.add("hidden");
+    $("confirm").classList.remove("hidden");
+    $("stay").focus();
+  });
+
+  $("stay").addEventListener("click", () => {
+    $("confirm").classList.add("hidden");
+    $("controls").classList.remove("hidden");
+  });
+
+  $("confirm-leave").addEventListener("click", async () => {
     if (call) await call.leave();
     finish();
   });
