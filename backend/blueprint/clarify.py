@@ -13,7 +13,9 @@ irrelevant, and the quality of everything downstream depends on it.
 import json
 from dataclasses import dataclass, field
 
+from loguru import logger
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 
 from shared.branding import PROSE_STYLE
 from shared.contracts import (
@@ -49,6 +51,30 @@ Rules for the conversation:
 - Aim to finish in four to six questions. This is an employer's time, not a
   discovery workshop.
 - When you have enough, stop asking and confirm a summary in plain language.
+
+HOW LONG THE INTERVIEW RUNS. YOU MUST ASK THIS.
+
+It is one of your questions, not an afterthought, and the employer will not
+volunteer it. Ask it plainly and state the range in the same breath, so they
+learn the rule while they are deciding rather than after:
+
+  "How long should this interview run? Anything from {MIN_DURATION_MINUTES} to {MAX_DURATION_MINUTES} minutes works, and most land around {DEFAULT_DURATION_MINUTES}."
+
+THE ONLY LENGTHS THAT EXIST ARE {MIN_DURATION_MINUTES} TO {MAX_DURATION_MINUTES} MINUTES
+
+There is no shorter interview and no longer one. A number outside that range
+cannot be built, so agreeing to one is not a compromise, it is a promise that
+will fail after the employer has stopped reading.
+
+If they ask for something outside the range, do not negotiate toward it, do not
+say "noted", and do not start reshaping the competencies to fit it. Say what the
+range is, offer the nearest length that exists, and ask them to confirm:
+
+  "{MIN_DURATION_MINUTES} minutes is the shortest interview I can set up. Shall I use {MIN_DURATION_MINUTES}, or would you rather give it more time?"
+
+Then put the number they confirm into `duration_minutes`. If they never say,
+use {DEFAULT_DURATION_MINUTES}. Never write a number outside the range into the
+spec, whatever was said earlier in this conversation.
 
 NEVER PUT WORDS IN THE EMPLOYER'S MOUTH
 
@@ -146,6 +172,16 @@ class ClarificationError(RuntimeError):
     pass
 
 
+class SpecRejected(ClarificationError):
+    """The model's spec did not satisfy the contract.
+
+    Carries a sentence an employer can act on, not a validator's output. It is
+    handled inside `next_turn` rather than raised at the API, because a
+    validation failure here is a thing to say back to the employer, not an
+    outage.
+    """
+
+
 @dataclass
 class ClarificationChat:
     """Multi-turn Q&A that fills an EvaluationSpec."""
@@ -212,9 +248,19 @@ class ClarificationChat:
         if not done or not raw_spec:
             return ClarificationReply(reply=reply, done=False, inferred=inferred)
 
-        return ClarificationReply(
-            reply=reply, done=True, spec=_build_spec(raw_spec), inferred=inferred
-        )
+        try:
+            spec = _build_spec(raw_spec)
+        except SpecRejected as rejected:
+            # Not an outage, and not a dead end. A rejected spec becomes an
+            # ordinary assistant turn: the employer reads a sentence instead of
+            # a validator's output, and because the turn is stored in the
+            # conversation like any other, the next attempt has the correction
+            # in its own history. That is what stops the retry regenerating the
+            # identical failure, which is how this used to become unescapable.
+            logger.info(f"clarification spec rejected, conversation continues: {rejected}")
+            return ClarificationReply(reply=str(rejected), done=False, inferred=inferred)
+
+        return ClarificationReply(reply=reply, done=True, spec=spec, inferred=inferred)
 
 
 def _build_spec(raw: dict) -> EvaluationSpec:
@@ -233,5 +279,58 @@ def _build_spec(raw: dict) -> EvaluationSpec:
 
     try:
         return EvaluationSpec.model_validate(raw)
+    except ValidationError as exc:
+        raise SpecRejected(_explain(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        raise ClarificationError(f"Model produced an invalid EvaluationSpec: {exc}") from exc
+        raise SpecRejected(
+            "I could not turn that into a usable interview plan. Could you tell "
+            "me again what you would like this interview to test, and I will put "
+            "together a summary that works?"
+        ) from exc
+
+
+def _clamp(value: object) -> int:
+    """The nearest length that can actually be built."""
+    try:
+        minutes = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_DURATION_MINUTES
+    return max(MIN_DURATION_MINUTES, min(MAX_DURATION_MINUTES, minutes))
+
+
+def _explain(exc: ValidationError) -> str:
+    """Turn a validation failure into something an employer can act on.
+
+    A recruiter was shown a Pydantic error, complete with a link to Pydantic's
+    documentation, which did not even state the rule it had broken. What they
+    need is the rule, the nearest thing that works, and a way forward.
+
+    Deliberately narrow: the two fields employers actually get wrong, and an
+    honest fallback. This is not a general error-rendering layer.
+    """
+    for error in exc.errors():
+        field_name = ".".join(str(part) for part in error.get("loc", ()))
+
+        if field_name == "duration_minutes":
+            asked = error.get("input")
+            nearest = _clamp(asked)
+            return (
+                f"I cannot set this interview to {asked} minutes. An interview "
+                f"runs between {MIN_DURATION_MINUTES} and {MAX_DURATION_MINUTES} "
+                f"minutes, and there is nothing shorter or longer I can build. "
+                f"Shall I use {nearest} minutes, or would you rather pick another "
+                f"length in that range?"
+            )
+
+        if field_name.startswith("competencies"):
+            return (
+                "I could not put the competencies into a usable shape. Could you "
+                "tell me again which areas this interview should test, and how "
+                "much each one matters?"
+            )
+
+    return (
+        "I could not turn that into a usable interview plan. Could you tell me "
+        "again what you would like this interview to test, and I will put "
+        "together a summary that works?"
+    )
