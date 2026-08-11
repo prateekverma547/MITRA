@@ -153,6 +153,63 @@ ends and is resumed within 2.0s did not end because the candidate had finished.
 `SMART_TURN_STOP_SECS` or `VAD_STOP_SECS`**, because rule one of the tuning
 order still applies and the audible behaviour was never the complaint here.
 
+### The turn ceiling follows the time the section was given
+
+A flat six turns for every competency, whatever it had been allocated. An eleven
+minute section and a four minute one got the same six questions.
+
+Across **20 competency sections in 15 stored interviews**, what ended a section:
+
+| ended by | sections |
+|---|---|
+| turn ceiling | **14** |
+| time budget | **0** |
+| judge said `sufficient` | **0** |
+
+Of the three ways a competency can end on its own terms, one fired always and
+two had never fired at all. Sections used 2% to 58% of their allocated time,
+median 17%. Interviews ran at **18 to 26% of their configured length**: the
+employer sets twenty minutes, the bot says "about twenty minutes" out loud, and
+the interview ends after five. Candidates assumed the clock had run out.
+
+`ceiling_turns = 6` had no entry here. Its only justification was a field comment
+saying an over-running section "is eating another competency's time" — a scarcity
+that has never existed, because the budget has never fired. The case it does
+protect against, a section that will not converge, is now held by the two-probe
+term allowance and the let-go.
+
+**The divisor is measured.** Seconds per competency turn, from
+`section_outcomes`:
+
+| sample | n | median | mean | p10 | p90 |
+|---|---|---|---|---|---|
+| under current code | 12 | **21.6s** | 23.4s | 18.0 | 32.9 |
+| before the turn-counting fix | 8 | 7.0s | 7.5s | 1.9 | 16.4 |
+
+The second sample is excluded: that is the bug above, where fifty-two utterances
+counted as twelve turns. So `SECONDS_PER_COMPETENCY_TURN = 22`, and a section
+allocated N seconds can hold about N/22 exchanges.
+
+**The floor is the old flat six**, so the change can only add questions to a
+section, never remove them.
+
+**The cap is the material the blueprint actually planned**, not a round number
+and not a guess at the candidate's patience. `blueprint/generate.py` asks the
+model for "3 or 4 questions" per competency. Each one carries the three stages of
+the depth ramp, and the section's term allowance adds two more, so the cap is
+`3 × seed_questions + MAX_TERM_PROBES_PER_SECTION`. Past that the interviewer has
+run out of planned material and is improvising, which is not what a competency
+budget was allocated for. It bounds a wrong allocation, not a long conversation:
+a ninety minute interview with one competency would otherwise hand a single topic
+more than two hundred turns.
+
+**What would change the answer.** Re-measure the divisor if turn-taking,
+endpointing or the twenty-word turn rule move, because all three change how long
+an exchange takes. Raise the cap only by generating more seed questions: with
+four planned questions a twelve minute section still cannot be filled without
+improvising, and that gap between `allocate_minutes` and what generation plans is
+the next constraint, not this one.
+
 ### Neither STT vendor does its own endpointing
 
 `turn_detection=False` on OpenAI, `endpointing=False` on Deepgram. Both offer

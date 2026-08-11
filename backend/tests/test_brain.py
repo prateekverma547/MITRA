@@ -177,18 +177,47 @@ def test_brain_never_waits_on_the_judge():
     assert brain.current_section.id == "beta"
 
 
-def test_judgment_request_is_only_raised_inside_the_decision_band():
-    """Below the floor there is nothing to judge; at the ceiling heuristics decide."""
+def test_every_answer_in_a_competency_is_judged():
+    """This used to assert the opposite, and the change is the point.
+
+    Judgement was raised once per section, inside a turn band, and never again
+    once a verdict had landed. So a section was assessed on its opening couple
+    of minutes and that assessment stood for the rest of it. Every answer is now
+    judged, because the verdict is rendered into the live prompt and a stale one
+    is worse than a late one.
+    """
     brain = InterviewBrain(tiny_blueprint(), config=BrainConfig(floor_turns=2, ceiling_turns=4))
     finish_opening(brain)
     brain.pending_judgment_request()  # drain anything from the opening
 
-    drive(brain, 1)  # 1 turn — below floor
-    assert brain.pending_judgment_request() is None
+    for turn in range(3):
+        drive(brain, 1)
+        request = brain.pending_judgment_request()
+        assert request is not None, f"no judgement raised after answer {turn + 1}"
+        assert request.section_id == "alpha"
 
-    drive(brain, 1)  # 2 turns — inside the band
-    request = brain.pending_judgment_request()
-    assert request is not None and request.section_id == "alpha"
+
+def test_only_one_judgement_is_outstanding_at_a_time():
+    """A slow judge must not leave several assessments of the same section
+    racing, where the last to land wins regardless of which was freshest."""
+    brain = InterviewBrain(tiny_blueprint(), config=BrainConfig(floor_turns=2, ceiling_turns=6))
+    finish_opening(brain)
+    brain.pending_judgment_request()
+
+    drive(brain, 1)
+    drive(brain, 1)  # a second answer while the first request is still queued
+
+    assert brain.pending_judgment_request() is not None
+    assert brain.pending_judgment_request() is None, "a second request was queued"
+
+
+def test_the_opening_and_closing_are_never_judged():
+    """Judgement is about competency depth. Neither of those is scored."""
+    brain = InterviewBrain(tiny_blueprint(), config=BrainConfig(floor_turns=2, ceiling_turns=4))
+    drive(brain, 2)
+
+    assert brain.current_section.kind.value == "opening"
+    assert brain.pending_judgment_request() is None
 
 
 def test_late_judgment_for_a_finished_section_is_still_recorded():
@@ -261,15 +290,131 @@ def test_verbatim_window_is_bounded():
     assert len(plan.messages) == 4
 
 
+def test_the_verdict_block_is_bounded_however_wordy_the_judge_is():
+    """The prompt ceiling has to survive model-written prose.
+
+    The judge writes `depth_rationale` and its claims freely, and both are now
+    rendered into the live prompt. Unclipped, the size of the system instruction
+    would be whatever the judge felt like emitting, which makes the bound above
+    a number nobody is holding. Measured against the 26 real claims in the local
+    database, the longest was 237 characters.
+
+    Carried claims are asserted here too. They were never bounded, which is why
+    the ceiling has been nominal: this test would have passed on a prompt that
+    ran to well over 2,000 tokens in production.
+    """
+    from bot.brain.brain import Judgment
+    from shared.contracts import CoverageLevel, KeyClaim
+
+    def prompt_with(rationale_chars, claim_chars):
+        brain = InterviewBrain(load_blueprint())
+        while brain.current_section.kind.value == "opening":
+            opening = brain.current_section
+            brain.apply_judgment(
+                Judgment(
+                    section_id=opening.id,
+                    coverage=CoverageLevel.PARTIAL,
+                    rationale="ok",
+                    claims=[
+                        KeyClaim(text="z" * claim_chars, section_id=opening.id, turn_index=n)
+                        for n in range(12)
+                    ],
+                )
+            )
+            brain.observe(bot_text="q?", candidate_text="We shipped it and retention improved.")
+        section = brain.current_section
+        brain.apply_judgment(
+            Judgment(
+                section_id=section.id,
+                coverage=CoverageLevel.INSUFFICIENT,
+                rationale="x" * rationale_chars,
+            )
+        )
+        return brain.plan_turn().token_estimate()
+
+    modest = prompt_with(120, 100)
+    absurd = prompt_with(4000, 4000)
+
+    # The point is not the absolute number, it is that the second one does not
+    # run away. A judge having a verbose day must not change the prompt's size.
+    assert absurd - modest < 40, (
+        f"judge prose reaches the prompt unclipped: {modest} -> {absurd} tokens"
+    )
+
+
+#: What the live system instruction may cost, in tokens.
+#:
+#: **Raised from 1800 on a measurement rather than a feeling.** That number was
+#: a proxy for keeping a mini-tier model viable in real time, and the proxy was
+#: never checked. Streaming gpt-4.1-mini at four input sizes, eight interleaved
+#: rounds each, time to first token:
+#:
+#:     ~1400 tokens   778ms median
+#:     ~1800 tokens   757ms
+#:     ~2300 tokens   820ms
+#:     ~2800 tokens   742ms
+#:
+#: 1800 to 2800 is **-15ms on the median**, against a spread within a single
+#: size of up to 358ms. Prompt length in this range does not measurably move
+#: time to first token, so holding 1800 was buying nothing and costing content.
+#:
+#: The bound is kept, at a level that covers the true worst case with room,
+#: because the thing worth guarding is that the prompt does not grow without
+#: anybody noticing. Flatness, asserted separately below, is the property the
+#: sectioned design actually rests on.
+MAX_SECTION_PROMPT_TOKENS = 2400
+
+
 def test_section_prompt_stays_small_and_bounded():
     """The premise behind running a mini-tier model live: the prompt is small
     and does not grow with the interview.
 
-    Compare with Milestone 1's single whole-interview prompt at ~1,800 tokens
-    plus an ever-growing chat log.
+    **This test was passing on a prompt it was not rendering.** It drove a brain
+    with no judge, so the verdict block, the carried claims and the contradiction
+    block were all empty, and it measured a prompt no live interview ever sees.
+    The real worst case was over 2,200 tokens while this asserted under 1,800 and
+    went green. Every optional block is now populated.
     """
+    from bot.brain.brain import Judgment
+    from shared.contracts import Contradiction, CoverageLevel, KeyClaim
+
     brain = InterviewBrain(load_blueprint())
+
+    # Carried claims, at the length the judge clips them to.
+    opening = brain.current_section
+    brain.apply_judgment(
+        Judgment(
+            section_id=opening.id,
+            coverage=CoverageLevel.PARTIAL,
+            rationale="ok",
+            claims=[
+                KeyClaim(text="z" * 200, section_id=opening.id, turn_index=n)
+                for n in range(12)
+            ],
+        )
+    )
     finish_opening(brain)
+
+    # A contradiction, which takes the one mandatory slot, and an unexplained
+    # term, which does not while a contradiction is present. Both are supplied
+    # so the larger of the two is what gets measured.
+    section = brain.current_section
+    brain.apply_judgment(
+        Judgment(
+            section_id=section.id,
+            coverage=CoverageLevel.INSUFFICIENT,
+            rationale="x" * 400,
+            contradictions=[
+                Contradiction(
+                    earlier_claim="a" * 300,
+                    earlier_section_id="opening",
+                    later_statement="b" * 300,
+                    section_id=section.id,
+                    turn_index=1,
+                )
+            ],
+        )
+    )
 
     sizes = []
     for _ in range(8):
@@ -279,18 +424,37 @@ def test_section_prompt_stays_small_and_bounded():
             candidate_text="We shipped it in the third quarter and retention improved.",
         )
 
-    # Milestone 1 sent ~1,800 tokens of prompt *plus* the whole conversation so
-    # far, growing to roughly 10,000 by the end of a 40-minute interview.
-    #
-    # The bound was 1,600 and moved to 1,800 when the repair, domain-language
-    # and one-question blocks landed. Moved deliberately and not far: the
-    # benchmark is Milestone 1's static prompt, and the point is that this one
-    # matches it while resetting every section instead of growing all interview.
-    # If this needs raising again, the honest question is what to cut.
-    assert max(sizes) < 1800
+    assert max(sizes) < MAX_SECTION_PROMPT_TOKENS, (
+        f"worst-case system instruction is {max(sizes)} tokens"
+    )
     # Flatness is the property that matters, not the absolute number: turn
     # twenty must cost no more than turn one.
     assert sizes[-1] <= sizes[0] + 150
+
+
+def test_the_unexplained_term_block_is_bounded_too():
+    """The term and the sentence it appeared in are both model prose."""
+    from bot.brain.brain import Judgment
+    from shared.contracts import UnexplainedTerm
+
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    section = brain.current_section
+    brain.apply_judgment(
+        Judgment(
+            section_id=section.id,
+            unexplained_terms=[
+                UnexplainedTerm(
+                    term="session management concurrency",
+                    said="q" * 4000,
+                    section_id=section.id,
+                    turn_index=1,
+                )
+            ],
+        )
+    )
+
+    assert brain.plan_turn().token_estimate() < MAX_SECTION_PROMPT_TOKENS
 
 
 # -- claims carryover --------------------------------------------------------
@@ -728,3 +892,746 @@ def test_a_leading_no_is_not_a_refusal_when_the_answer_follows_in_the_next_fragm
     assert section.turns_spent == 1
     assert section.declined_turns == 0
     assert section.substantive_turns == 1
+
+
+# -- unexplained terms -------------------------------------------------------
+
+
+def _term_judgment(brain, *terms):
+    from bot.brain.brain import Judgment
+    from shared.contracts import UnexplainedTerm
+
+    section = brain.current_section
+    return Judgment(
+        section_id=section.id,
+        unexplained_terms=[
+            UnexplainedTerm(term=t, said=f"we used {t}", section_id=section.id, turn_index=1)
+            for t in terms
+        ],
+    )
+
+
+def test_a_term_stays_open_until_the_judge_stops_reporting_it():
+    """Being asked once is not enough, and that is the whole point.
+
+    A contradiction closes when it has been raised. A term closes when it has
+    been explained, which is a different event: the failure this exists for is
+    an interviewer that asked, got a restatement, and treated having asked as
+    having found out.
+    """
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    assert [t.term for t in brain.unexplained_terms()] == ["session management"]
+
+    # Asked about, and deflected. The judge still reports it, so it stays open.
+    brain.mark_term_raised(brain.unexplained_terms()[0])
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    assert [t.term for t in brain.unexplained_terms()] == ["session management"]
+
+    # Now actually explained: the judge stops reporting it, so it closes.
+    brain.apply_judgment(_term_judgment(brain))
+    assert brain.unexplained_terms() == []
+
+
+def test_the_raise_count_survives_the_list_being_replaced():
+    """The escalated wording depends on it. The list is replaced wholesale each
+    judgement, so a naive implementation forgets it was ever asked."""
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    brain.mark_term_raised(brain.unexplained_terms()[0])
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+
+    assert brain.unexplained_terms()[0].times_raised == 1
+
+
+def test_the_term_asked_about_already_is_offered_first():
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    brain.apply_judgment(_term_judgment(brain, "hash table", "session management"))
+    brain.mark_term_raised(
+        next(t for t in brain.unexplained_terms() if t.term == "session management")
+    )
+    brain.apply_judgment(_term_judgment(brain, "hash table", "session management"))
+
+    assert brain.unexplained_terms()[0].term == "session management"
+
+
+def test_a_contradiction_takes_the_mandatory_slot_from_a_term():
+    """Two blocks each saying "your next question is already decided" is not
+    twice as strong. It is two instructions pointing at different things, and
+    the model resolves that by choosing, which is the discretion they exist to
+    remove."""
+    from bot.brain.prompting import _decided_question_early, _decided_question_late
+    from shared.contracts import Contradiction, UnexplainedTerm
+
+    contradiction = Contradiction(
+        earlier_claim="I owned it", earlier_section_id="a",
+        later_statement="it was forced on me", section_id="b", turn_index=1,
+    )
+    term = UnexplainedTerm(term="session management", said="we used it", section_id="b", turn_index=1)
+
+    # The slot is split across the section body now: a contradiction renders
+    # above it, an unexplained term below. Only one of them may fire.
+    early = _decided_question_early([contradiction])
+    late = _decided_question_late([contradiction], [term])
+    assert "inconsistency" in early
+    assert late == "", "a term took the slot a contradiction had already taken"
+
+    assert _decided_question_early([]) == ""
+    assert "session management" in _decided_question_late([], [term])
+
+
+def test_the_term_block_names_the_term_and_supplies_the_question():
+    """Shape, not emphasis. The block it replaced described a state and was
+    measured at no effect."""
+    from bot.brain.prompting import _render_unexplained_term
+    from shared.contracts import UnexplainedTerm
+
+    first = _render_unexplained_term(
+        UnexplainedTerm(term="session management", said="we used session management",
+                        section_id="b", turn_index=1)
+    )
+    assert "session management" in first
+    assert "Walk me through how that actually works" in first
+    # The four menu options are forbidden by name, not merely deprioritised.
+    assert "trade-off" in first and "metric" in first
+
+    again = _render_unexplained_term(
+        UnexplainedTerm(term="session management", said="we used it",
+                        section_id="b", turn_index=1, times_raised=1)
+    )
+    assert "twice now" in again and "What does it actually do" in again
+
+
+def test_a_term_gets_two_asks_and_then_is_let_go():
+    """Uncapped, gpt-4.1 asked the identical sentence four times while the
+    candidate gave the identical non-answer. For somebody who genuinely cannot
+    explain something that is worse than the failure it replaced."""
+    from bot.brain.brain import MAX_TERM_ATTEMPTS
+
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    for _ in range(MAX_TERM_ATTEMPTS):
+        brain.apply_judgment(_term_judgment(brain, "session management"))
+        offered = brain.unexplained_terms()
+        assert offered, "the term stopped being offered before its allowance"
+        brain.mark_term_raised(offered[0])
+
+    # Still unexplained, and now closed to further asking.
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    assert brain.unexplained_terms() == []
+
+
+def test_letting_go_is_said_out_loud_once():
+    """A candidate pushed twice and then met with a silent change of subject is
+    left working out whether they failed something."""
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    for _ in range(2):
+        brain.apply_judgment(_term_judgment(brain, "session management"))
+        brain.mark_term_raised(brain.unexplained_terms()[0])
+
+    prompt = brain.plan_turn().system_instruction
+    assert "LET THIS ONE GO" in prompt
+    assert "session management" in prompt
+
+    # It survives being rendered again, because a rendered prompt is not a thing
+    # anybody heard. In a live interview one was queued, rendered, discarded and
+    # never spoken.
+    assert "LET THIS ONE GO" in brain.plan_turn().system_instruction
+
+    # It clears once the interviewer has actually spoken. Once, not twice.
+    brain.observe(bot_text="That's alright, let's leave that one there for now.",
+                  candidate_text="Okay.")
+    assert "LET THIS ONE GO" not in brain.plan_turn().system_instruction
+
+
+def test_a_capped_term_does_not_come_back_while_the_section_still_has_room():
+    """The per-term cap sits underneath the section allowance, so one term
+    cannot take both attempts when two genuinely different terms are open."""
+    from bot.brain.brain import MAX_TERM_PROBES_PER_SECTION
+
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    brain.current_section.term_probes_spent = 0
+
+    brain.apply_judgment(_term_judgment(brain, "session management", "hash table"))
+    first = brain.unexplained_terms()[0]
+    brain.mark_term_raised(first)
+    brain.mark_term_raised(first)  # its own allowance, spent
+
+    # Still reported by the judge, because it is still genuinely unexplained,
+    # and never offered again.
+    brain.current_section.term_probes_spent = MAX_TERM_PROBES_PER_SECTION - 1
+    brain.apply_judgment(_term_judgment(brain, "session management", "hash table"))
+    assert [t.term for t in brain.unexplained_terms()] == ["hash table"]
+
+
+def test_a_term_asked_twice_and_never_explained_reaches_the_report():
+    """It is evidence. "Never asked" and "asked twice and could not say" are
+    different facts about a candidate, and the transcript makes it easy to miss."""
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    section_id = brain.current_section.id
+
+    for _ in range(2):
+        brain.apply_judgment(_term_judgment(brain, "session management"))
+        brain.mark_term_raised(brain.unexplained_terms()[0])
+
+    outcome = next(o for o in brain.outcomes() if o.section_id == section_id)
+    assert [t.term for t in outcome.unexplained_terms] == ["session management"]
+
+
+def test_a_term_explained_before_the_cap_never_reaches_the_report():
+    """Asked once and answered is not a finding."""
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    section_id = brain.current_section.id
+
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    brain.mark_term_raised(brain.unexplained_terms()[0])
+    brain.apply_judgment(_term_judgment(brain))  # the judge stops reporting it
+
+    outcome = next(o for o in brain.outcomes() if o.section_id == section_id)
+    assert outcome.unexplained_terms == []
+
+
+# -- the spoken acknowledgement ----------------------------------------------
+
+
+def test_the_filler_can_only_ever_repeat_their_own_words():
+    """The safety property, and the reason it is a template rather than a call.
+
+    The praise ban works. A filler generated by asking a model for something
+    friendly to say is a route straight around it: this morning a model
+    volunteered "that's a clear technical approach" about an answer that
+    explained nothing.
+    """
+    from bot.brain.prompting import reflect_back
+
+    said = reflect_back("session management concurrency")
+    assert said == "Okay. So you used session management concurrency."
+
+    for banned in ("clear", "solid", "interesting", "great", "good", "impressive"):
+        assert banned not in said.lower()
+
+
+def test_the_filler_says_nothing_rather_than_reaching():
+    """Silence beats an invention. An interviewer that says "interesting" to
+    fill a gap is the failure this is written against."""
+    from bot.brain.prompting import MAX_REFLECTION_CHARS, reflect_back
+
+    assert reflect_back("") is None
+    assert reflect_back("   ") is None
+    assert reflect_back(None) is None
+    assert reflect_back("x" * (MAX_REFLECTION_CHARS + 1)) is None
+
+
+# -- the escalation counts asks, not offers ----------------------------------
+
+
+def _offer(brain, term="session management"):
+    """Render a prompt carrying the term, which is an offer and nothing more."""
+    brain.apply_judgment(_term_judgment(brain, term))
+    return brain.plan_turn().system_instruction
+
+
+def test_a_term_offered_but_not_asked_about_is_not_counted():
+    """The bug. The model is handed a term and may ask something else."""
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    _offer(brain)
+    brain.observe(
+        bot_text="What was the hardest prioritisation call you made that year?",
+        candidate_text="We shipped it in the third quarter.",
+    )
+
+    assert brain.unexplained_terms()[0].times_raised == 0
+
+
+def test_the_first_ask_is_the_plain_wording():
+    """A term nobody has asked about yet gets asked about plainly."""
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    prompt = _offer(brain)
+
+    assert "Walk me through how that actually works" in prompt
+    assert "still do not know what it actually does" not in prompt
+
+
+def test_the_escalation_needs_a_real_ask_behind_it():
+    """The sentence claims a history, so the history has to exist.
+
+    It fires on the second ask, when the candidate genuinely has been asked once
+    and did not answer. Before the fix it fired on the second *offer*, which
+    could be the first time anything was put to them.
+    """
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    # Offered twice, asked nothing. The claim would be false, so it is not made.
+    for _ in range(2):
+        _offer(brain)
+        brain.observe(
+            bot_text="What did you decide not to build that year?",
+            candidate_text="The session management manages those people per sessions.",
+        )
+    assert "twice now" not in _offer(brain)
+
+    # Now a real ask, unanswered. The claim is true, so it is made.
+    brain.observe(
+        bot_text="You said session management. Walk me through how that works?",
+        candidate_text="The session management manages those people per sessions.",
+    )
+    assert "twice now" in _offer(brain)
+
+
+def test_a_term_asked_about_twice_and_still_unexplained_is_let_go():
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    for _ in range(2):
+        _offer(brain)
+        brain.observe(
+            bot_text="You said session management. Walk me through how that works?",
+            candidate_text="The session management manages those people per sessions.",
+        )
+
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    assert "LET THIS ONE GO" in brain.plan_turn().system_instruction
+
+
+def test_a_term_offered_three_times_and_asked_about_once_is_still_open():
+    """**This is the bug, and it must fail loudly if anyone reverts the fix.**
+
+    Three offers and one real question. Counting offers spent the allowance,
+    let the term go, and told the candidate they had been asked twice.
+    """
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    _offer(brain)
+    brain.observe(
+        bot_text="You said session management. Walk me through how that works?",
+        candidate_text="The session management manages those people per sessions.",
+    )
+    for _ in range(2):
+        _offer(brain)
+        brain.observe(
+            bot_text="What did you decide not to build that year?",
+            candidate_text="The session management manages those people per sessions.",
+        )
+
+    open_terms = brain.unexplained_terms()
+    assert open_terms, "the term was let go after a single real ask"
+    assert open_terms[0].times_raised == 1
+    assert "LET THIS ONE GO" not in brain.plan_turn().system_instruction
+
+
+def test_a_question_can_be_about_the_term_without_naming_it():
+    """"How does that actually work" straight after they used the term is an
+    ask, and not counting it would leave the term open for ever."""
+    from bot.brain.terms import asked_about
+
+    assert asked_about("session management", "How does that actually work?")
+    assert asked_about("session management", "Walk me through how that works?")
+    assert asked_about("hash table", "You said you used a hash table. What does it do?")
+    assert asked_about("hash tables", "Tell me about the hash table?")
+
+
+def test_the_check_errs_towards_not_counting():
+    """Undercounting costs a turn. Overcounting tells a candidate something
+    untrue, which is the bug being fixed."""
+    from bot.brain.terms import asked_about
+
+    # A statement is never an ask, however much of their term it repeats. This
+    # is the spoken acknowledgement, which used to burn an attempt.
+    assert not asked_about("session management", "Okay. So you used session management.")
+    assert not asked_about("session management", "What was the trade-off you made?")
+    assert not asked_about("session management", "What did you decide not to build?")
+    assert not asked_about("session management", "How did you measure the improvement?")
+    # A term made only of weak words identifies nothing, so it is never matched
+    # on its words alone.
+    assert not asked_about("the platform", "What was the bet behind the platform?")
+    assert not asked_about("", "How does that work?")
+
+
+# -- the section allowance ---------------------------------------------------
+
+
+def _real_ask(brain, term):
+    """One genuine question about a term, counted the way a live turn is."""
+    brain.observe(
+        bot_text=f"You said {term}. Walk me through how that actually works?",
+        candidate_text="It manages the sessions across the platform.",
+    )
+
+
+def test_the_allowance_is_spent_by_variants_of_one_term():
+    """The measured failure, from a real interview.
+
+    Replaying it through the judge returned "management concurrency", then that
+    plus "session management", then those plus "concurrency control": three
+    strings for one idea, all alive at once, none ever dropped. Per-term caps
+    gave each its own allowance, so one word bought six sanctioned questions.
+    """
+    from bot.brain.brain import MAX_TERM_PROBES_PER_SECTION
+
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    variants = ["management concurrency", "session management", "concurrency control"]
+
+    for variant in variants[:MAX_TERM_PROBES_PER_SECTION]:
+        brain.apply_judgment(_term_judgment(brain, *variants))
+        assert brain.unexplained_terms(), "stopped offering before the allowance was spent"
+        brain.plan_turn()
+        _real_ask(brain, variant)
+
+    # A third variant is still unexplained and still reported. It is not asked.
+    brain.apply_judgment(_term_judgment(brain, *variants))
+    assert brain.unexplained_terms() == [], (
+        "a third variant of the same idea got a fresh allowance"
+    )
+
+
+def test_once_spent_no_term_block_renders_in_that_section():
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    for variant in ("management concurrency", "session management"):
+        brain.apply_judgment(_term_judgment(brain, variant))
+        brain.plan_turn()
+        _real_ask(brain, variant)
+
+    brain.apply_judgment(_term_judgment(brain, "concurrency control"))
+    prompt = brain.plan_turn().system_instruction
+    assert "THIS TURN'S QUESTION IS ALREADY DECIDED" not in prompt
+
+
+def test_the_let_go_is_spoken_exactly_once_when_the_allowance_is_spent():
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    for variant in ("management concurrency", "session management"):
+        brain.apply_judgment(_term_judgment(brain, variant))
+        brain.plan_turn()
+        _real_ask(brain, variant)
+
+    assert "LET THIS ONE GO" in brain.plan_turn().system_instruction
+    brain.observe(bot_text="That's alright, let's leave that one there for now.",
+                  candidate_text="Sure.")
+    assert "LET THIS ONE GO" not in brain.plan_turn().system_instruction
+
+
+def test_the_spoken_acknowledgement_does_not_spend_the_allowance():
+    """It repeats their own term back and asks nothing. Counting it burned an
+    attempt with no question having been put to the candidate."""
+    from bot.brain.prompting import reflect_back
+
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    brain.plan_turn()
+
+    brain.observe(bot_text=reflect_back("session management"), candidate_text="Yes.")
+
+    assert brain.current_section.term_probes_spent == 0
+    assert brain.unexplained_terms()[0].times_raised == 0
+
+
+def test_a_new_section_starts_with_a_fresh_allowance():
+    """The bound is on one section spending itself on vocabulary, not on the
+    interview ever asking again."""
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    first = brain.current_section.id
+
+    for variant in ("management concurrency", "session management"):
+        brain.apply_judgment(_term_judgment(brain, variant))
+        brain.plan_turn()
+        _real_ask(brain, variant)
+    assert brain.unexplained_terms() == []
+
+    while brain.current_section.id == first and not brain.is_finished:
+        brain.observe(bot_text="And what happened next?", candidate_text="We shipped it.")
+
+    assert brain.current_section.term_probes_spent == 0
+    brain.apply_judgment(_term_judgment(brain, "idempotency keys"))
+    assert [t.term for t in brain.unexplained_terms()] == ["idempotency keys"]
+
+
+def test_no_worked_example_can_be_mistaken_for_a_candidate_phrase():
+    """The interviewer said this to a candidate who never said it. It was the
+    example inside the praise ban, read as their words and spoken back at them.
+
+    A fabricated quote in a hiring record is what `feedback/score.py` verifies
+    against the transcript, and this arrives through the front door: the
+    interviewer says it out loud and it lands in the transcript those quotes are
+    checked against.
+    """
+    from bot.brain.prompting import VOICE_RULES, render_section_prompt
+    from bot.brain.state import Section
+    from shared.contracts import SectionKind
+
+    assert "So you used session management and concurrency control" not in VOICE_RULES
+    assert "session management" not in VOICE_RULES
+    assert "concurrency" not in VOICE_RULES
+
+    blueprint = load_blueprint()
+    prompt = render_section_prompt(
+        blueprint=blueprint,
+        section=Section(
+            id="c", kind=SectionKind.COMPETENCY, name="Technical depth",
+            budget_seconds=600, target_depth="deep", seed_questions=["Tell me about X."],
+        ),
+        carried_claims=[], unprobed_contradictions=[], remaining_seconds=300,
+        is_last_competency=False,
+    )
+    # Nothing anywhere in a rendered prompt is a quotable domain phrase that the
+    # model could hand back to a candidate as their own words.
+    assert "session management" not in prompt
+
+
+# -- the spoken acknowledgement is off ---------------------------------------
+
+
+def _director(monkeypatch):
+    from bot.brain_director import BrainDirector
+
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    director = BrainDirector(brain=brain, llm=object())
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    return brain, director
+
+
+def test_no_acknowledgement_is_spoken_when_the_flag_is_off(monkeypatch):
+    """Off by default. On a real interview it spoke 0.2 seconds after the
+    candidate began a sentence; their answer arrived as eight fragments and the
+    report scored them 2.0 out of 5 for communication, quoting five of them."""
+    monkeypatch.delenv("FILLER_ENABLED", raising=False)
+    brain, director = _director(monkeypatch)
+
+    assert director._filler_for(brain.unexplained_terms()[0]) is None
+
+
+def test_the_acknowledgement_still_works_when_switched_on(monkeypatch):
+    """The code stays. It may be worth rebuilding once it can fire on what was
+    actually just said and never over somebody still talking."""
+    monkeypatch.setenv("FILLER_ENABLED", "1")
+    brain, director = _director(monkeypatch)
+
+    said = director._filler_for(brain.unexplained_terms()[0])
+    assert said == "Okay. So you used session management."
+
+
+def test_nothing_is_pushed_ahead_of_the_question_by_default(monkeypatch):
+    """The director must not emit a spoken frame before the model has answered.
+
+    Asserted on the source rather than by running a pipeline: the frame is only
+    pushed inside `if filler:`, and `_filler_for` returns None when the flag is
+    off, which the two tests above cover.
+    """
+    import inspect
+
+    from bot import brain_director
+
+    source = inspect.getsource(brain_director.BrainDirector.process_frame)
+    assert "if filler:" in source
+    assert "TTSSpeakFrame(filler)" in source
+
+
+def test_the_judge_is_told_to_look_for_the_explanation_before_listing():
+    """It never dropped a term across seven judgements on a real interview, and
+    listed idempotency keys as unexplained on the judgement where the candidate
+    explained them. The removal rule was a bullet under "Do NOT report"; it is
+    now the first step of an ordered test."""
+    from bot.brain.drivers import JUDGE_SYSTEM
+
+    assert "STEP 1" in JUDGE_SYSTEM and "STEP 2" in JUDGE_SYSTEM
+    assert "REPLACED each time" in JUDGE_SYSTEM
+    # The discriminator that stops it dropping terms too eagerly.
+    assert "restatement is not an explanation" in JUDGE_SYSTEM.lower()
+
+
+# -- the probe asks what the section is for ----------------------------------
+
+
+def _section(target_depth):
+    from bot.brain.state import Section
+    from shared.contracts import SectionKind
+
+    return Section(id="s", kind=SectionKind.COMPETENCY, name="X",
+                   budget_seconds=240, target_depth=target_depth)
+
+
+def _term(times_raised=0):
+    from shared.contracts import UnexplainedTerm
+
+    return UnexplainedTerm(term="auto scaling", said="we use auto scaling",
+                           section_id="s", turn_index=1, times_raised=times_raised)
+
+
+def test_the_audience_not_the_act_decides_the_question():
+    """"Explain" appears in both competencies on the real blueprint:
+
+        technical      "able to explain in detail the architecture and flows"
+        communication  "able to explain technical concepts to non-technical
+                        stakeholders"
+
+    Keying on the act would fire on both. Only one names who is listening.
+    """
+    from bot.brain.prompting import _is_about_talking_to_people
+
+    technical = _section("Able to explain in detail the architecture and flows of "
+                         "large-scale payments systems, including trade-offs.")
+    communication = _section("Able to clearly explain technical concepts and reasoning "
+                             "to non-technical stakeholders, and demonstrate how "
+                             "decisions were communicated and aligned across teams.")
+
+    assert _is_about_talking_to_people(technical) is False
+    assert _is_about_talking_to_people(communication) is True
+
+
+def test_it_fails_towards_the_technical_question():
+    """When it cannot tell, it must do what it did before."""
+    from bot.brain.prompting import _is_about_talking_to_people, _render_unexplained_term
+
+    for depth in (None, "", "Can name a specific hard call and what was sacrificed."):
+        assert _is_about_talking_to_people(_section(depth)) is False
+    # And with no section at all, which is how every existing caller behaved.
+    assert "Walk me through how that actually works" in _render_unexplained_term(_term())
+
+
+def test_a_communication_section_asks_about_the_communication():
+    """Five of six turns in one such section asked the mechanics of terms inside
+    an analogy, and the employer's stated dealbreaker went unassessed."""
+    from bot.brain.prompting import _render_unexplained_term
+
+    comms = _section("Able to explain technical concepts to non-technical stakeholders.")
+
+    first = _render_unexplained_term(_term(), comms)
+    assert "How did you explain that to them?" in first
+    assert "Walk me through how that actually works" not in first
+    # And the alternative removed is the technical question, not the menu.
+    assert "Do not ask instead how it works" in first
+
+    again = _render_unexplained_term(_term(times_raised=1), comms)
+    assert "How did you put that to them?" in again
+    assert "What does it actually do" not in again
+
+
+def test_the_technical_section_is_unchanged():
+    from bot.brain.prompting import _render_unexplained_term
+
+    tech = _section("Able to explain in detail the architecture and flows.")
+
+    assert "Walk me through how that actually works" in _render_unexplained_term(_term(), tech)
+    assert "What does it actually do" in _render_unexplained_term(_term(times_raised=1), tech)
+
+
+def test_the_let_go_says_the_right_thing_was_missing():
+    from bot.brain.prompting import _render_let_go
+
+    tech = _section("Able to explain in detail the architecture and flows.")
+    comms = _section("Able to explain technical concepts to non-technical stakeholders.")
+
+    assert "say what it does" in _render_let_go(_term(), tech)
+    assert "say how they explained it" in _render_let_go(_term(), comms)
+
+
+def test_term_selection_is_untouched_by_any_of_this():
+    """The section shapes the question asked, never which term is chosen. Nothing
+    compares a term to a topic, which is the shape that has misfired here."""
+    import inspect
+
+    from bot.brain import brain as brain_module
+
+    source = inspect.getsource(brain_module.InterviewBrain.unexplained_terms)
+    assert "target_depth" not in source
+    assert "_AUDIENCE" not in source
+
+
+# -- the ceiling follows the allocation --------------------------------------
+
+
+def _competency(budget_seconds, seeds=4):
+    from bot.brain.state import Section
+    from shared.contracts import SectionKind
+
+    return Section(id="c", kind=SectionKind.COMPETENCY, name="C",
+                   budget_seconds=budget_seconds,
+                   seed_questions=[f"q{i}?" for i in range(seeds)])
+
+
+def _ceiling(budget_seconds, seeds=4):
+    brain = InterviewBrain(load_blueprint())
+    return brain._turn_bounds(_competency(budget_seconds, seeds))[1]
+
+
+def test_a_bigger_section_gets_more_turns():
+    """It was a flat six for every competency. An eleven minute section and a
+    four minute one got the same six questions, and across fifteen interviews
+    the ceiling ended fourteen of twenty sections while the budget ended none."""
+    assert _ceiling(720) > _ceiling(240)
+
+
+def test_the_ceiling_is_derived_from_the_budget():
+    """One turn per 22 seconds of allocation, which is the measured median
+    length of a competency turn under the current code."""
+    from bot.brain.brain import SECONDS_PER_COMPETENCY_TURN
+
+    assert SECONDS_PER_COMPETENCY_TURN == 22
+    # 264s buys twelve turns, and nothing rounds it up.
+    assert _ceiling(264, seeds=8) == 12
+
+
+def test_no_section_gets_fewer_turns_than_it_used_to():
+    """The old flat value is the floor, so this change can only add questions."""
+    from bot.brain.brain import MIN_COMPETENCY_TURNS
+
+    for budget in (0, 30, 60, 120, 131):
+        assert _ceiling(budget) >= MIN_COMPETENCY_TURNS
+
+
+def test_a_huge_allocation_is_capped_by_the_material_that_was_planned():
+    """The cap is not about the candidate's patience. It bounds a wrong
+    allocation: blueprint generation asks for "3 or 4 questions" per competency,
+    so a section handed thirty turns of budget has nothing planned to fill them
+    and would improvise for most of it."""
+    from bot.brain.brain import MAX_TERM_PROBES_PER_SECTION, _DEPTH_RAMP_STAGES
+
+    seeds = 4
+    planned = _DEPTH_RAMP_STAGES * seeds + MAX_TERM_PROBES_PER_SECTION
+    assert _ceiling(60 * 60, seeds=seeds) == planned
+    # More planned questions earns more turns, so the cap follows the blueprint.
+    assert _ceiling(60 * 60, seeds=8) > _ceiling(60 * 60, seeds=4)
+
+
+def test_an_explicit_ceiling_still_pins_it():
+    """The deterministic suite drives sections to their end in two turns rather
+    than fourteen, and must keep being able to."""
+    from bot.brain.state import BrainConfig
+
+    brain = InterviewBrain(load_blueprint(), config=BrainConfig(ceiling_turns=2))
+    assert brain._turn_bounds(_competency(720))[1] == 2
+
+
+def test_the_opening_and_closing_bounds_are_untouched():
+    """Those were measured from a real candidate saying they had been banged
+    straight into the deep end."""
+    brain = InterviewBrain(load_blueprint())
+    opening = next(s for s in brain.sections if s.kind.value == "opening")
+    closing = next(s for s in brain.sections if s.kind.value == "closing")
+
+    assert brain._turn_bounds(opening) == (2, 3)
+    assert brain._turn_bounds(closing) == (1, 2)

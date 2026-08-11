@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from loguru import logger
 
 from shared.contracts import (
+    UnexplainedTerm,
     Contradiction,
     CoverageLevel,
     InterviewBlueprint,
@@ -39,12 +40,88 @@ from bot.brain.withdrawal import (
     declines_stopping,
 )
 from bot.brain.state import BrainConfig, Section, build_sections
+from bot.brain.terms import asked_about
 from shared.branding import BOT_NAME
 
 #: Two attempts at the same question, then move on. A third time is an
 #: interrogation, and recording that the ground was never covered is more
 #: honest than grinding at someone who cannot hear it.
 MAX_REPAIR_ATTEMPTS = 2
+
+#: How many times the interviewer may ask about one unexplained term.
+#:
+#: **Two, matching the repair cap, and for the same reason written there: a
+#: third time is an interrogation.** Measured on the transcripts that prompted
+#: this. With no cap at all, gpt-4.1 asked the identical escalated sentence four
+#: times in a row while the candidate gave the identical non-answer, which is
+#: worse for a candidate who genuinely cannot explain something than the failure
+#: it replaced. In every run where the candidate could explain, the first ask was
+#: enough; the second ask exists because the second ask is what caught the
+#: deflection. Nothing in any transcript was ever resolved by a third.
+#:
+#: Recording that the ground was never covered is more honest than grinding at
+#: somebody who has already said all they have.
+MAX_TERM_ATTEMPTS = 2
+
+#: How many questions one section may spend unpacking terms, whatever they are
+#: called.
+#:
+#: **The per-term cap is not enough, because the judge does not name one term
+#: once.** Replaying a real interview through it, seven judgements returned
+#: "management concurrency", then that plus "session management", then those
+#: plus "concurrency control", all three alive at once and none ever dropped.
+#: Three strings for one idea, each with its own allowance, is six sanctioned
+#: questions about a single word. The candidate got four in ninety seconds and it
+#: only stopped because they changed the subject themselves.
+#:
+#: Bounded per section rather than by matching the strings up. Matching needs a
+#: similarity rule, and a rule loose enough to join "session management" to
+#: "concurrency control" is loose enough to join things that are not the same at
+#: all; this repo has been caught by that shape twice. A section allowance
+#: bounds the harm directly instead: the interrogation the candidate feels, and
+#: the section spending itself on vocabulary. `technical_depth` in that
+#: interview spent 132 seconds and hit its turn ceiling with its own material
+#: unasked.
+#:
+#: It also does not depend on the judge behaving. The judge listed "idempotency
+#: keys" as unexplained on the same judgement where the candidate explained them
+#: competently, so the stopping condition must not be "the judge stopped
+#: reporting it".
+MAX_TERM_PROBES_PER_SECTION = 2
+
+#: Seconds of a section's budget that one competency turn is worth.
+#:
+#: **Measured, not chosen.** Across the twelve competency sections run under the
+#: current code, seconds per competency turn: median 21.6, mean 23.4, p10 18.0,
+#: p90 32.9. The eight sections from before the turn-counting fix read 7.0s
+#: median and are excluded, because that is the bug where fifty-two candidate
+#: utterances were counted as twelve turns.
+#:
+#: A section allocated N seconds can therefore hold roughly N/22 exchanges. That
+#: is what turns the employer's time allocation into a number of questions.
+#:
+#: Re-measure from `section_outcomes` if turn-taking, endpointing or the
+#: twenty-word turn rule change: all three move how long an exchange takes.
+SECONDS_PER_COMPETENCY_TURN = 22
+
+#: Turns a competency may use beyond its planned material.
+#:
+#: The cap is not about the candidate's patience and not a round number. It
+#: bounds what happens when the allocation is wrong: a large duration with few
+#: competencies hands one topic a budget worth thirty or more exchanges, and the
+#: budget alone would let it run for twelve minutes on one subject.
+#:
+#: Derived from what the section actually has to ask. Each seed question carries
+#: the three stages of the depth ramp (broad, one layer in, the hard part), and
+#: the section's term allowance adds `MAX_TERM_PROBES_PER_SECTION` on top. Past
+#: that the interviewer has run out of planned material and is improvising, and
+#: improvising is not what a competency budget was allocated for.
+_DEPTH_RAMP_STAGES = 3
+
+#: No competency gets fewer turns than it did before this change. The old flat
+#: ceiling becomes the floor of the derived one, so the change can only ever add
+#: questions to a section, never take them away.
+MIN_COMPETENCY_TURNS = 6
 
 #: The interviewer gets at most this many turns in the closing: one to thank
 #: them and invite a last question, one to answer it and say goodbye. Any more
@@ -83,6 +160,8 @@ class Judgment:
     rationale: str | None = None
     claims: list[KeyClaim] = field(default_factory=list)
     contradictions: list[Contradiction] = field(default_factory=list)
+    #: Replaced wholesale, never merged. See `apply_judgment`.
+    unexplained_terms: list[UnexplainedTerm] = field(default_factory=list)
 
 
 @dataclass
@@ -133,6 +212,23 @@ class InterviewBrain:
         self._pending_request: JudgmentRequest | None = None
         self._verdicts: dict[str, Judgment] = {}
         self._probed_contradictions: set[str] = set()
+        #: Still-unexplained terms for the section in progress, as of the last
+        #: judgement. Not accumulated: see `apply_judgment`.
+        self._open_terms: list[UnexplainedTerm] = []
+        #: How many times each term has been put in front of the interviewer,
+        #: surviving the list being replaced.
+        self._term_raises: dict[str, int] = {}
+        #: Terms that hit the cap. They never come back: not later in this
+        #: section and not in a later one, because two asks is the whole
+        #: allowance and a third somewhere else is still a third.
+        self._closed_terms: set[str] = set()
+        #: One term, waiting for the interviewer to say out loud that it is
+        #: setting it aside. Consumed by the turn that does it.
+        self._term_to_let_go: UnexplainedTerm | None = None
+        #: The term the last rendered prompt put in front of the model. It is
+        #: an offer, not an ask: the count only moves once the interviewer has
+        #: spoken and the question turns out to have been about it.
+        self._offered_term: UnexplainedTerm | None = None
         self._consecutive_refusals = 0
         #: What the candidate needs repeated, and how many times we have
         #: already tried. Reset the moment a real answer arrives.
@@ -268,11 +364,24 @@ class InterviewBrain:
     def _render_system_instruction(self, section: Section) -> str:
         from bot.brain.prompting import render_section_prompt
 
+        # Consumed only when it can actually be said. A contradiction takes the
+        # slot ahead of it, and reading it there would throw it away unspoken.
+        unprobed = self.unprobed_contradictions()
+        let_go = self.term_to_let_go() if not unprobed else None
+        open_terms = self.unexplained_terms()
+        # Which term the prompt will actually carry, by the same precedence the
+        # renderer uses. Anything else offered nothing and must not be counted.
+        self._offered_term = (
+            open_terms[0] if not unprobed and let_go is None and open_terms else None
+        )
+
         return render_section_prompt(
             blueprint=self.blueprint,
             section=section,
             carried_claims=self._carried_claims,
-            unprobed_contradictions=self.unprobed_contradictions(),
+            unprobed_contradictions=unprobed,
+            unexplained_terms=open_terms,
+            term_to_let_go=let_go,
             remaining_seconds=self.section_remaining_seconds(),
             is_last_competency=self._is_last_competency(section),
             has_substantive_answers=self.has_substantive_answers,
@@ -308,6 +417,15 @@ class InterviewBrain:
             self._append(section, "interviewer", bot_text)
             self._interviewer_has_spoken = True
             self._awaiting_answer = True
+            # Cleared BEFORE counting, not after. Counting this turn may queue a
+            # new let-go, and clearing afterwards would throw it away in the same
+            # breath, which is how the sentence went missing in the first place.
+            # Anything queued before this turn has now had its chance: the
+            # interviewer has spoken.
+            if self._term_to_let_go is not None:
+                logger.info(f"let go of {self._term_to_let_go.term!r}")
+                self._term_to_let_go = None
+            self._count_if_it_asked(bot_text)
 
         # Audio captured before the interviewer has said a word is not an
         # answer. A live session picked up a bystander in the room saying
@@ -622,6 +740,22 @@ class InterviewBrain:
             if claim.text not in {c.text for c in section.key_claims}:
                 section.key_claims.append(claim)
 
+        # **Replaced, never merged, and that is the whole persistence rule.**
+        # The judge is asked each time for the terms that are STILL unexplained
+        # as of now, so a term dropping off its list is how the interviewer
+        # learns it can stop asking. Accumulating instead would leave a term
+        # open for ever once it had been reported once, and the interviewer
+        # would keep asking about something the candidate had since explained.
+        #
+        # The raise count survives the replacement, so a term that has been
+        # asked about and deflected is still known to have been asked about.
+        # That is the case this exists for.
+        if judgment.section_id == self.current_section.id:
+            for term in judgment.unexplained_terms:
+                term.times_raised = self._term_raises.get(term.term.lower(), 0)
+            self._open_terms = judgment.unexplained_terms
+            section.unexplained_terms = list(judgment.unexplained_terms)
+
         for contradiction in judgment.contradictions:
             if contradiction.later_statement not in {
                 c.later_statement for c in self._all_contradictions
@@ -630,17 +764,30 @@ class InterviewBrain:
                 self._all_contradictions.append(contradiction)
 
     def _maybe_request_judgment(self, section: Section) -> None:
-        """Ask for a depth read once the section is inside the decision band.
+        """Ask for a fresh read after every answer in a competency section.
 
-        Below the floor there is nothing to judge; at the ceiling the heuristic
-        decides anyway. Only the band in between is worth an LLM call.
+        **This used to run once per section and the verdict was then applied to
+        the rest of it.** It fired only inside a turn band, and returned early
+        forever once a verdict had landed, so a section's assessment was formed
+        from its first couple of minutes. Measured on the scripted runs with a
+        three-turn ceiling, that meant the verdict existed for exactly the last
+        turn of each section, by which point the section was ending anyway.
+
+        Now every answer is judged. The cost is one off-path call per turn, which
+        has been considered and accepted; what it buys is a verdict about the
+        conversation as it currently stands rather than as it opened.
+
+        Still nothing awaits it. The request is queued here and drained by the
+        driver, which spawns it without waiting, exactly as before. A section
+        keeps whatever verdict it has until a newer one arrives, so a slow or
+        dead judge degrades to the old behaviour rather than to none.
+
+        The single-flight guard stays: one request outstanding at a time. Without
+        it a slow judge would have several assessments of the same section racing
+        each other, and the last to land would win regardless of which was
+        freshest.
         """
         if section.kind != SectionKind.COMPETENCY:
-            return
-        floor, ceiling = self._turn_bounds(section)
-        if not (floor <= section.turns_spent < ceiling):
-            return
-        if section.id in self._verdicts:
             return
         if self._pending_request is not None:
             return
@@ -658,7 +805,23 @@ class InterviewBrain:
             return self.config.opening_floor_turns, self.config.opening_ceiling_turns
         if section.kind == SectionKind.CLOSING:
             return 1, self.config.closing_ceiling_turns
-        return self.config.floor_turns, self.config.ceiling_turns
+
+        # An explicit value still pins it. Only the deterministic tests do that,
+        # to drive a section to its end without playing out fourteen turns.
+        if self.config.ceiling_turns is not None:
+            return self.config.floor_turns, self.config.ceiling_turns
+
+        # **Proportional to what this section was actually given.** A flat six
+        # meant an eleven minute competency and a four minute one got the same
+        # number of questions, and across fifteen interviews the ceiling ended
+        # fourteen of twenty sections while the budget ended none. Interviews ran
+        # at a fifth of the length the employer had configured and the candidate
+        # had been told out loud.
+        earned = int(section.budget_seconds // SECONDS_PER_COMPETENCY_TURN)
+        planned = (
+            _DEPTH_RAMP_STAGES * len(section.seed_questions) + MAX_TERM_PROBES_PER_SECTION
+        )
+        return self.config.floor_turns, max(MIN_COMPETENCY_TURNS, min(earned, planned))
 
     # -- contradictions ---------------------------------------------------
 
@@ -674,6 +837,106 @@ class InterviewBrain:
             for c in self._all_contradictions
             if c.later_statement not in self._probed_contradictions
         ]
+
+    # -- unexplained terms ------------------------------------------------
+
+    def unexplained_terms(self) -> list[UnexplainedTerm]:
+        """Terms the candidate has used without saying what they do.
+
+        Modelled on `unprobed_contradictions` deliberately. A contradiction is
+        held as a specific item until it has been raised, and the block that
+        renders it names that item and supplies the question; measured at 80% on
+        the mini-tier model. The verdict block added earlier described a state
+        instead and was measured at no effect at all. Shape, not emphasis.
+
+        The difference from contradictions is when an item closes. A
+        contradiction closes when it has been *raised*, because raising it twice
+        is prosecutorial. A term closes when it has been *explained*, which is
+        not the same thing and is the entire failure being fixed: the
+        interviewer asked once, got a restatement, and treated having asked as
+        having found out.
+
+        Only the judge can tell whether an answer explained anything, so the
+        judge decides: it is asked each turn for what is still unexplained, and
+        this returns whatever it last said. Ordered so the term the interviewer
+        has already asked about comes first.
+        """
+        section = self.current_section
+        if section.kind != SectionKind.COMPETENCY:
+            return []
+        if section.term_probes_spent >= MAX_TERM_PROBES_PER_SECTION:
+            # Spent. Whatever is still unexplained is a fact for the report, not
+            # another question for the candidate.
+            return []
+        return sorted(
+            (t for t in self._open_terms if t.term.lower() not in self._closed_terms),
+            key=lambda t: -t.times_raised,
+        )
+
+    def mark_term_raised(self, term: UnexplainedTerm) -> None:
+        """Record that the interviewer was told to ask about this.
+
+        Not that it did ask, and not that it was answered. It is the count of
+        opportunities given, which is what lets the wording escalate from "walk
+        me through how that works" to "you have said this twice and I still do
+        not know what it does".
+        """
+        key = term.term.lower()
+        self._term_raises[key] = self._term_raises.get(key, 0) + 1
+        term.times_raised = self._term_raises[key]
+
+        section = self.current_section
+        section.term_probes_spent += 1
+        logger.info(
+            f"term probe spent: {term.term!r} raised {term.times_raised}x, "
+            f"section {section.id} has spent {section.term_probes_spent} of "
+            f"{MAX_TERM_PROBES_PER_SECTION}"
+        )
+        if section.term_probes_spent >= MAX_TERM_PROBES_PER_SECTION:
+            # The section is done asking, whichever term was last. Said out loud
+            # once: a cap that quietly stops asking leaves the candidate working
+            # out whether they failed something.
+            self._term_to_let_go = term
+
+        if term.times_raised >= MAX_TERM_ATTEMPTS:
+            # Closed to further asking, and queued to be let go of out loud.
+            # Silently dropping it would leave a candidate who has just been
+            # pushed twice wondering whether they failed something.
+            self._closed_terms.add(key)
+            self._term_to_let_go = term
+            if all(t.term.lower() != key for t in section.unexplained_after_asking):
+                section.unexplained_after_asking.append(term)
+
+    def _count_if_it_asked(self, bot_text: str) -> None:
+        """Spend an attempt only if the question was actually about the term.
+
+        The model is handed a term and may ask about something else entirely.
+        Counting the offer told a candidate they had been asked twice when they
+        had been asked once, and burned the two-attempt allowance on turns where
+        nothing was put to them.
+
+        A term that was offered and not used stays open and unspent, so it comes
+        back next turn with the same first-ask wording.
+        """
+        offered, self._offered_term = self._offered_term, None
+        if offered is None:
+            return
+        if asked_about(offered.term, bot_text):
+            self.mark_term_raised(offered)
+
+    def term_to_let_go(self) -> "UnexplainedTerm | None":
+        """A term that has had its allowance and is being set aside.
+
+        **Not consumed on read**, and that is a fix rather than an oversight. It
+        was consumed on read, and in a live interview a term reached its cap,
+        queued this, and the sentence was never spoken: the queue was emptied by
+        a render whose output never reached the candidate. Reading a prompt is
+        not the same event as saying something.
+
+        It is cleared instead when the interviewer next actually speaks, in
+        `observe`, so it survives any number of renders and is said exactly once.
+        """
+        return self._term_to_let_go
 
     def mark_contradiction_probed(self, contradiction: Contradiction) -> None:
         self._probed_contradictions.add(contradiction.later_statement)

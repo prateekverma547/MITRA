@@ -22,7 +22,7 @@ from loguru import logger
 from openai import AsyncOpenAI
 
 from bot.brain.brain import Judgment, JudgmentRequest, TurnPlan
-from shared.contracts import Contradiction, CoverageLevel, KeyClaim
+from shared.contracts import Contradiction, CoverageLevel, KeyClaim, UnexplainedTerm
 
 JUDGE_SYSTEM = """\
 You assess one section of a job interview. You are not talking to the candidate.
@@ -38,6 +38,9 @@ Return JSON only, matching this shape:
   "claims": ["a specific, checkable thing the candidate asserted", ...],
   "contradictions": [
     {"earlier_claim": "...", "later_statement": "...", "why": "..."}
+  ],
+  "unexplained_terms": [
+    {"term": "the exact words they used", "said": "the sentence they said it in"}
   ]
 }
 
@@ -47,6 +50,45 @@ Rules:
 - Claims must be things the candidate actually said, phrased tightly enough to
   quote back to them. Never invent one. Prefer specifics over summaries.
 - If there is nothing to report for a field, return an empty list.
+
+UNEXPLAINED TERMS — THE TEST IS THE MECHANISM, NOT THE VOCABULARY
+
+For every technical term the candidate has used anywhere in this transcript, run
+this test in order. Do not skip ahead to writing the list.
+
+STEP 1. Look for the sentence where they say what the thing DOES. Anywhere in
+this transcript, not only in their latest answer. It does not have to be
+correct, complete or well put. It has to describe what happens: an input, a
+step, a check, or a consequence that follows.
+  If you find such a sentence, the term is EXPLAINED. Leave it out.
+
+STEP 2. Only if there is no such sentence, report the term.
+
+**A restatement is not an explanation, and this distinction is the whole point.**
+These do NOT pass step 1, so the term stays on the list:
+- Naming the effect without the mechanism: "it lets several people do it at the
+  same time".
+- Defining the term with itself: "concurrency means things happen concurrently".
+- Attributing it to an unexplained thing: "the layer handles that".
+
+This DOES pass step 1, so the term comes off the list: "every request gets a
+unique id, and we check that id before processing, so a repeat cannot go through
+twice." It names an input, a check and a consequence. It is rough and it is an
+explanation.
+
+Do NOT report:
+- A tool or product named as a choice. "We used Postgres", "we run on
+  Kubernetes". Naming what you used is not claiming to have explained a
+  mechanism.
+- Ordinary words of the field used in passing, where nothing rests on them.
+
+**Your list is REPLACED each time you are asked, never added to.** It is not a
+running tally of everything technical that has been said. A term you reported
+last turn and that has since been explained must be absent now: that absence is
+the only way the interviewer learns it can stop asking, and a list that only
+grows means it never stops.
+
+Order them with the one the interviewer has already asked about first.
 
 CONTRADICTIONS — BE STRICT
 
@@ -81,6 +123,27 @@ them. A missed one can still be caught by the human reading the transcript.
 """
 
 
+#: Reasoning models must be pinned before they go anywhere near a conversation.
+#:
+#: DECISIONS.md forbids a reasoning model on the live path, and the rule stands.
+#: What it protects against is a model that thinks for a variable and
+#: occasionally long time before speaking, which a candidate cannot tell apart
+#: from a failure. That is behaviour, not a name, so a GPT-5 model pinned to no
+#: reasoning at all is testable against the same bar as any other.
+#:
+#: The settings differ by generation and were probed rather than assumed:
+#: gpt-5-mini and gpt-5-nano take "minimal" and reject "none"; gpt-5.4 and
+#: gpt-5.6 take "none" and reject "minimal". Anything that cannot be pinned is
+#: excluded rather than tested.
+LOWEST_EFFORT = {
+    "gpt-5-mini": "minimal",
+    "gpt-5-nano": "minimal",
+    "gpt-5.4-mini": "none",
+    "gpt-5.4-nano": "none",
+    "gpt-5.6-luna": "none",
+}
+
+
 @dataclass
 class OpenAIInterviewer:
     """Generates the interviewer's next line from a TurnPlan."""
@@ -89,9 +152,28 @@ class OpenAIInterviewer:
     model: str
     temperature: float = 0.6
     calls: int = field(default=0, init=False)
+    prompt_tokens: int = field(default=0, init=False)
+    completion_tokens: int = field(default=0, init=False)
+    cached_tokens: int = field(default=0, init=False)
 
     def __post_init__(self):
         self._client = AsyncOpenAI(api_key=self.api_key)
+
+    def _tuning(self) -> dict:
+        effort = LOWEST_EFFORT.get(self.model)
+        if effort is not None:
+            # These reject `temperature` outright.
+            return {"reasoning_effort": effort}
+        return {"temperature": self.temperature}
+
+    def _record(self, response) -> None:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        self.prompt_tokens += usage.prompt_tokens or 0
+        self.completion_tokens += usage.completion_tokens or 0
+        details = getattr(usage, "prompt_tokens_details", None)
+        self.cached_tokens += getattr(details, "cached_tokens", 0) or 0
 
     async def respond(self, plan: TurnPlan) -> str:
         self.calls += 1
@@ -110,9 +192,10 @@ class OpenAIInterviewer:
         response = await self._client.chat.completions.create(
             model=self.model,
             messages=messages,
-            temperature=self.temperature,
-            max_tokens=200,
+            max_completion_tokens=400,
+            **self._tuning(),
         )
+        self._record(response)
         return (response.choices[0].message.content or "").strip()
 
 
@@ -123,6 +206,9 @@ class OpenAIJudge:
     api_key: str
     model: str
     calls: int = field(default=0, init=False)
+    prompt_tokens: int = field(default=0, init=False)
+    completion_tokens: int = field(default=0, init=False)
+    cached_tokens: int = field(default=0, init=False)
 
     def __post_init__(self):
         self._client = AsyncOpenAI(api_key=self.api_key)
@@ -153,6 +239,12 @@ class OpenAIJudge:
                 response_format={"type": "json_object"},
                 max_tokens=700,
             )
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                self.prompt_tokens += usage.prompt_tokens or 0
+                self.completion_tokens += usage.completion_tokens or 0
+                details = getattr(usage, "prompt_tokens_details", None)
+                self.cached_tokens += getattr(details, "cached_tokens", 0) or 0
             payload = json.loads(response.choices[0].message.content or "{}")
         except Exception as exc:  # noqa: BLE001
             # A judge failure must never derail an interview — the brain simply
@@ -206,10 +298,27 @@ class OpenAIJudge:
                 )
             )
 
+        terms = []
+        for item in payload.get("unexplained_terms", []):
+            if not isinstance(item, dict):
+                continue
+            term = str(item.get("term", "")).strip()
+            if not term:
+                continue
+            terms.append(
+                UnexplainedTerm(
+                    term=term,
+                    said=str(item.get("said", "")).strip(),
+                    section_id=request.section_id,
+                    turn_index=last_index,
+                )
+            )
+
         return Judgment(
             section_id=request.section_id,
             coverage=coverage,
             rationale=str(payload.get("rationale", "")).strip() or None,
             claims=claims,
             contradictions=contradictions,
+            unexplained_terms=terms,
         )

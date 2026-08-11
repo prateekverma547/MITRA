@@ -9,6 +9,7 @@ Nothing in `bot/brain/` may import Pipecat.
 from dataclasses import dataclass, field
 
 from shared.contracts import (
+    UnexplainedTerm,
     Contradiction,
     CoverageLevel,
     InterviewBlueprint,
@@ -34,10 +35,15 @@ class BrainConfig:
     #: interview skating over a competency because the first answer sounded
     #: confident.
     floor_turns: int = 2
-    #: Maximum candidate turns in a competency section. Above this we advance
-    #: regardless of judgement — a section that will not converge is eating
-    #: another competency's time.
-    ceiling_turns: int = 6
+    #: Maximum candidate turns in a competency section, or None to derive it
+    #: from what that section was actually allocated.
+    #:
+    #: **None is the production path.** It was a flat 6 for every competency
+    #: regardless of budget, so an eleven minute section and a four minute one
+    #: got the same six questions; see `SECONDS_PER_COMPETENCY_TURN`. An explicit
+    #: integer still pins it, which is how the deterministic tests drive a
+    #: section to its end in two turns rather than fourteen.
+    ceiling_turns: int | None = None
 
     #: The opening is a warm-up, not a first competency.
     #:
@@ -96,8 +102,19 @@ class Section:
     depth_rationale: str | None = None
     key_claims: list[KeyClaim] = field(default_factory=list)
     contradictions: list[Contradiction] = field(default_factory=list)
+    #: Still unexplained as of the last judgement.
+    unexplained_terms: list[UnexplainedTerm] = field(default_factory=list)
+    #: Asked about up to the cap and still not explained. Kept separately
+    #: because this is the reportable fact: asked twice, never answered.
+    unexplained_after_asking: list[UnexplainedTerm] = field(default_factory=list)
     coverage_shortfall: bool = False
     shortfall_reason: str | None = None
+
+    #: Questions spent unpacking a term the candidate did not explain. Bounded
+    #: per section rather than per term: three ways of saying one thing is one
+    #: idea, and a section that spends itself on vocabulary never reaches its
+    #: own material.
+    term_probes_spent: int = 0
 
     #: Turns where the candidate declined to answer. Reported honestly: "the
     #: candidate declined" is real signal for a human reader, and quite
@@ -123,6 +140,7 @@ class Section:
             depth_rationale=self.depth_rationale,
             key_claims=list(self.key_claims),
             contradictions=list(self.contradictions),
+            unexplained_terms=list(self.unexplained_after_asking),
             turns_spent=self.turns_spent,
             seconds_spent=round(self.elapsed(now), 2),
             budget_seconds=round(self.budget_seconds, 2),

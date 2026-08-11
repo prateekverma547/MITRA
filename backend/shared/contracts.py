@@ -236,6 +236,30 @@ class KeyClaim(BaseModel):
     at_seconds: float | None = None
 
 
+class UnexplainedTerm(BaseModel):
+    """A term the candidate leaned on without saying what it does.
+
+    Tracked and rendered exactly the way a `Contradiction` is, and for a measured
+    reason. A mandatory instruction that names a specific item and supplies the
+    question was measured at 80% compliance on the mini-tier model; one that
+    describes a state and leaves the model to work out what to do about it was
+    measured at zero. "Coverage is insufficient, do not move on" is the second
+    shape. "They said session management and never said what it does, ask about
+    that" is the first.
+    """
+
+    #: The candidate's own words, so the interviewer can quote them back.
+    term: str
+    #: The sentence it appeared in, for the interviewer to reflect accurately.
+    said: str = ""
+    section_id: str
+    turn_index: int
+    #: How many times the interviewer has been told to ask about this. Being
+    #: asked once is not enough: a term that was asked about and deflected is
+    #: exactly the failure this exists for, so the wording escalates.
+    times_raised: int = 0
+
+
 class Contradiction(BaseModel):
     """A later statement that sits awkwardly against an earlier claim.
 
@@ -266,6 +290,12 @@ class SectionOutcome(BaseModel):
 
     key_claims: list[KeyClaim] = Field(default_factory=list)
     contradictions: list[Contradiction] = Field(default_factory=list)
+    #: Terms the candidate used, was asked about twice, and never explained.
+    #: Evidence in its own right: it is the difference between a candidate who
+    #: was never asked and one who was asked and could not say. A reader of the
+    #: report needs to be able to tell those apart, and the transcript alone
+    #: makes it easy to miss.
+    unexplained_terms: list[UnexplainedTerm] = Field(default_factory=list)
 
     turns_spent: int = 0
     seconds_spent: float = 0.0

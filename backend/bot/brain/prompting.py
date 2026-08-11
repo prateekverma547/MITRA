@@ -13,10 +13,35 @@ Nothing here imports Pipecat.
 """
 
 from shared.branding import BOT_NAME
-from shared.contracts import Contradiction, InterviewBlueprint, KeyClaim, SectionKind
+from shared.contracts import (
+    Contradiction,
+    UnexplainedTerm,
+    CoverageLevel,
+    InterviewBlueprint,
+    KeyClaim,
+    SectionKind,
+)
 
 from bot.brain.state import Section
 
+# The length rule is a TURN limit, and it used to be a sentence limit.
+#
+# It said "roughly fifteen words" per sentence and allowed "two or three short
+# sentences per turn", which permits forty-five. So the twenty-seven-word turns
+# measured on a real interview were not breaking the rule; the rule had never
+# set a bound on the thing a candidate actually sits through. The interviewer
+# spoke 48% of all the words in that interview and the candidate said it felt
+# long, which is what they were feeling: composition never exceeded 1943ms and
+# the twelve-second gap everyone suspected turned out not to exist.
+#
+# Written the way the one-question rule is written, because that one holds: a
+# number, and an instruction to count it. The rationale that used to sit here
+# ("a long sentence is one rushed breath") is true and the model does not need
+# it, so it lives in this comment instead of in every prompt.
+#
+# The alternative is removed rather than discouraged, per the measurement at the
+# contradiction block below: the preamble is named as the thing that must not
+# happen, because a preamble is what carries a reply past twenty words.
 VOICE_RULES = """\
 === ONE QUESTION. NOT TWO. ===
 Your whole reply contains exactly ONE question mark. Count it before you answer.
@@ -41,29 +66,106 @@ YOUR OUTPUT IS SPOKEN ALOUD by a text-to-speech engine. Therefore:
 - Never use emoji, bullet points, markdown, headings, or numbered lists.
 - Write in plain spoken sentences, as a person would actually say them.
 
-HOW TO PACE WHAT YOU SAY. This matters as much as what you ask. A long
-sentence is delivered as one rushed breath, and the candidate feels hurried.
-- Keep every sentence SHORT. Roughly fifteen words. One idea per sentence.
-- Use full stops, not commas, to join ideas. Two short sentences beat one long
-  one, because a full stop is where the voice takes a breath.
-- Two or three short sentences per turn. Never more.
-- Never stack a greeting, an explanation and a question into one sentence.
-- Never use an em dash or en dash (— or –). Your words are transcribed and
-  read back by the employer, and a dash reads as machine-written.
+=== TWENTY WORDS. COUNT THEM. ===
+Your whole reply is TWENTY WORDS or fewer, including the question. Not twenty
+a sentence: twenty in total. Count them before you answer.
 
-Say this:
-  "Thanks for making the time. So, tell me what you're working on at the moment."
+You will want to set the question up first: what they just said, then why you
+are asking. Do not. That preamble is what carries a reply past twenty words and
+it tells them nothing they do not know. They were there.
 
-Not this:
-  "Thanks for joining today, we're here to discuss the role, and to start us off
-  could you tell me a bit about what you're currently working on and how long
-  you've been focused on this area?\""""
+Begin with the question. If it will not fit, ask the smaller half and keep the
+rest for next turn.
+
+- One idea per sentence. Use full stops, not commas, to join ideas.
+- Never stack a greeting, an explanation and a question together.
+- Never use an em dash or en dash (— or –). A dash reads as machine-written,
+  and the employer reads these words back.
+
+=== NEVER SAY AN ANSWER WAS GOOD ===
+Do not praise or characterise what they said. Not "that makes sense", not "you
+explained how that works", not "interesting". You are often wrong about whether
+an answer contained anything, and a person reads this back later.
+
+To acknowledge, say "Okay." or "Right." and then repeat back ONLY words they
+actually used. Never put a phrase in their mouth. If you did not hear them say
+it, you may not say they said it, and you may not smooth it into better wording
+than they used. Their transcript is a record about a real person.\""""
+
+# The block above used to end with a worked example:
+#
+#   To acknowledge, repeat their own words flatly, then ask:
+#     "Okay. So you used session management and concurrency control."
+#
+# In a live interview the model said that sentence verbatim to a candidate who
+# had never said it. They had said "management concurrency" and "the session
+# management manages those people per session"; the phrase attributed to them
+# was ours. A fabricated quote in a hiring record is what `feedback/score.py`
+# exists to prevent, and it arrived through the front door: the interviewer says
+# it out loud and it lands in the transcript those quotes are checked against.
+#
+# The cause is the lesson recorded above at the contradiction block. A concrete
+# example beats an abstract instruction, so forbidding the behaviour in prose
+# while demonstrating it in a sample sentence let the sentence win. There is now
+# no candidate phrase anywhere in this prompt that could be read as a quote:
+# "Okay." and "Right." are safe to copy because they are the interviewer's own
+# words and carry no claim about what anybody said.
+
+# The pacing section used to carry its own "Say this / Not this" pair. It was
+# cut to make room for the verdict block, which needed 104 tokens against 35
+# free. The rules immediately above state the same thing in prose, and the
+# failure this block was measured against is question-stacking, which the
+# one-question example still demonstrates. Re-verified with compare_models on
+# both models when it went.
+
+
+#: The longest phrase worth reflecting back. Past this it stops being an
+#: acknowledgement and becomes the interviewer reciting the candidate's answer
+#: at them, which is slower to say than the pause it was covering.
+MAX_REFLECTION_CHARS = 70
+
+
+def reflect_back(term: str) -> str | None:
+    """The acknowledgement spoken while the real answer is still being composed.
+
+    **Built here, in code, from the candidate's own words, and never by a
+    model.** That is the entire safety property. The praise ban works, and a
+    filler generated by asking a model for something friendly to say is a route
+    straight around it: in a scripted run this morning the model volunteered
+    "that's a clear technical approach" about an answer that explained nothing.
+    A template that can only ever emit their own noun phrase cannot do that.
+
+    Returns None rather than reaching for something to say. If there is nothing
+    concrete of theirs to repeat, the silence is better than an invention, and
+    an interviewer that says "interesting" to fill a gap is the failure this is
+    written against.
+    """
+    phrase = " ".join((term or "").split())
+    if not phrase or len(phrase) > MAX_REFLECTION_CHARS:
+        return None
+    # No adjective, no verdict, no assessment. Their noun, and a full stop.
+    return f"Okay. So you used {phrase}."
+
+
+def _clip(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "\u2026"
 
 
 def _render_claims(claims: list[KeyClaim]) -> str:
+    """Cross-section memory, clipped.
+
+    Twelve claims of whatever length the judge felt like emitting is the same
+    unbounded-prose problem the verdict block was given a limit for, and this
+    block is older and larger. Measured against the 26 real claims in the local
+    database: median 102 characters, ninetieth percentile 193, longest 237. At
+    the top of that range this block alone runs to roughly 580 tokens inside an
+    1800-token ceiling, which is why the ceiling has been nominal rather than
+    real. Clipped at a length that leaves the median untouched.
+    """
     if not claims:
         return ""
-    lines = "\n".join(f"- {c.text}" for c in claims)
+    lines = "\n".join(f"- {_clip(c.text, _MAX_CLAIM_CHARS)}" for c in claims)
     return f"""
 WHAT THE CANDIDATE HAS ALREADY TOLD YOU
 These are from earlier in this interview. You do not have the earlier
@@ -74,12 +176,211 @@ anything to them that is not listed here.
 """
 
 
+def _render_let_go(term: "UnexplainedTerm", section: "Section | None" = None) -> str:
+    """Two asks and no answer. Say so, and move on.
+
+    **Out loud, not silently.** A candidate who has just been pushed twice on
+    the same word and then hears the subject change without comment is left
+    working out whether they failed something. Naming it costs one sentence and
+    it is the difference between an interviewer that has decided to move on and
+    one that appears to have given up on them.
+
+    Modelled on the repair cap, which stops at two for the reason written there:
+    a third attempt is an interrogation. Recording that the ground was never
+    covered is more honest than grinding at somebody who has already said all
+    they have.
+
+    Not a verdict. It does not say the answer was poor, it says we will come
+    back to it, which is true: it is on the record for the person reading the
+    report.
+    """
+    _missing = (
+        "say how they explained it"
+        if section is not None and _is_about_talking_to_people(section)
+        else "say what it does"
+    )
+    return f"""
+=== MANDATORY: LET THIS ONE GO ===
+You have asked twice about {term.term} and they have not been able to {_missing}.
+Do not ask a third time. A third time is an interrogation.
+
+Say, warmly and in one short sentence, that you will leave that one there and
+come back to it if there is time. Do not say the answer was poor, do not say
+they failed to explain it, and do not deliver any verdict.
+
+Then ask your next question about something else on this topic.
+
+Something close to: "That's alright, let's leave that one there for now."
+=== END MANDATORY INSTRUCTION ===
+"""
+
+
+def _decided_question_early(contradictions: list[Contradiction]) -> str:
+    """The half of the mandatory slot that stays ABOVE the section's material.
+
+    A contradiction and only a contradiction. Its placement here is measured:
+    below the seed questions it competed with a page of "here is what to ask
+    about" and compliance fell to 27%, against 80% from up here.
+
+    The unexplained-term half deliberately sits below the section now, and the
+    two halves are split rather than moved together for exactly that reason:
+    moving the block wholesale would have demoted the contradiction into the
+    position already measured at 27%, trading a measured result for an
+    unmeasured one without saying so.
+    """
+    return _render_contradictions(contradictions) if contradictions else ""
+
+
+def _decided_question_late(
+    contradictions: list[Contradiction],
+    terms: "list[UnexplainedTerm]",
+    let_go: "UnexplainedTerm | None" = None,
+    section: "Section | None" = None,
+) -> str:
+    """The half that sits BELOW the section's purpose and its seed questions.
+
+    **At most one block may decide this turn's question**, which is why this
+    returns nothing when a contradiction has already taken the slot above. Two
+    mandatory instructions pointing at different things are not twice as strong:
+    the model resolves the conflict by choosing, which is the discretion these
+    blocks exist to remove.
+
+    A contradiction wins that contest. It is rarer, it decays if not raised in
+    the moment, and an unexplained term will still be unexplained next turn: the
+    judge re-reports it until the candidate actually explains it.
+
+    **Why this half moved below the section.** It is mandatory, it opens with
+    "do not choose your own question this turn", and it used to be read before
+    the model was told what the section was for. Against a senior ML engineer
+    almost every noun is an unexplained term, so it fired nearly every turn and
+    the section's own questions never got asked: 1 of 4 in `applied_llm_depth`,
+    4 of 12 across the interview. The interviewer asked him to define "LLM" and
+    "fine tuning" while the choice of Sarvam-M over GPT-4o, the LoRA setup and
+    the GPTQ tradeoff sat unused in the same prompt.
+    """
+    if contradictions:
+        return ""
+    # Closing one out comes before opening another. Two asks have just been
+    # spent on it and the candidate is owed the sentence.
+    if let_go is not None:
+        return _render_let_go(let_go, section)
+    if terms:
+        return _render_unexplained_term(terms[0], section)
+    return ""
+
+
+#: Words naming the PEOPLE an answer is addressed to.
+#:
+#: **The audience, never the act.** "Explain" appears in a technical competency
+#: ("able to explain the architecture and flows") and a communication one
+#: ("able to explain technical concepts to non-technical stakeholders") alike,
+#: so keying on the act fires on both. Only one of them names who is being
+#: spoken to.
+#:
+#: This is not matching a term against a topic, which is the shape that has
+#: misfired here three times. Nothing is compared to the term, and term
+#: selection is untouched: this reads one fixed vocabulary out of the section's
+#: own stated purpose, once, to choose between two fixed sentences. There is no
+#: score and no threshold to tune.
+#:
+#: **It fails towards the technical sentence**, which is the current behaviour,
+#: whenever it finds nothing. Its failure mode is a technical section whose
+#: target_depth happens to say "stakeholder", which asks a mildly wrong question
+#: about the candidate's own term rather than a question about the wrong thing.
+_AUDIENCE_WORDS = (
+    "stakeholder", "non-technical", "nontechnical", "partner", "audience",
+    "executive", "cross-functional", "business team", "operations team",
+)
+
+
+_FORBID_MECHANISM_ALTERNATIVES = (
+    "Do not ask instead for a trade-off, a metric, an alternative they considered,\n"
+    "or the bet behind it. Every one of those accepts the term as real, and that is\n"
+    "the thing not yet established."
+)
+
+
+def _is_about_talking_to_people(section: Section) -> bool:
+    """Whether this competency is assessed on how they got something across."""
+    text = (section.target_depth or "").lower()
+    return any(word in text for word in _AUDIENCE_WORDS)
+
+
+def _render_unexplained_term(term: "UnexplainedTerm", section: "Section | None" = None) -> str:
+    """Name the term and supply the question, in the contradiction block's form.
+
+    **This is a shape change, not an emphasis change.** The block this replaced
+    said "coverage is insufficient, do not move on", which describes a state and
+    leaves the model to work out what to do about it. It was measured at no
+    effect. The contradiction block names a specific item and hands over the
+    sentence to say, and was measured at 80% on the mini-tier model. Both
+    numbers were already in this repo; nobody had put them next to each other.
+
+    The second wording is the one that matters. Being asked once is not enough,
+    because being asked once and deflected is the failure this exists for. A
+    person says "you have said that twice and I still do not know what it does",
+    and so does this.
+    """
+    quoted = _clip(term.said or term.term, 120)
+    # Same term, same caps, same judge. What changes is the question asked about
+    # it. In a competency assessed on explaining things to other people, "walk
+    # me through how that works" is the technical-depth question wearing the
+    # section's badge: it was asked five times in one such section and produced
+    # no evidence about communicating at all.
+    talking = section is not None and _is_about_talking_to_people(section)
+    if talking:
+        if term.times_raised >= 1:
+            ask = f'"You have said {term.term} twice now. How did you put that to them?"'
+            note = "You have asked once already and they have not said how they explained it."
+        else:
+            ask = f'"You said {term.term}. How did you explain that to them?"'
+            note = "They used it as though the listener would follow it."
+        forbid = (
+            "Do not ask instead how it works, what it does, or what trade-off it\n"
+            "involved. This topic is about how they got it across, not about the thing."
+        )
+    elif term.times_raised >= 1:
+        # Eleven words plus the term. The version this replaced ran to
+        # twenty-six, so the block enforcing brevity was itself the longest
+        # sentence the interviewer was handed.
+        ask = f'"You have said {term.term} twice now. What does it actually do?"'
+        note = (
+            "You have already asked about this once and they did not answer it. "
+            "Say so plainly and without any edge, then ask again."
+        )
+        forbid = _FORBID_MECHANISM_ALTERNATIVES
+    else:
+        ask = f'"You said {term.term}. Walk me through how that actually works."'
+        note = "They used it as though it settles the matter. It does not yet."
+        forbid = _FORBID_MECHANISM_ALTERNATIVES
+
+    return f"""
+=== MANDATORY: THIS TURN'S QUESTION IS ALREADY DECIDED ===
+Do not choose your own question this turn. They have used a term without saying
+what it does. {note}
+
+Say something close to this, adapted only for natural speech:
+
+  {ask}
+
+{forbid}
+Ask only this, then stop and let them answer.
+
+Their words: {quoted}
+=== END MANDATORY INSTRUCTION ===
+"""
+
+
 def _render_contradictions(contradictions: list[Contradiction]) -> str:
     if not contradictions:
         return ""
-    lines = "\n".join(
-        f"- Earlier they said: {c.earlier_claim}\n  Just now they said: {c.later_statement}"
-        for c in contradictions
+    # Only the first is described, because only the first is instructed about.
+    # Listing the rest duplicated the sentence above and was the single largest
+    # block in the prompt when it fired.
+    first = contradictions[0]
+    lines = (
+        f"- Earlier they said: {_clip(first.earlier_claim, 140)}\n"
+        f"  Just now they said: {_clip(first.later_statement, 140)}"
     )
     # Instruction strength has been measured twice, and both times the wording
     # was the whole story.
@@ -90,7 +391,6 @@ def _render_contradictions(contradictions: list[Contradiction]) -> str:
     # Every v2 miss looked identical: the model asked the natural follow-up
     # instead. So v3 removes the alternative rather than adding emphasis — it
     # forbids the other question and supplies the sentence to say.
-    first = contradictions[0]
     return f"""
 === MANDATORY: THIS TURN'S QUESTION IS ALREADY DECIDED ===
 Do not choose your own question this turn. Do not ask the natural follow-up to
@@ -375,6 +675,12 @@ You are gathering evidence for a human, not reaching a conclusion.
 """
 
 
+#: Carried claims are model prose inside a size-capped prompt, and were never
+#: bounded at all. Measured against the 26 real claims in the local database:
+#: median 102 characters, ninetieth percentile 193, longest 237.
+_MAX_CLAIM_CHARS = 110
+
+
 def _render_depth_ramp(turns_spent: int) -> str:
     """Open a topic broadly; save the hard questions for the follow-ups.
 
@@ -382,6 +688,35 @@ def _render_depth_ramp(turns_spent: int) -> str:
     the model will happily lead with the hardest one. Landing "how did you
     assess the model's performance and what trade-offs did you make" as the
     opening line of a topic gives the candidate nowhere to stand.
+
+    Both later stages were rewritten after ten real interviews, and both changes
+    are the same lesson the contradiction block records above.
+
+    **Turn one was v1 phrasing.** "Follow their thread rather than switching to
+    a different question" states a preference between two available options,
+    which is the exact shape measured at 0% compliance, and it sat directly
+    below a bulleted list of the other questions to ask. It now forbids the
+    alternative instead of preferring the right one.
+
+    **The hard part was a closed menu of four, and none of the four fits a term
+    the candidate never explained.** Measured over the six substantial
+    interviews in `interviewer.db`, all with a candidate answering in confident
+    jargon: of 39 interviewer questions that followed an answer, **2 asked what
+    a term meant and 10 asked for a trade-off, a metric or the bet behind it.**
+    Against "we have implemented a session management concurrency, which allows
+    multiple users to make the payments at the same time" the interviewer asked
+    *"What was the trade-off you considered when implementing session management
+    concurrency for that payment gateway?"* — it quoted the term straight back
+    and never established there was anything behind it. The employer had asked
+    for depth "not just at a conceptual level"; the report scored 3.0 out of 5
+    on conceptual evidence.
+
+    So unpacking is a fifth option that takes precedence in that one case. The
+    other four are unchanged.
+
+    This is a mandatory block. Re-measure with
+    `scripts/compare_models.py --scenarios jargon thin_answer` after editing it
+    (CLAUDE.md).
     """
     if turns_spent == 0:
         return """\
@@ -392,22 +727,38 @@ question, do not ask a multi-part question, and do not ask about metrics,
 trade-offs or failures yet. You have not given them anything to hang those on.
 Once they have picked an example, go deeper on it in your follow-ups.
 
+Twenty words, like every reply. The rest of this topic copies this question, so
+a long one here makes them all long.
+
 """
     if turns_spent == 1:
         return """\
-GO ONE LAYER DEEPER
-They have given you an example. Now push into the specifics of it: what they
-personally decided, why, and what happened. Follow their thread rather than
-switching to a different question.
+=== MANDATORY: STAY ON THE ANSWER THEY JUST GAVE ===
+Do not ask a new question, and do not move to any question listed below,
+however well one fits.
+
+If they named a technique or system without saying what it does, that term is
+your question. Say something close to this:
+  "You said you used X. Walk me through how that actually works."
+
+Otherwise go one layer in: what they personally decided, why, and what happened.
 
 """
     return """\
 NOW GET TO THE HARD PART
-You have the context. Ask the demanding question now.
+Ask ONE demanding question, never a list.
 
-Pick ONE of these and ask only that. A list of them in a single turn is
-unanswerable: the trade-off they made, the thing that went wrong, a decision
-they would defend, or a number and how it was measured.
+FIRST: did their last answer name a technique or system without saying what it
+does? If so, that term IS your question. Do not ask for its trade-off, its
+metric or the bet behind it. Those accept the term as given, and you do not yet
+know there is anything behind it.
+
+Say something close to this:
+  "You said you used X. Walk me through how that actually works."
+
+Only if everything is already explained, pick ONE instead: the trade-off they
+made, the thing that went wrong, a decision they would defend, or a number and
+how it was measured.
 
 """
 
@@ -429,6 +780,8 @@ def render_section_prompt(
     section: Section,
     carried_claims: list[KeyClaim],
     unprobed_contradictions: list[Contradiction],
+    unexplained_terms: "list[UnexplainedTerm]" = (),
+    term_to_let_go: "UnexplainedTerm | None" = None,
     remaining_seconds: float,
     is_last_competency: bool,
     has_substantive_answers: bool = True,
@@ -555,14 +908,58 @@ never invent one.
     # section body and the seed questions. Buried below them it competed with a
     # page of "here is what to ask about" and lost — measured at 27% compliance
     # on gpt-4.1. Salience is part of instruction strength.
+    #
+    # The unexplained-term block used to sit up there with it and now sits after
+    # `body`, so the model reads what the section is for before it is told what
+    # to ask. Same reason, opposite direction: up there it was winning against
+    # the section's own questions every turn.
+    #
+    # **The claims block renders only before the candidate has answered in this
+    # section**, which is the only place it earns its keep. It exists to stop
+    # the model inventing what the candidate said earlier, and that risk is
+    # entirely at a section boundary, where the verbatim window holds nothing of
+    # this section (see `_section_messages`). Once a real answer is in the
+    # window, the model has the candidate's own words and does not need a list.
+    #
+    # Left rendering every turn, it stopped being memory and became a standing
+    # list of things to ask about. It is frozen for the whole of a section, so
+    # the depth ramp's "did their last answer name a technique without saying
+    # what it does" reads off the list instead of the answer — the same term,
+    # every turn, carried in from the section before. Measured on the stored
+    # turn that produced the third repetition, five samples per cell:
+    #
+    #                       own turns in window   own turns removed
+    #   claims rendered     5/5 repeat the probe   0/5 repeat
+    #   claims removed      0/5 repeat             0/5 repeat
+    #
+    # The cost is accepted and is real: late in a section the model can no
+    # longer call back to an earlier competency.
+    #
+    # **`turns_spent == 0`, not "the section has no turns yet".** They differ
+    # when the interviewer has spoken and the candidate has not answered — a
+    # silence nudge, or a repair. There the window holds only the interviewer's
+    # own question, the model still has none of the candidate's words for this
+    # section, and the confabulation risk is exactly what it was at the
+    # boundary. `turns_spent` counts candidate answers, so it stays 0 through
+    # that and the block keeps rendering.
+    #
+    # Non-competency sections are untouched. The depth ramp is competency-only,
+    # so the failure cannot occur in the opening or the close, and the close is
+    # where a callback is worth most.
+    claims_still_needed = (
+        section.kind != SectionKind.COMPETENCY or section.turns_spent == 0
+    )
     return "".join(
         [
             header,
             _render_refusal_guidance(consecutive_refusals),
-            _render_contradictions(unprobed_contradictions),
+            _decided_question_early(unprobed_contradictions),
             candidate_context,
             body,
-            _render_claims(carried_claims),
+            _decided_question_late(
+                unprobed_contradictions, unexplained_terms, term_to_let_go, section
+            ),
+            _render_claims(carried_claims) if claims_still_needed else "",
             _render_time_pressure(remaining_seconds, is_last_competency),
             f"\nHOW TO INTERVIEW\n{guidance}\n" if guidance else "",
             _render_red_flags(spec) if section.kind == SectionKind.COMPETENCY else "",

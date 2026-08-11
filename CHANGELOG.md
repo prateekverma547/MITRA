@@ -12,6 +12,281 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-11 — The list of what the candidate said earlier had become a list of things to ask about
+
+**What**
+
+The interviewer was handed, on every single turn, a list of things the candidate
+had said in earlier parts of the interview. It now gets that list only before
+they have answered anything in the current topic. After that it has their actual
+words in front of it and does not need a summary of older ones.
+
+**Why, and this corrects five earlier diagnoses**
+
+Five times this month a failure was written up here as the model imitating its
+own earlier turns. That was wrong, or at best half of it. A replay of one stored
+turn, five samples per cell, settles it:
+
+| | its own turns in front of it | its own turns removed |
+| --- | --- | --- |
+| **the list is shown** | **5/5 repeat the same probe** | 0/5 repeat |
+| **the list is not shown** | 0/5 repeat | 0/5 repeat |
+
+Only the shipped combination fails, and the two halves do different jobs. The
+list supplies **the target**: it is frozen for the whole of a topic, so an
+instruction to ask about "a technique they named without saying what it does"
+reads off the standing list rather than off the answer, and picks the same term
+every turn. Its own earlier turns supply **the licence** to keep doing it.
+
+**"Walk me through how that actually works" was never the problem.** In the same
+replay, with its own turns removed, the model still said that sentence, about
+the thing the candidate had just been talking about, which is exactly the
+question that topic existed to ask. The failure was never the sentence. It was
+asking it about something from twenty minutes ago.
+
+That also explains four things previously blamed on imitation: probes exceeding
+the two-per-topic allowance, the drift where later probes had no instruction
+behind them, the jump to eight probes when the turn ceiling rose, and the
+reordering that did not help. All four are one unmetered instruction pointed at
+a frozen list that the two-probe counter never sees and the reordering never
+touched.
+
+**How**
+
+`backend/bot/brain/prompting.py`, one condition at one call site. The block
+renders when the topic is not a competency, or when the candidate has not yet
+answered in it.
+
+**The boundary is "they have not answered yet", not "nothing has happened yet".**
+Those differ when the interviewer has spoken and the candidate has not replied,
+which is what a silence nudge or a repair looks like. There the model still has
+none of their words for this topic and the risk the block exists for is exactly
+what it was a moment earlier, so the block keeps rendering. The counter used
+counts answers, so it stays put through that.
+
+Nothing else changed: not the block's wording, not what goes into it, not how it
+is carried between topics, not the term block, the caps or the judge.
+
+**What this gives up**
+
+Late in a topic the interviewer can no longer call back to something from an
+earlier one. That is a real loss and it is accepted, because the risk the block
+was built for is at the boundary, where it still renders.
+
+**In the runs it turned out to be smaller than expected**, and that is worth
+recording rather than claiming as a win. Cross-topic callbacks did not stop:
+17 of 62 questions still referred to something said in an earlier topic. Two
+other paths carry that material and neither was touched, the unexplained-term
+block and the closing, which is not a competency and so is unaffected.
+
+**Measured**
+
+Competent-candidate scenario, three runs, `gpt-4.1-mini`, before and after.
+
+**The bar was set in advance and it did not hold.** It was: the evaluation topic
+asks at least one of its four planned questions in at least two of three runs.
+It asked **zero of four in three of three, before and after. No movement at
+all.**
+
+**The bar was the wrong thing to hold this change to, and that was established
+afterwards rather than argued away here.** It is left standing above because a
+failed bar should not be quietly deleted, but it measured something the system
+does not want:
+
+- `shared/contracts.py` defines seed questions as *"Openers. The brain adapts
+  and follows up; it does not read these verbatim."*
+- There are two consumers. The prompt renders them as *"questions you may draw
+  on… do not work through them in order"*, and the turn ceiling uses them as a
+  unit of budget, `3 × seed_questions + MAX_TERM_PROBES_PER_SECTION`.
+- The judge scores coverage against `target_depth`. The report scores against
+  the spec, with verified quotes. **Neither has ever seen a seed question.** No
+  consumer in this system treats an unasked seed as a gap.
+
+**And the count itself is unsound.** Hand-checked across all 144 seed/section/run
+pairs in these six runs: a person finds **55 asked where the matcher finds 45**,
+an 18 percent undercount, mostly from having no stemming. Worse, three of its 45
+are false positives, and the mechanism matters: it scores the whole turn, and a
+turn is an acknowledgement followed by a question. One topic asked *"How did you
+explain the observability stack to a non-technical client?"* three times in a row
+with different acknowledgements in front of it, and scored **3 of 4**, because
+the restatements shared words with two other seeds. **The metric rewarded an
+interviewer that was stuck.** It is renamed `seed_overlap_rough` and is a
+diagnostic from here on, never a bar.
+
+What did move, in the same topic:
+
+| | before | after |
+| --- | --- | --- |
+| questions about something from an earlier topic | 2, 4, 4 | **1, 1, 1** |
+| and all three of those are | | the topic's first turn, where the block still renders by design |
+
+The repetition is gone. Before, the same stale term was put to the candidate
+four and five times running. After, the question follows the answer: in every
+run it now reaches KL divergence, the candidate's strongest evaluation material,
+which it never once reached before.
+
+Across the whole interview, questions quoting the current topic against
+questions quoting an earlier one: **39 vs 20 before, 45 vs 17 after.**
+
+Other numbers, before to after:
+
+| | before | after |
+| --- | --- | --- |
+| planned questions asked | 7, 8, 10 of 24 | 6, 9, 5 of 24 |
+| topics with a coverage shortfall | 1, 2, 0 | **0, 1, 0** |
+| sanctioned term probes | 8 | 11 |
+| median interviewer turn | 15, 20, 16 words | **15, 16, 15** |
+| live prompt tokens per run | 75.1k, 74.9k, 71.7k | **69.7k, 69.8k, 67.3k** |
+
+**Nothing invented.** This was the risk worth checking, because it is what the
+block exists to prevent. Every "you said X" in all six runs was matched against
+everything the candidate actually said: **one unsupported attribution before the
+change, none after.** The one before was a paraphrase rather than an invention
+("sharing a GPU caused risks" for "they share a GPU, so a job that takes more
+memory than expected is felt by all of them").
+
+**Two things moved the wrong way and neither is dismissed as noise.**
+
+- **The let-go is spoken less.** Three queued and one said before; five queued
+  and **none said** after. Both are bad and the numbers are too small to tell a
+  real regression from sampling. It needs its own measurement.
+- **One mechanism question appeared in the communication topic**, taking it from
+  9 against 0 across three runs to 8 against 1. The section-aware wording itself
+  still works: both sanctioned probes in that topic asked how they explained it.
+  The stray one came from the depth ramp after the allowance was spent, and the
+  depth ramp is not section-aware. That gap predates this change.
+
+**Latency: no measurable effect.** Time to first token, streaming, eight samples
+per arm, interleaved: 749ms median with the block, 727ms without, a 22ms
+difference against ranges of 651-1164 and 642-1118. Directionally favourable and
+inside the noise. The prompt is 355 tokens smaller on the turns where it is
+suppressed, about 160 tokens per call averaged over a run.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 677 passed, 22 skipped
+    uv run python scripts/compare_models.py --scenarios competent \
+        --models gpt-4.1-mini --runs 3
+
+**The verdict, on measures that are not the failed bar**
+
+| | before | after |
+| --- | --- | --- |
+| stale-term probes in the evaluation topic | 10 | **3** |
+| questions quoting the current topic vs an earlier one | 39 vs 20 | **45 vs 17** |
+| unsupported attributions | 1 | **0** |
+| prompt tokens | — | **−6.8%**, latency unchanged |
+| claims reached, coverage, let-gos | — | flat or slightly worse |
+
+**A specific defect removed, nothing measurable cost, and no outcome measure
+moved. A change worth keeping, and a modest one.** It is not an improvement to
+interview quality and should not be recorded as one: claims reached went 15/18
+to 14/18, coverage flattened rather than rose, and the let-go went from 1 spoken
+of 3 to 0 of 5. What it did do is stop the interviewer putting the same stale
+term to a candidate five times running, which is what it was built for.
+
+**Not done**
+
+- The evaluation topic still asks none of its four planned questions. The
+  repetition it was stuck in is gone; what replaced it is a chain of follow-ups
+  on the answer, which is better and is still not the plan.
+- Removing the interviewer's own turns from the window. It fixes the failure in
+  every single-turn test and removes the only record of what it has already
+  asked, and a replay cannot tell whether that is safe across a sequence.
+- `verbatim_turns`. It truncated 0 of 92 turns, so changing it changes nothing.
+- The depth ramp's example, the term block, the caps and the judge.
+- The judge still nominates terms from earlier topics, so a stale term can reach
+  the candidate through the term block even now. Langfuse was probed twice in
+  the communication topic in one run this way.
+
+---
+
+## 2026-08-11 — The section's own questions now come before the term block, and it did not help
+
+**What**
+
+The prompt used to put the mandatory "ask about this unexplained term" block
+above the section's purpose and its seed questions. The section now comes first.
+
+**The measurement does not support the change.** Seed questions asked did not go
+up, and on one scenario went down. It is recorded here as a result rather than
+an improvement, and the numbers are below so the next person does not repeat it.
+
+**Why it was tried**
+
+The same conclusion was reached twice from independent evidence. The term block
+is mandatory, opens with "Do not choose your own question this turn", forbids the
+alternatives by name, and sat at roughly character 3,354. The section's purpose
+sat at 5,386, and its questions were introduced with "Questions you may draw on…
+do not read them out verbatim, and do not work through them in order."
+
+A mandatory instruction that names one item and supplies the sentence beats a
+list the prompt itself calls optional, and every case in this project has been
+decided that way.
+
+The cost, on a real interview with a senior ML engineer: **4 of 12 seed
+questions asked**, and 1 of 4 in `applied_llm_depth`. The three that named the
+work were never asked. The interviewer spent the section asking him to define
+"LLM" and "fine tuning" while the choice of Sarvam-M over GPT-4o, the LoRA setup
+and the GPTQ quantisation tradeoff sat unused in the same prompt.
+
+**And there is a circularity, which is why this looked worth doing.** The judge
+can only report on words that were said. Sarvam-M, LoRA, GPTQ and 97.08 percent
+never appeared in its term list because they never appeared in the transcript,
+and they never appeared in the transcript because the seeds that would have
+elicited them were never asked.
+
+**How**
+
+`bot/brain/prompting.py`, the assembly order in `render_section_prompt`.
+
+**Something beyond the order had to change, and it matters.** The mandatory slot
+handled contradictions and unexplained terms together, and the contradiction
+block's high placement is measured: below the seed questions its compliance fell
+to 27%, against 80% from up there. Moving the block wholesale would have demoted
+the contradiction into exactly the position already measured at 27%, trading a
+measured result for an unmeasured one without saying so.
+
+So the slot is split. `_decided_question_early` renders a contradiction above the
+section; `_decided_question_late` renders a term or a let-go below it, and
+returns nothing when a contradiction has already taken the slot, so at most one
+block still decides the turn.
+
+No wording changed. Token count is unchanged: 1912 for a competency prompt with
+a term open, 2341 worst case against the 2400 bound.
+
+**Measured, three runs each, gpt-4.1-mini**
+
+| | seeds asked, before | after |
+| --- | --- | --- |
+| deflecting | 12, 13, 13 of 24 | 10, 14, 12 |
+| jargon | 16, 15, 15 of 24 | 12, 12, 16 |
+
+Term probes went **up**, not down: `probe_mechanism` on deflecting was 7, 5, 9
+before and 9, 16, 15 after. That signal has swung far more than this between
+identical runs, so it is probably noise, but it is certainly not the improvement
+the change was made to produce.
+
+**Not done, and the honest reading**
+
+- **The bar was not met.** Seeds asked did not rise. Whether the reordering is
+  keeping or hurting is not resolved by this measurement, only that it is not
+  helping on these scenarios.
+- **The scenarios may be incapable of showing it.** `deflecting` and `jargon`
+  both feature candidates designed to emit an unexplained term in every answer,
+  so the term block fires every turn wherever it sits. The failure this change
+  targets needs a candidate who answers substantively in field vocabulary, which
+  is the real ML interview and not any script that exists.
+- **The signal I proposed for this does not work**, and that is worth recording
+  because it was my own design. Counting probed terms that overlap the seed
+  questions cannot separate "LLM" from "Sarvam-M", because the seed questions are
+  written in the field's vocabulary too. Scored against the real interview it
+  called `agent`, `LLM do the reasoning` and `fine tuning` specific, and `KL
+  divergence` generic, which is exactly backwards.
+- Giving the judge the seed questions, and the specificity test, are both still
+  held.
+
 ## 2026-08-11 — The panel reported a 2.6x latency regression that had not happened
 
 **What**
@@ -94,6 +369,962 @@ changed and no new measurement was added.
   session, not a smaller timeout.
 - `prompt_tokens` is recorded and not yet reported anywhere. It is evidence for
   the next investigation, not a number for the panel.
+
+## 2026-08-05 — A section's turn ceiling follows the time it was given
+
+**What**
+
+A competency's maximum number of questions is now derived from its own time
+allocation instead of being a flat six for every section. A twelve minute
+competency gets fourteen questions; a four minute one gets ten.
+
+**Why**
+
+**Of the three ways a competency section can end, one fired always and two had
+never fired at all.** Across twenty competency sections in fifteen stored
+interviews:
+
+| ended by | sections |
+| --- | --- |
+| turn ceiling | **14** |
+| time budget | **0** |
+| the judge saying coverage was sufficient | **0** |
+
+Sections used 2% to 58% of the time they were allocated, median 17%. Interviews
+ran at **18 to 26% of their configured length**.
+
+That is not a tuning preference. The employer sets twenty minutes, `allocate_minutes`
+divides those twenty minutes across the competencies, the panel shows the number,
+and **the bot says "about twenty minutes" out loud to the candidate** before
+ending the interview after five. From the candidate's side an interview simply
+stops, and the reasonable conclusion is that the clock ran out.
+
+`ceiling_turns = 6` had no entry in `DECISIONS.md`. Its only justification was a
+field comment: an over-running section "is eating another competency's time". No
+section has ever eaten another's time, because the budget has never fired. And
+the case a ceiling really does guard, a section that will not converge, is now
+held by the two-probe term allowance and the let-go built yesterday. The ceiling
+was charging every well-going section six turns to guard something already
+guarded.
+
+**How**
+
+`SECONDS_PER_COMPETENCY_TURN = 22`, measured. Seconds per competency turn under
+the current code: median 21.6, mean 23.4, p10 18.0, p90 32.9, over twelve
+sections. The eight sections from before the turn-counting fix read 7.0s median
+and are excluded, because that is the bug where fifty-two utterances counted as
+twelve turns. **An earlier note in this changelog put the figure at ninety
+seconds; that was wrong and this is the measurement.**
+
+The floor is the old flat six, so no section can get fewer questions than it does
+today. The cap is the material the blueprint actually planned:
+`3 × seed_questions + MAX_TERM_PROBES_PER_SECTION`, since generation asks for
+"3 or 4 questions" per competency and each carries the depth ramp's three stages.
+It bounds a wrong allocation rather than a long conversation.
+
+`ceiling_turns` becomes `int | None`. None derives it; an explicit integer still
+pins it, which is how the deterministic tests drive a section to its end in two
+turns. Every existing test kept working unchanged.
+
+**Measured**
+
+On the scripted runs, what ends a section:
+
+| | before | after |
+| --- | --- | --- |
+| ceiling | all of them | **0** |
+| budget | 0 | **30** |
+| other | | 6 |
+
+**The squeeze ran for the first time.** `coverage_shortfall` had never been set
+in fifteen interviews; it now fires, which means the over-run policy is live
+rather than dormant code. Seed questions asked went from 3 to 5 of 24, to
+**11 to 15 of 24**. Sections reached went from 3 to 7.
+
+Cost, from observed token counts: **$0.088 to $0.214** per run at
+`gpt-4.1-mini` live and `gpt-4.1` for the judge. That is 2.4x on 2.5x the turns,
+so **per-turn cost is flat**: $0.00078 to $0.00073 per live call, $0.00327 to
+$0.00298 per judge call. Nothing per turn got slower or dearer; there are simply
+more turns. No latency change, and none was expected: the ceiling is a counter,
+not a call.
+
+**Not done**
+
+- **In production this will not flip the budget on for large sections.**
+  Projecting the rule onto the four most recent real interviews, `technical_depth`
+  goes from 6 to 14 turns and about 113s to 264s, against a 720s budget, so it
+  still ends on the ceiling. The scripted runs flip because the harness charges
+  40s a turn against the measured 22s. The real interview would go from 4.9
+  minutes to roughly ten, of a configured twenty.
+- **The blueprint does not plan enough material for the time it allocates.**
+  `allocate_minutes` gives a competency twelve minutes; generation gives it four
+  seed questions. Those two numbers have never been reconciled, and the cap is
+  now where they meet. That is the next constraint, not this one.
+- **The longer ceiling gives the imitation effect more room.** One deflecting run
+  reached eight term probes in a single section against an allowance of two. The
+  sanctioned count still holds at two; these are the unsanctioned probes the
+  model copies from its own earlier turns, and a fourteen-turn section simply has
+  more turns for them to happen in.
+- `_render_time_pressure` still has not rendered, and the ordering of checks in
+  `_advance_reason` is untouched. Both were deliberately left to be observed now
+  that sections run longer.
+
+## 2026-08-05 — A communication section asks about communicating
+
+**What**
+
+When the interviewer probes a term the candidate has not explained, the question
+it asks now depends on what the section is assessing.
+
+    technical:      "You said auto scaling. Walk me through how that actually works."
+    communication:  "You said auto scaling. How did you explain that to them?"
+
+Same term, same caps, same judge. One branch, chosen from what the section
+already says about itself.
+
+**Why**
+
+In a `stakeholder_communication` section, **five of six turns probed the
+mechanics of terms inside the candidate's analogy.** Not one asked about the
+communication: who the stakeholder was, whether they followed it, what changed
+afterwards. One of four seed questions was asked.
+
+The employer named two dealbreakers for this role. "Cannot explain payments
+architecture beyond a surface level" was assessed twice, once in the section for
+it and again here. **"Struggles to explain reasoning clearly to non-technical
+partners" was never assessed at all**, and the report then correctly recorded
+that there was no evidence of it.
+
+The cause is the shape difference that has decided every case today, and here it
+is also a matter of position. In the rendered prompt the term block is
+**mandatory, opens with "Do not choose your own question this turn", forbids the
+alternatives by name, and appears at character 3,354**. The section's own purpose
+appears at character 5,386, two thousand characters later, as descriptive prose
+under "What a sufficient answer looks like" — and its questions are introduced
+with **"Questions you may draw on... do not work through them in order"**, which
+is explicitly permissive. A mandatory instruction naming one item beat an
+optional list. It was never going to go the other way.
+
+**How**
+
+`bot/brain/prompting.py`, one branch, keyed on **the audience rather than the
+act**. That distinction is the whole of it: "explain" appears in both
+competencies on the real blueprint, in "able to explain in detail the
+architecture and flows" and in "able to explain technical concepts to
+non-technical stakeholders". Keying on the act fires on both. Only one of them
+names who is being spoken to.
+
+So a fixed vocabulary of words for the listener, read once out of the section's
+own `target_depth`. **This is not matching a term to a topic**, which is the
+shape that has misfired here three times: nothing is compared to the term, term
+selection is untouched, there is no score and no threshold. It **fails towards
+the technical sentence**, which is the existing behaviour, whenever it finds
+nothing. Its failure mode is a technical competency whose stated depth happens to
+mention a stakeholder, which asks a mildly wrong question about the candidate's
+own term rather than a question about the wrong thing.
+
+No new field was added. `target_depth` already carries this, written per
+competency by blueprint generation.
+
+The escalated wording and the let-go take the same branch, since "you have said
+X twice now, what does it actually do" is the technical escalation and would be
+equally off-topic. The prompt came in at 2341 tokens against the 2400 bound.
+
+`scripts/compare_models.py` gains the two signals that would have caught this:
+how many of a section's seed questions were asked at all, and in a
+communication-shaped section how many turns ask about the communication rather
+than the mechanism of a term. Seed matching is approximate and one turn counts
+for at most one seed, because the prompt tells the interviewer to adapt these
+rather than read them out.
+
+**Measured**
+
+Communication-shaped section, three runs per scenario, before and after:
+
+| | before | after |
+| --- | --- | --- |
+| deflecting | 2v2, 2v1, 1v4 | **3v0, 3v0, 4v0** |
+| jargon | 1v4, 3v1, 0v1 | **3v0, 4v1, 4v0** |
+
+Mechanism questions in that section have effectively stopped. On the real stored
+interview the same measurement reads **1 seed of 4, and 1 communication question
+against 4 mechanism questions**, which is the harm this was built against.
+
+**Not done**
+
+- **This shapes the sanctioned probes and does nothing about imitation.** The
+  model copies the shape of its own earlier turns out of the verbatim window,
+  and **17 of 55 probes across six runs still exceed the two-per-section
+  allowance**, firing with no block in front of the model. That effect has now
+  decided three separate problems and no prompt instruction addresses it.
+- Seed coverage improved but is not the point of this change and did not clear
+  the bar everywhere: 1 of 4 in one run of six.
+- Moving the section block above the term block is still on the list and was
+  deliberately left out, so this measurement is attributable.
+- The soft paraphrase problem is unchanged.
+
+## 2026-08-05 — The acknowledgement is switched off, and the judge lets go of a term
+
+**What**
+
+The interviewer no longer says anything while it composes a question. The code
+stays, behind a flag that is off.
+
+And the judge now drops a term once the candidate has explained it, which it had
+never done.
+
+**Why**
+
+**The acknowledgement was built to cover a gap that does not exist.** The twelve
+seconds it was meant to fill were an artefact: transcript timestamps mark when a
+turn *finished*, so the interval between two of them is the second one being
+spoken. Composition never exceeded 1943ms.
+
+What it did instead, on one real interview:
+
+- **It interrupted.** At 83.5s the candidate began "The session management" and
+  at 83.7s, two tenths of a second later, the interviewer spoke over them.
+- **It was stale.** At 120s and again at 174s it reflected back a phrase the
+  candidate had used ninety seconds earlier, while they were talking about
+  something else.
+- **It cost 2.5 to 2.8 seconds** on every turn it appeared on.
+
+And then it reached the report. The candidate's answer, cut in half, arrived as
+eight fragments. `stakeholder_communication` scored **2.0 out of 5**, quoting
+"manages", "those people", "per sessions", "gets their own session" and "the
+concurrency" — five pieces of the one sentence we talked over. **The interviewer
+interrupted the candidate and the report then marked them down for
+communicating in fragments.** `ConversationHealth` recorded the call as healthy,
+because it looks for fragmentation caused by the channel and this was caused by
+us. That is the failure it exists to prevent, arriving by a route it cannot see.
+
+**The judge never dropped a term.** Across seven judgements not one left the
+list; "management concurrency" was still being reported ninety seconds after the
+interviewer stopped asking. Worse, at 195s the candidate gave a competent
+account of idempotency keys, and the judge listed idempotency keys as unexplained
+on that same judgement.
+
+That is why the caps had to be invented. The design says a term leaving the
+judge's list is how the interviewer learns to stop asking; in a real interview
+that had never once happened, so the only brake was an arbitrary allowance.
+
+**What was wrong with it.** The instruction to drop explained terms existed, as
+one bullet under "Do NOT report", beneath three worked examples of terms to
+report. The listing task was concrete and salient; the removal condition was a
+negation with no test attached, and "has since explained" is a judgement with
+nothing to check against. It is now the first step of an ordered procedure: look
+for the sentence where they say what the thing does, anywhere in the transcript,
+and only report the term if there is no such sentence. The list is stated to be
+replaced rather than accumulated.
+
+The discriminator that stops it dropping terms too eagerly is kept sharp, because
+a candidate restating a term in different words has not explained it and that is
+the whole failure this catches: naming an effect, defining a term with itself, or
+attributing it to another unexplained thing all fail the test.
+
+**How**
+
+`bot/config.py`, `FILLER_ENABLED`, off unless set, read at the moment it is
+needed. `bot/brain_director.py` consults it in the one place the acknowledgement
+is built. Nothing else changed, and nothing was deleted.
+
+`bot/brain/drivers.py`, `JUDGE_SYSTEM` restructured. Off the live path, so it
+costs no latency.
+
+**Measured**
+
+Replaying the stored interview through the judge, the term the candidate
+explained now leaves the list on the following judgement, where before nothing
+ever left it. Two behaviour tests hold the pair: a term explained with a
+mechanism drops, a term merely restated stays.
+
+Time to first audio should now measure the question rather than the
+acknowledgement. Samples where `generation_ms` read 173ms were the
+acknowledgement being spoken, not a model composing anything.
+
+**Not done**
+
+- **The judge fix cannot be shown on the scripted scenarios**, because their
+  candidates never explain anything. That is what those scripts are for. The
+  evidence is the replay against the real transcript.
+- **Probe counts per section did not move**: worst section was 3 to 5 before and
+  2 to 5 after, on the same scenario and model. Expected, for the reason above.
+- The prohibition once a section's allowance is spent, and the paraphrase problem
+  where the interviewer smooths a candidate's wording and presents it as a quote,
+  are both still open and deliberately not in this change.
+- Time to first audio has not been re-measured on a live call.
+
+## 2026-08-05 — The interviewer stops talking half the time
+
+**What**
+
+The interviewer now asks short questions. Twenty words for a whole turn,
+counted, instead of fifteen words a sentence with two or three sentences
+allowed.
+
+Measured on the scripted runs, past the opening: the median turn went from 25 to
+17 words, and the share of all words spoken by the interviewer went from 47% to
+37% on one scenario and 55% to 44% on the other.
+
+**Why**
+
+**48 percent.** On a real interview the interviewer spoke almost half of every
+word said. In an interview the candidate should be doing most of the talking,
+and it was close to even.
+
+That is what the candidate meant when they said it felt long, and it is not what
+anybody assumed. The suspicion was latency, and there was a visible twelve
+second gap between the interviewer speaking and speaking again. That gap turned
+out not to exist: the timestamps in a transcript mark when a turn *finished*, so
+the interval between two of them is the second one being spoken. Composition
+never exceeded 1943ms. What the candidate was sitting through was five turns of
+26 to 30 words, each about twelve seconds of continuous speech.
+
+**The rule already existed and was being followed.** It said "roughly fifteen
+words" per *sentence* and allowed "two or three short sentences per turn", which
+permits forty-five. A twenty-seven-word turn broke nothing. The rule had never
+put a bound on the thing a candidate actually sits through, and everyone
+including this changelog had been reading it as though it had.
+
+**How**
+
+`bot/brain/prompting.py`. The rule is now a turn limit, written the way the
+one-question rule is written, because that one holds: a number, and an
+instruction to count it before answering.
+
+The alternative is removed rather than discouraged, per the measurement recorded
+at the contradiction block. The preamble is named as the thing that must not
+happen: a sentence about what they just said, then why you are asking, then the
+question. That preamble is what carries a reply past twenty words, and it tells
+the candidate nothing they were not present for.
+
+Nothing truncates the model's output. If it cannot write short questions the
+answer is to say so, not to cut its sentences off after the fact.
+
+Two supporting changes, both from findings made today:
+
+- **The first question of a topic gets the rule again**, because the model
+  imitates its own earlier turns out of the verbatim window. A long opening
+  question makes every question in that topic long.
+- **Our own supplied sentence was breaking the rule.** The escalated term probe
+  ran to twenty-six words, so the block enforcing brevity was handing the
+  interviewer the longest sentence it had. It is now twelve.
+
+No worked example was added. Every example in this prompt is either the
+interviewer's own words or interpolated from real candidate text, and this
+morning's fabricated quote came from an example containing a plausible candidate
+phrase.
+
+`scripts/compare_models.py` gains `words_median`, `words_max`,
+`words_over_limit` and `interviewer_share`, because nothing counted words.
+
+**Not done**
+
+- **The share target held on one scenario and not the other**: 36 to 38 percent
+  on deflecting, 43 to 45 percent on jargon. The interviewer's own words fell by
+  about a third on both. Share is a ratio, and the jargon candidate simply says
+  less, so part of that number is not the interviewer's to fix.
+- Long turns are rarer but not gone: the longest turn in a run is still 22 to 39
+  words. The median moved; the tail did not.
+- Soft paraphrase remains. The interviewer still says "you said session
+  management *controls* users per session" where they said "handles".
+- The mechanism signal came down slightly on one scenario, from 10, 10, 9 to
+  9, 9, 6. That signal has swung far more than this between identical runs, so it
+  is probably noise, and it is not being claimed as unchanged.
+
+## 2026-08-05 — The interviewer quoted our own prompt at a candidate
+
+**What**
+
+Two things it was doing to candidates, both now changed.
+
+It attributed a sentence to a candidate that they never said. That sentence came
+out of our own prompt.
+
+And it would not let go: four questions about one idea across ninety seconds,
+never once saying it was moving on. A section now spends at most two questions
+unpacking vocabulary, whatever that vocabulary is called, and says out loud that
+it is leaving it.
+
+**Why**
+
+At 103 seconds into a real interview the interviewer said, word for word:
+
+> "Okay. So you used session management and concurrency control."
+
+The candidate had never said that. They had said "management concurrency" and
+"the session management manages those people per session". The phrase put in
+their mouth was the worked example inside our own praise ban:
+
+>   To acknowledge, repeat their own words flatly, then ask:
+>     "Okay. So you used session management and concurrency control."
+
+It read the example and presented it as their words. **That is a fabricated
+quote in a hiring record**, which is the thing `feedback/score.py` exists to
+prevent: every quote in a report is checked against the transcript and dropped
+if it cannot be found. This arrived through the front door instead. The
+interviewer says it out loud, so it lands in the transcript those quotes are
+checked against, and it passes verification because by then it is really there.
+
+The cause is the lesson already written eight lines above the block that was
+wrong: a concrete example beats an abstract instruction. We forbade the
+behaviour in prose and then demonstrated it in a sample sentence, and the
+sentence won.
+
+The second problem was measured rather than guessed. Replaying the interview
+through the judge, seven judgements returned "management concurrency", then that
+plus "session management", then those plus "concurrency control": three strings
+for one idea, all live at once, **not one ever dropped**. Each was tracked
+separately, so each had its own two attempts. Six sanctioned questions about one
+word. The candidate got four in ninety seconds and it stopped only because they
+changed the subject themselves. `technical_depth` spent 132 seconds and hit its
+turn ceiling with its own material unasked.
+
+**A section allowance was chosen over matching the strings up**, for two
+reasons. It bounds the harm directly, which is the interrogation the candidate
+feels and the section spending itself on vocabulary, where matching only makes
+six asks into two for this one transcript. And it does not depend on the judge
+behaving: that same replay had the judge listing "idempotency keys" as
+unexplained on the judgement where the candidate explained them competently, so
+the stopping condition must not be "the judge stopped reporting it". Matching
+would need a similarity rule, and a rule loose enough to join "session
+management" to "concurrency control" is loose enough to join things that are not
+the same at all. This repo has been caught by that shape twice.
+
+**How**
+
+`bot/brain/prompting.py`. The worked example is gone. The rule now names only
+words that are safe to copy: say "Okay." or "Right.", repeat back only words
+they actually used, never put a phrase in their mouth and never smooth it into
+better wording than they used. Every other worked example in the prompt was
+audited: they are either the interviewer's own words or built from real
+candidate text, and none presents a plausible candidate phrase.
+
+`bot/brain/brain.py`, `MAX_TERM_PROBES_PER_SECTION = 2`, counted on the section
+so variants of one idea share one allowance. The per-term cap of two stays
+underneath it so one term cannot take both attempts while another is open.
+
+**The let-go was queued and never spoken in that whole interview.** It was
+consumed on read, so a prompt that was rendered and discarded emptied the queue
+without anybody hearing anything. It now survives any number of renders and is
+cleared only once the interviewer has actually spoken, which is the event that
+was being confused with reading a prompt.
+
+`bot/brain/terms.py`. A statement is not an ask. The spoken acknowledgement
+repeats the candidate's own term back at them, matched every word test, and was
+burning an attempt with no question having been put. `VOICE_RULES` requires
+exactly one question mark in a real reply, so requiring one here is the same
+rule read from the other end.
+
+**Measured**
+
+Three runs, deflecting scenario, `gpt-4.1-mini`:
+
+- **The let-go is now spoken**: 2, 3 and 2 times per interview, in every section
+  where the allowance ran out. It was zero before.
+- **The specific fabricated sentence is gone** and cannot recur: it is not in
+  the prompt for the model to copy.
+- **The two-probe allowance did not hold in behaviour**: sections reached 3, 5
+  and 3 probe-shaped questions. See below.
+
+**Not done**
+
+- **The allowance bounds what the brain instructs, not what the model does.**
+  Once the block stops rendering, the model keeps asking questions of the same
+  shape, because its own earlier turns are sitting in the verbatim window and it
+  imitates them. Every excess probe measured came *before* the let-go, from
+  questions the counter never saw: they were about a term other than the one
+  offered, so nothing incremented. This is the worked-example lesson a third
+  time, with the model's own transcript as the example. Counting the behaviour
+  rather than the instruction, or forbidding the shape once the allowance is
+  spent, are the two candidate fixes and neither is in this change.
+- **Soft misquotation remains.** The interviewer still says "you said
+  concurrency control *lets* multiple users access" where they said "allows",
+  and "session management *controls*" where they said "handles". The instruction
+  against smoothing their wording is there and is not reliably followed.
+- Question length, TTFA measuring the filler, whether the filler earns its cost,
+  `SMART_TURN_STOP_SECS`, and the judge never dropping explained terms are all
+  untouched and all still open.
+
+## 2026-08-05 — Two asks and then let it go, and something to say while it thinks
+
+**What**
+
+The interviewer asks about an unexplained term twice, and then says so and moves
+on. It no longer asks a third time.
+
+While the next question is being composed, it says one short sentence made only
+of the candidate's own words: "Okay. So you used session management and
+concurrency control." Not every turn, and never anything that rates the answer.
+
+**Why**
+
+The change that landed an hour earlier over-corrected. Uncapped, gpt-4.1 asked
+the identical escalated sentence **four times in a row** while the candidate gave
+the identical non-answer. For a candidate who genuinely cannot explain something,
+that is worse than the failure it replaced: it went from moving on too easily to
+not letting go at all.
+
+Repairs already cap at two attempts, and the reasoning written there applies
+unchanged: a third time is an interrogation, and recording that the ground was
+never covered is more honest than grinding at somebody who has already said all
+they have. **Two, not three**, because in every run where the candidate could
+explain, the first ask was enough; the second ask is what caught the deflection;
+and nothing in any transcript was ever resolved by a third.
+
+It is said out loud rather than dropped silently. A candidate pushed twice on one
+word who then hears the subject change without comment is left working out
+whether they failed something. One sentence is the difference between an
+interviewer that has decided to move on and one that appears to have given up on
+them.
+
+**The filler is built on one person's experience of a live call, not on a
+measurement, and that is worth stating plainly.** The harness cannot measure
+time to first audio, and the numbers it can produce say composition takes 1082
+to 1268ms at the median and 3746ms at worst. That gap is real and it is
+composition, not the judge, which never blocked anything. But the reason this
+was built is that somebody sat through an interview and felt the silence.
+
+**How**
+
+`bot/brain/brain.py`, `MAX_TERM_ATTEMPTS = 2`, mirroring `MAX_REPAIR_ATTEMPTS`.
+A term that reaches it is closed permanently, not just for the section, because
+two asks is the whole allowance and a third somewhere else is still a third. It
+is queued once for the interviewer to let go of out loud, and consumed by the
+turn that does it.
+
+**The count is of questions asked, not terms offered.** It was the other way
+round for an hour and it produced a live falsehood: the model is handed a term
+and may ask about something else entirely, so a candidate could hear "you have
+said session management a couple of times now, and I still do not know what it
+actually does" after being asked exactly once. That is the interviewer telling
+somebody they failed to answer a question that was never put to them. It also
+spent the two-attempt allowance on turns where nothing was asked, so a term
+could be let go with "let's leave that one there" after one real ask, or none.
+
+`bot/brain/terms.py` decides whether the question the model produced was about
+the term. Deterministic, in code, like `repair.py` and `refusal.py` and for the
+same reason: this is bookkeeping, not judgement. Two ways a question counts,
+because a question can be about something without naming it: it uses a
+distinctive word of the term, or it points back at what was just said with a
+cue like "how does that actually work". The second is only readable as an ask
+because it is only ever checked on a turn where a term was put in front of the
+model.
+
+**It errs towards not counting**, deliberately. Undercounting means a term takes
+an extra turn to be let go, which is mildly annoying. Overcounting means telling
+a candidate something untrue, which is the bug. Words shorter than four letters
+and words like "system" and "platform" identify nothing, so a term made only of
+those is never matched on its words alone.
+
+The count now moves when the brain hears what the interviewer actually said, on
+the following frame, rather than when the prompt is rendered. A term offered and
+not used stays open and unspent and comes back with the same first-ask wording.
+
+**Where it lands in the report.** `SectionOutcome.unexplained_terms` carries the
+terms that were asked about to the cap and never explained. That is evidence in
+its own right: "never asked" and "asked twice and could not say" are different
+facts about a candidate, and a transcript makes the second easy to miss. A term
+explained before the cap never reaches the report, because being asked once and
+answering is not a finding.
+
+`bot/brain/prompting.py`, `reflect_back()`. **A template, never a model call**,
+and that is the whole safety property. The praise ban works; a filler generated
+by asking a model for something friendly to say is a route straight around it,
+and this morning a model volunteered "that's a clear technical approach" about an
+answer that explained nothing. A template that can only emit their own noun
+phrase cannot do that. If there is nothing concrete of theirs to repeat it
+returns nothing and the silence stands.
+
+`bot/brain_director.py` speaks it. A `TTSSpeakFrame` goes straight past the LLM
+to the synthesiser, the same route the opening greeting takes, so it is already
+being said by the time generation starts. Nothing awaits anything. The system
+instruction is told what was said, or the model acknowledges the same thing again
+and the candidate hears it twice.
+
+It fires at most every third turn, only inside a competency, and only when the
+judge has pulled a phrase out of what the candidate just said, so it cannot
+reflect back something they did not say.
+
+**Measured, and the model comparison that followed**
+
+Four models, three runs each, on the two scenarios the bar is about. The bar
+holds when the question after a deflection goes back at the term, escalates, or
+lets it go out loud:
+
+| model | bar held | menu fallbacks | TTFT median / max / spread | live $ |
+| --- | --- | --- | --- | --- |
+| gpt-4.1-mini | 5 of 6 | 1 to 3 | 868 / 1213 / 444 ms | $0.016 |
+| gpt-4.1 | 6 of 6 | 0 to 4 | 825 / 1171 / 405 ms | $0.077 |
+| gpt-5.4-mini | 6 of 6 | 2 to 11 | 649 / 791 / 172 ms | $0.030 |
+| gpt-5.4-nano | 5 of 6 | 5 to 11 | 619 / 687 / 129 ms | $0.009 |
+
+**The mechanism signal fell from about 17 in 21 to about 7 in 21, and that is
+the cap working rather than a regression.** The old number was counting the
+repetition this change removes. The signal cannot be compared across the cap.
+
+**The judge costs more than the conversation.** Per 20-minute interview, live
+gpt-4.1-mini is $0.016 and the judge on gpt-4.1 is **$0.069**, four times more,
+and it is not affected by which live model runs. Since this morning the judge
+fires after every answer rather than once per section, which is 21 calls against
+a large prompt. Nobody had looked.
+
+Prompt caching partly works and was not designed for: 5,000 to 7,000 of about
+41,000 live input tokens come back cached, varying run to run. The stable prefix
+is the header and voice rules at about 956 tokens, just under the 1,024-token
+threshold, so the cache only engages on the turns where more of the prompt
+happens to repeat.
+
+**Not done**
+
+- **If generation fails, the candidate hears the acknowledgement and then
+  silence.** The filler is one sentence and cannot be the whole turn by design,
+  but nothing stops it becoming the whole turn if the model never answers. The
+  silence ladder is the backstop and nudges at fifteen to twenty seconds. It is a
+  real gap, one sentence wide, and it is not covered by a test.
+- The filler has not been heard out loud. It is unverified in the only way that
+  matters for something spoken.
+- Nothing predicts a slow composition, so the filler sometimes covers a gap that
+  was not there. The cooldown bounds how often that can happen; it does not
+  prevent it.
+- The cap is on asking, not on the candidate. Somebody who uses six unexplained
+  terms is asked about all six, two asks each.
+
+## 2026-08-05 — An unexplained term is tracked like a contradiction
+
+**What**
+
+When a candidate uses a term and does not say what it does, the interviewer is
+now handed that term and the sentence to ask about it, exactly the way it is
+handed a contradiction. The term stays open until the candidate actually
+explains it, not until it has been asked about once. Asked a second time, the
+interviewer says so out loud: "you have said session management a couple of
+times now, and I still do not know what it actually does."
+
+The coverage-verdict block added earlier today was deleted. It did not work.
+
+The prompt token bound moved from 1800 to 2400, on a measurement rather than a
+feeling, and the test that guards it was rewritten because it had been passing
+on a prompt it was not rendering.
+
+**Why**
+
+**A mandatory block that names a specific item is followed. One that describes a
+state is not.** Both numbers were already in this repository and nobody had put
+them side by side.
+
+The contradiction block was measured at 80% compliance on the mini-tier model.
+It says: here is a specific thing they said, your next question must be about
+it, and here is the sentence. The coverage block written this morning says:
+coverage is insufficient, do not move on. That is a state, and it leaves the
+model to work out what to do about it. It was measured at no effect, and the
+model moved on anyway.
+
+It is also why persistence worked for one and not the other. A contradiction is
+held as an item in a list until it has been raised. "Insufficient" is a fact
+about the section that has no memory of what was already asked, so there was
+nothing to escalate and nothing to come back to.
+
+So an unexplained term is now an item in a list, with one difference that
+matters. A contradiction closes when it has been **raised**, because raising it
+twice is prosecutorial. A term closes when it has been **explained**, which is a
+different event, and conflating them is precisely this morning's failure: the
+interviewer asked once, received a restatement, and treated having asked as
+having found out.
+
+**How**
+
+`bot/brain/drivers.py`. The judge returns `unexplained_terms`. The instruction
+is careful about what it is asking for, because "jargon" would fire on ordinary
+technical speech: the test is whether the candidate said what the thing does,
+not whether the word is technical. "We used Postgres" names a choice and is not
+reported. "We implemented session management concurrency, which allows multiple
+users to pay at the same time" states an outcome and not a mechanism, and is.
+Anything defined with itself is a restatement, and a restatement is never an
+explanation.
+
+**How a term is decided to be explained, and what that costs.** The judge
+decides, because nothing else can. It is asked on every answer for the terms
+that are still unexplained *as of now*, and the brain replaces its list wholesale
+rather than merging. A term dropping off the judge's list is how the interviewer
+learns it can stop asking. The cost is that the judge is the single point of
+failure for closing a term: if it keeps reporting one the candidate has
+explained, the interviewer keeps asking, which is worse than the reverse. It
+costs no extra call, because the judge already runs on every answer. The count
+of how many times a term has been put in front of the interviewer survives the
+replacement, which is what lets the wording escalate.
+
+`bot/brain/prompting.py`. One mandatory slot, not two. Two blocks each saying
+"your next question is already decided" are not twice as strong; they are two
+instructions pointing at different things, and the model resolves that by
+choosing, which is the discretion these blocks exist to remove. A contradiction
+wins the slot: it is rarer and it decays, while a term will still be there next
+turn.
+
+`bot/brain_director.py` records which term was offered. The same call is missing
+for contradictions and has been since they were built, so in a live interview a
+contradiction is re-rendered every turn instead of being raised once. That is a
+real bug, it is the same shape as this one, and it is noted rather than fixed
+because it changes when contradictions stop being asked about.
+
+**The token bound: raised to 2400, with the reason.** 1800 was a proxy for
+keeping a mini-tier model viable in real time and the proxy was never checked.
+Streaming `gpt-4.1-mini` at four input sizes, eight interleaved rounds each,
+time to first token: 778ms at ~1400 tokens, 757ms at ~1800, 820ms at ~2300,
+742ms at ~2800. **1800 to 2800 is -15ms on the median, against a spread within a
+single size of up to 358ms.** Prompt length in this range does not measurably
+move time to first token, so holding 1800 was buying nothing and costing content.
+The bound is kept, at a level that covers the true worst case, because the thing
+worth guarding is growth nobody notices. Flatness is asserted separately and is
+the property the sectioned design actually rests on.
+
+The test that guards it was rewritten. It drove a brain with no judge, so the
+verdict block, the carried claims and the contradiction block were all empty and
+it was measuring a prompt no interview ever sees: the real worst case was 2296
+tokens while the test asserted under 1800 and went green.
+
+**Measured**
+
+`compare_models`, three runs per model, ceiling raised from three turns to six
+so a term can be asked about, deflected and asked about again. Questions that
+echo the answer and ask what the thing is or how it works, out of 21
+opportunities:
+
+| scenario | model | before today | this morning | now |
+| --- | --- | --- | --- | --- |
+| jargon | mini | 0/18 | 4/18 | **17, 17, 18 /21** |
+| jargon | gpt-4.1 | 0/18 | 7/18 | **16, 16, 17 /21** |
+| deflecting | mini | n/a | 6/18 | **17, 16, 19 /21** |
+| deflecting | gpt-4.1 | n/a | 4/18 | **17, 18, 18 /21** |
+
+Questions asking for a trade-off, a metric or the bet behind it are now 0 to 2
+per run, from 3 to 4. The spread across runs is 1 to 3 against an effect of 17,
+which is the first time this session the effect has been larger than the noise.
+
+**Not done**
+
+- **It has become a broken record.** In one gpt-4.1 run the interviewer asked
+  the identical escalated sentence four times in a row. Repairs are capped at
+  two attempts for exactly this reason and nothing caps this. A person asks
+  twice, then says they will come back to it and moves on. This does not, and
+  the fix has over-corrected into the opposite failure.
+- The bar was not fully met. On the immediate question after a deflection it
+  held in three of three gpt-4.1 runs and two of three on mini, which is the
+  production model. The one miss moved to a different unexplained term rather
+  than back to the first, then returned on the next turn.
+- The judge is the only thing that closes a term. An unstable judge means an
+  interviewer that keeps asking about something already explained.
+- The contradiction block is still never marked raised in production.
+- In-progress claims are still not rendered.
+- Nothing measured on a live call. The time-to-first-token numbers are from the
+  API directly, not from the voice pipeline, so they exclude the transport.
+
+## 2026-08-05 — The interviewer is shown its own verdict, and stops praising answers
+
+**What**
+
+Three changes, in the order they were measured.
+
+The interviewer now sees what its own judge made of the answers so far: the
+coverage verdict and the sentence explaining it, rendered into the live prompt as
+an instruction rather than a note. The judge now runs after every answer instead
+of once per topic. And the interviewer is forbidden from saying an answer was
+good; to acknowledge one, it repeats the candidate's own words back flatly.
+
+**The stated bar was not met.** After a candidate deflects the same term twice,
+the next question still moves to something else. What did change is reported
+below with numbers.
+
+**Why**
+
+The interviewer asked what a term meant, got a circular non-answer, and accepted
+it. **It had not forgotten the exchange.** Eight turns are carried verbatim, so
+its own question and the empty answer were both in front of it as real messages.
+It read them and judged the non-answer to be an answer. The failure was
+judgement, not memory.
+
+And the judgement already existed. The judge is told that "a fluent answer that
+never names a concrete decision is 'partial' at best", writes the sentence
+explaining its verdict into `depth_rationale`, and until now that field went to
+the report and nowhere else. The reasoning was produced, written down and thrown
+away on every turn of every interview.
+
+The praise ban started as a footnote and turned out to matter most. In a scripted
+run the interviewer said *"You explained how concurrency control and session
+management work"* about an answer that explained nothing, and moved on. It also
+produced "That sounds like a solid technical approach", "That makes sense" and
+"Very cool" about non-answers. That is not decoration: **the false acknowledgement
+is the mechanism by which it talks itself into moving on**, and it lands in a
+hiring record that is meant to be neutral. It also tells a candidate they did
+well, so they stop elaborating.
+
+**How**
+
+`bot/brain/prompting.py`. A `_render_verdict` block, placed directly under the
+contradiction block for the salience reason recorded there. An unmet verdict is
+written as mandatory: do not move on, do not ask a listed question, go back at
+the weakest thing they said. A `NEVER SAY AN ANSWER WAS GOOD` block in
+`VOICE_RULES`, which forbids the evaluative forms by name and supplies the
+neutral one, per the measured lesson that removing the alternative beats adding
+emphasis.
+
+`bot/brain/brain.py`. `_maybe_request_judgment` no longer stops after one verdict
+per section. Nothing awaits it and the single-flight guard stays, so a slow judge
+degrades to the old behaviour rather than to none.
+
+**Which turn's verdict the model actually sees.** On the frame for question N the
+brain observes the answer to question N-1, renders the prompt, and only then
+spawns the judgement covering that answer. It lands about 1.2 seconds later,
+while question N is being spoken. So when composing question N+1 the freshest
+verdict available describes **the answer before last**. It is one answer stale
+and should not be described as current. Before this change it described the
+section's first two turns and was applied to the whole of it.
+
+`bot/brain/harness.py`, a `deflecting_candidate` built from `int_b3d0a830156b`
+and `int_a96da5ddb0be`: asked what session management does, it answers that it
+manages sessions. `scripts/compare_models.py` gains that scenario.
+
+Two blocks are now clipped. The judge writes prose and the prompt has a ceiling,
+so `depth_rationale` is capped, and so are carried claims, which have never been
+bounded at all. Measured against the 26 real claims in the local database:
+median 102 characters, longest 237.
+
+**Not done**
+
+- **The bar was not met, and the prompt token ceiling is now exceeded.** With a
+  verdict rendered the worst case is 1888 tokens against a bound of 1800, and
+  1990 once carried claims are present. The deterministic suite passes only
+  because `test_section_prompt_stays_small_and_bounded` never populates a
+  verdict, which means that bound has been nominal for some time. The pacing
+  example in `VOICE_RULES` was cut to make room and it was not enough.
+- **Stage 3's filler was not built.** It was gated on time-to-first-audio moving,
+  and no delay could be demonstrated: the text harness cannot measure TTFA, and
+  the live path never awaits the judge. A judgement takes 1.2s median, 2.2s max.
+  Whether it contends for the event loop under a real call is unmeasured.
+- The signal is too noisy at one run per model to attribute small changes.
+  Deflecting on mini read 4/18, then 1/18, then 6/18 across three runs of the
+  same code path at temperature 0.6.
+- In-progress claims are still not rendered. They were dropped for space.
+- Nothing was measured on a live call.
+
+**Verify**
+
+```bash
+cd backend && uv run pytest tests/ -q
+cd backend && uv run python scripts/compare_models.py --scenarios jargon deflecting thin_answer
+```
+
+## 2026-08-05 — The interviewer asks what a term means instead of taking it as read
+
+**What**
+
+When a candidate uses a technical term and does not say what it does, the
+interviewer now asks. "You said you implemented session management concurrency.
+Walk me through how that actually works."
+
+It used to accept the term and ask about something attached to it: what the
+trade-off was, how it was measured, what the bet behind it had been. All of
+those sound like probing and none of them establish that anything is there.
+
+A prompt change and nothing else. No new model call, no new state, no change to
+the judge or to when sections move on.
+
+**Why**
+
+**The model was following the prompt, not ignoring it.** This is the whole
+finding, and it took reading the prompt rather than the transcripts to see it.
+
+The block that tells the interviewer how to go deep offered a closed menu of
+four things to ask for: the trade-off they made, the thing that went wrong, a
+decision they would defend, or a number and how it was measured. There was no
+entry for "they used a word and did not say what it means", so the model picked
+the nearest fit. Against a candidate saying *"we have implemented a session
+management concurrency, which allows multiple users to make the payments at the
+same time"*, it asked what trade-off that involved. It even quoted the term
+back, which is why this looked like a follow-up to anyone reading quickly.
+
+The earlier stage had a second problem. It said *"follow their thread rather
+than switching to a different question"*, which states a preference between two
+options while a bulleted list of the other options sits directly below it. This
+repository had already measured that exact phrasing at **0% compliance**, and
+recorded the finding in a comment eight lines above the block that was wrong.
+The fix that worked there was to remove the alternative rather than argue for
+the right one, and that is what has been done here.
+
+Measured over the six substantial interviews now in the local database, all with
+a candidate answering in confident jargon: of 39 interviewer questions that
+followed an answer, **2 asked what a term meant and 10 asked for a trade-off, a
+metric or a bet.** The employer's own criterion for that competency was depth
+"not just at a conceptual level". The report scored 3.0 out of 5 on evidence
+that was entirely conceptual.
+
+**How**
+
+`backend/bot/brain/prompting.py`, two edits inside `_render_depth_ramp`, which
+is the only file this change touches on the live path.
+
+The first follow-up turn is now written as a mandatory block: do not ask a new
+question, do not move to any listed question however well it fits. The demanding
+turn keeps its four options and gains a fifth that takes precedence: if the last
+answer named a technique or system without saying what it does, that term is the
+question, and asking for its trade-off is explicitly forbidden because it accepts
+the term as given. A model sentence is supplied, the way the contradiction block
+supplies one.
+
+The block grew, and `test_section_prompt_stays_small_and_bounded` caught it at
+1810 tokens against a 1800 bound. That test's own comment says the honest
+response is to ask what to cut, so the wording was tightened rather than the
+bound raised. It now renders at 1646.
+
+`backend/bot/brain/harness.py`, a `jargon_candidate` built from real transcripts
+rather than invented. It sounds specific and explains nothing, and when pushed it
+defines each term with itself: *"the concurrency allows the multiple users to
+access it concurrently, while the session management manages those people per
+sessions."* That is verbatim.
+
+`backend/scripts/compare_models.py`, a `jargon` scenario and a new signal.
+The signal exists because the obvious one does not work: the failing question
+quoted the candidate's own term, so "did it reference what they said" scores it
+as a probe. It counts three shapes instead, and the one that matters is a
+question that echoes the answer **and** asks what the thing is or how it works.
+
+`backend/tests/test_behavior.py`, one test added alongside the existing
+thin-answer one, which was left exactly as it was. The old test joins every
+interviewer turn and looks for words like "specific" or "which" anywhere in the
+run, so a reworded planned question clears it, and it passed throughout all six
+interviews where this went wrong.
+
+**Not done**
+
+- **Option B is untouched: the judge's rationale and its within-section claims
+  still do not reach the conversation.** The judge is already told that "a fluent
+  answer that never names a concrete decision is partial at best", writes a
+  sentence saying so into `depth_rationale`, and nothing ever reads it. Wiring it
+  in would cost no live model call, but it needs a `JUDGE_SYSTEM` edit so a claim
+  can be marked unexplained, and the judge currently runs once per section at the
+  floor turn, so it would not see a term used later. That is a separate change
+  with its own measurement.
+- **The fix holds for the first unexplained term and not for the rest.** On the
+  jargon scenario both models ask what session management is, get another
+  circular answer, and drift back to trade-offs. Mechanism questions went from
+  0 in 18 to 2 in 18 on mini and 3 in 18 on gpt-4.1. That is the change working,
+  not the problem solved.
+- One transcript shows mini answering the hash-table non-explanation with "that's
+  a clear technical approach". It is not, and nothing here teaches it to notice.
+- Nothing was measured live. Both runs are the text harness against scripted
+  candidates; the numbers from real interviews are the before picture only.
+- The prompt is 1646 tokens against a 1800 bound. The next block that lands here
+  has less room than the last one did.
+
+**Verify**
+
+```bash
+cd backend && uv run pytest tests/ -q
+cd backend && uv run python scripts/compare_models.py --scenarios jargon thin_answer
+```
+
+Then read `backend/sessions/model_comparison/jargon__*.json`. The turn to look at
+is the one straight after "we have implemented a session management concurrency".
 
 ## 2026-08-05 — Recording is switched off, and the consent notice says so
 

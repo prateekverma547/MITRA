@@ -31,12 +31,23 @@ from pipecat.frames.frames import (
     Frame,
     LLMContextFrame,
     LLMUpdateSettingsFrame,
+    TTSSpeakFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.openai.llm import OpenAILLMService
 
 from bot.brain.brain import InterviewBrain
 from bot.brain.drivers import OpenAIJudge
+from bot.brain.prompting import reflect_back
+from bot.config import FILLER_ENABLED_ENV, filler_enabled
+
+#: Turns between one spoken acknowledgement and the next.
+#:
+#: **Not every turn.** Something said before every single question stops being
+#: an acknowledgement and becomes a tic, and a candidate hears it as the bot
+#: stalling. Three means it lands on the turns where there is something worth
+#: repeating and stays quiet the rest of the time.
+FILLER_COOLDOWN_TURNS = 3
 
 
 class BrainDirector(FrameProcessor):
@@ -82,6 +93,8 @@ class BrainDirector(FrameProcessor):
         #: How many messages we wrote into the context last turn. Anything past
         #: this index on the next frame is new.
         self._written_count = 0
+        #: When something was last said out loud while the model composed.
+        self._last_filler_turn = -FILLER_COOLDOWN_TURNS
         # Ending the call is not done here. This processor sits before
         # transport.output(), so BotStoppedSpeakingFrame never reaches it. See
         # bot/ending.py, which is an observer for exactly that reason.
@@ -129,8 +142,39 @@ class BrainDirector(FrameProcessor):
 
         self._note_transition()
 
+        # The brain counts an attempt when it hears what the interviewer
+        # actually said, on the next frame. Counting it here, at the moment the
+        # term was handed over, told a candidate they had been asked twice when
+        # they had been asked once.
+        #
+        # Note the equivalent is missing for contradictions and has been since
+        # they were built: `mark_contradiction_probed` is only ever called by the
+        # text harness, so in a live interview a contradiction is re-rendered
+        # every turn rather than raised once. Left alone because fixing it
+        # changes when contradictions stop being asked about, which is not this
+        # change, but it is a real bug and the same shape as this one was.
+        offered_term = self._brain.unexplained_terms()
+        offered_term = offered_term[0] if offered_term else None
+
         plan = self._brain.plan_turn()
         context.set_messages(plan.messages)
+
+        # Spoken now, while the model is still composing. Nothing awaits it and
+        # nothing awaits the model: a TTSSpeakFrame goes straight past the LLM
+        # to the synthesiser, the same route the opening greeting takes, so it
+        # is already being said by the time generation starts. Composition was
+        # measured at 1082 to 1268ms median and 3746ms at worst, and that gap is
+        # what this covers. The judge is not the problem; it never blocked.
+        filler = self._filler_for(offered_term)
+        system_instruction = plan.system_instruction
+        if filler:
+            # Told to the model as well, or it says the same thing again and the
+            # candidate hears the acknowledgement twice.
+            system_instruction += (
+                f'\n\nYOU HAVE ALREADY SAID THIS OUT LOUD: "{filler}"\n'
+                "It has been spoken. Do not acknowledge or repeat what they said. "
+                "Ask your question directly, as your first words.\n"
+            )
         self._written_count = len(plan.messages)
 
         self._turn_count += 1
@@ -141,9 +185,12 @@ class BrainDirector(FrameProcessor):
 
         # Retarget the system instruction at the current section. Sent ahead of
         # the context frame so the service has it before it runs inference.
+        if filler:
+            await self.push_frame(TTSSpeakFrame(filler), direction)
+
         await self.push_frame(
             LLMUpdateSettingsFrame(
-                delta=OpenAILLMService.Settings(system_instruction=plan.system_instruction),
+                delta=OpenAILLMService.Settings(system_instruction=system_instruction),
                 service=self._llm,
             ),
             direction,
@@ -152,6 +199,43 @@ class BrainDirector(FrameProcessor):
 
         # Fire and forget: judgement must never sit on the spoken-turn path.
         self._spawn_judgments()
+
+    def _filler_for(self, term) -> str | None:
+        """What to say while the answer is being composed, or nothing.
+
+        Three conditions, all of them narrowing rather than widening:
+
+        - There is a phrase of the candidate's own to repeat. The only source is
+          the term the judge pulled out of what they just said, so this cannot
+          reflect back something they did not say.
+        - It has been a few turns since the last one. See FILLER_COOLDOWN_TURNS.
+        - It is not the closing. Filling a pause before "thank you for your
+          time" is worse than the pause.
+
+        **It is never the whole turn, but it can be left as the whole turn if
+        generation fails**, and that is worth stating rather than hiding: the
+        candidate would hear an acknowledgement and then silence. The silence
+        ladder is the backstop, and it nudges at fifteen to twenty seconds. It
+        is a real gap in this and it is one sentence wide.
+        """
+        # **Off unless switched on.** See `FILLER_ENABLED_ENV`: it was built to
+        # cover a delay that turned out not to exist, and on a real interview it
+        # interrupted a candidate 0.2s into their sentence. Their answer arrived
+        # as eight fragments and the report then scored them 2.0 out of 5 for
+        # communication, quoting five of the pieces. That is the failure
+        # `ConversationHealth` exists to prevent, arriving by a route it cannot
+        # see: it looks for fragmentation caused by the channel, and this was
+        # caused by us.
+        if not filler_enabled():
+            return None
+        if term is None or self._brain.current_section.kind.value != "competency":
+            return None
+        if self._turn_count - self._last_filler_turn < FILLER_COOLDOWN_TURNS:
+            return None
+        text = reflect_back(term.term)
+        if text:
+            self._last_filler_turn = self._turn_count
+        return text
 
     # -- helpers ----------------------------------------------------------
 
