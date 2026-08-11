@@ -8,6 +8,7 @@ blueprint is finished and stored long before anyone joins an interview.
 """
 
 import asyncio
+import re
 import uuid
 from contextlib import asynccontextmanager, suppress
 from functools import lru_cache
@@ -42,7 +43,7 @@ from blueprint.clarify import (
 from blueprint.documents import DocumentError, extract_text
 from blueprint.generate import BlueprintGenerationError, BlueprintGenerator
 from blueprint.refine import BlueprintRefiner, RefinementError
-from bot.config import Settings
+from bot.config import Settings, recording_enabled
 from shared.branding import BOT_FULL_NAME, BOT_NAME, FAVICON_URL, LOGO_URL, PRODUCT_TAGLINE
 from shared.contracts import (
     MAX_DURATION_MINUTES,
@@ -715,7 +716,43 @@ def _render_page(name: str) -> str:
         ("{{RETENTION_DAYS}}", str(RECORDING_RETENTION_DAYS)),
     ):
         html = html.replace(token, value)
-    return html
+    return _apply_recording_blocks(html)
+
+
+#: Two halves of the consent notice, one for each setting of the recording
+#: switch. The page carries both, wrapped in these markers, and the half that
+#: does not apply is removed before the candidate sees anything.
+_RECORDING_BLOCK = re.compile(
+    r"[ \t]*<!--RECORDING (ON|OFF)-->[ \t]*\n?(.*?)[ \t]*<!--/RECORDING \1-->[ \t]*\n?",
+    re.DOTALL,
+)
+
+
+def _apply_recording_blocks(html: str) -> str:
+    """Keep the half of the copy that matches whether we are recording.
+
+    **The consent notice has to follow the switch, or the switch is a trap.**
+    A candidate agrees to a description of what is about to happen to them, so a
+    notice that only matches one setting means whoever flips the flag silently
+    starts recording people who were told they would not be, or keeps warning
+    people about a recording nobody is making. This project has now written down
+    six separate occasions where a screen described something that was not
+    happening; this is the first one where the screen is a consent gate.
+
+    The copy stays in the HTML rather than moving into Python strings, so it is
+    still where a person editing the wording would look, both versions sit next
+    to each other where they can be compared, and `test_copy_style.py` still
+    reads it.
+
+    Note that `_render_page` is cached, so this is decided once per process.
+    That is right for a setting that comes from the environment and cannot
+    change while the process is running, and it is why turning the switch on
+    means a restart rather than a reload.
+    """
+    keep = "ON" if recording_enabled() else "OFF"
+    return _RECORDING_BLOCK.sub(
+        lambda match: match.group(2) if match.group(1) == keep else "", html
+    )
 
 
 #: Pages and scripts are rendered from files that change on every deploy, and

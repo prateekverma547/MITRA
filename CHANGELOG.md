@@ -95,6 +95,111 @@ changed and no new measurement was added.
 - `prompt_tokens` is recorded and not yet reported anywhere. It is evidence for
   the next investigation, not a number for the panel.
 
+## 2026-08-05 — Recording is switched off, and the consent notice says so
+
+**What**
+
+Interviews are no longer recorded. Everything that was built for recording is
+still here and still works: the storage path, the job that collects and deletes
+files, the ten day retention, the delete button, playback in the panel, and all
+of the tests. What stops is the act of recording.
+
+One environment variable turns it back on. Set `RECORDING_ENABLED=1` and
+restart, and the whole feature returns with no other edits.
+
+The consent notice changes with it. With recording off a candidate is told the
+interview is not recorded and that the transcript is what is kept. Turn the
+switch on and they are told they are recorded, that someone may watch it, and
+that it is kept for ten days. Both versions of the notice live on the page and
+the server serves the one that matches.
+
+The camera stays on.
+
+**Why**
+
+Money, and a promise.
+
+Daily charges for every recorded minute and then charges again to store the
+result. The job that pulls recordings down and deletes Daily's copy is not
+actually running, so storage has been accruing with nothing removing it.
+Recording goes off until that is fixed and somebody has decided they want it on.
+
+The promise is the more important half. The notice a candidate agrees to said
+they were being recorded, that a person might watch it, and that it would be
+kept for ten days. With recording off all three are false, and this is a consent
+gate: the candidate is being asked to agree to it. This project has now recorded
+six separate occasions where a screen described something that was not
+happening, and every previous one was a report or a status. This is the first
+where somebody is agreeing to the description.
+
+So the notice is tied to the switch rather than edited to match today's setting.
+A notice that only matches one setting is a trap for whoever flips it: they
+would silently start recording people who were told they would not be. Both
+versions sit next to each other in the page so that whoever edits one sees the
+other.
+
+**How**
+
+`backend/bot/config.py`. The switch: `RECORDING_ENABLED`, absent means off, and
+only `1`, `true`, `yes` or `on` count as on, so a half-set variable fails towards
+not spending money. It lives here rather than beside the sweep's own switch in
+`app/recordings.py` because two processes have to agree on it, the bot deciding
+whether to record and the web app deciding which notice to show, and this is the
+only configuration module both already import.
+
+`backend/bot/run_bot.py`. One check, first thing in `begin_recording`. Off means
+Daily is never asked, so no minute is billed and nothing is stored. The interview
+runs exactly as before and its record keeps the `not_recorded` state the panel
+already has a sentence for.
+
+`backend/app/main.py` and `frontend/candidate/index.html`. The page carries both
+notices wrapped in `<!--RECORDING ON-->` and `<!--RECORDING OFF-->` markers, and
+rendering keeps the half that matches. The copy stays in the HTML rather than
+moving into Python strings, so it is still where somebody editing the wording
+would look and `test_copy_style.py` still reads it. The device check screen
+follows the same switch.
+
+`backend/tests/test_recordings.py`, eleven new tests, and three in
+`test_video.py` rewritten to read the served page rather than the file, since
+the file now holds both versions and reading it proves nothing.
+
+Two things deliberately do **not** read the switch, and both have a test:
+
+- **The sweep.** Recordings made before it was switched off still have to be
+  collected and Daily's copy deleted. A sweep that stopped when recording
+  stopped would strand them and keep the storage bill running, which is the
+  thing switching recording off was meant to end.
+- **The room.** Rooms are created when an interview is scheduled and used
+  whenever the candidate turns up, sometimes a day later. Withholding permission
+  at booking time would mean turning the switch on did nothing for interviews
+  already scheduled. Permission is not billed; starting a recording is.
+
+**Not done**
+
+- **Why the sweep is not running has not been investigated.** That is separate
+  work and it is the thing that has to be fixed before recording goes back on.
+- **There is at least one recording sitting in Daily right now.** Switching
+  recording off does not remove it. The sweep collects and deletes it, so it will
+  only go when the sweep runs.
+- Nothing was measured. The per-minute figures here are Daily's list prices, not
+  an invoice, and nobody has added up what has been spent so far.
+- The panel still shows the recording card and the delete button for interviews
+  that have a recording, which is correct, and shows "this interview was not
+  recorded" for every new one.
+- Turning the switch on requires a restart. The rendered page is cached for the
+  life of the process, which is right for a setting that comes from the
+  environment, but it does mean this is not a runtime toggle.
+
+**Verify**
+
+```bash
+cd backend && uv run pytest tests/test_recordings.py tests/test_video.py -q
+cd backend && uv run pytest tests/ -q
+```
+
+By eye: open the join page and read the notice, which should say the interview is
+not recorded. Set `RECORDING_ENABLED=1`, restart, and read it again.
+
 ## 2026-08-04 — Interviews are recorded, and a person can watch them back
 
 **What**

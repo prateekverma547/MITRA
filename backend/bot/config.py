@@ -73,3 +73,64 @@ class Settings:
 
 # Where local-run transcripts and metrics land. Gitignored.
 SESSIONS_DIR = REPO_ROOT / "backend" / "sessions"
+
+
+#: The one switch that turns interview recording on. Absent means off.
+#:
+#: **Off by default, and that is the safe direction.** Daily bills every recorded
+#: minute and then bills again to store it, so a recording that starts by
+#: accident costs money for as long as nobody notices. A recording that fails to
+#: start costs a reviewer the ability to watch one interview back. Those are not
+#: the same size of mistake.
+#:
+#: Everything the feature needs is still here: the storage path, the sweep,
+#: retention, deletion, playback and the tests. This flag governs one thing only,
+#: whether a recording is ever started, and it is deliberately not consulted
+#: anywhere else. In particular **the sweep does not read it**: recordings made
+#: before it was switched off still have to be collected from Daily and deleted
+#: there, and a flag that stopped that would strand them and keep billing.
+#:
+#: It lives here rather than in `app/recordings.py`, next to the sweep's own
+#: switch, because two separate processes have to agree on it: the bot subprocess
+#: decides whether to record, and the web app decides which consent notice to
+#: show. This module is the only configuration both of them already import, and
+#: it stays free of FastAPI, which the bot has no reason to load.
+RECORDING_ENABLED_ENV = "RECORDING_ENABLED"
+
+#: What counts as on. Anything else, including "false", "0" and the empty string,
+#: is off, so a half-set variable fails towards not spending money.
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+#: The one switch that turns the spoken acknowledgement on. Absent means off.
+#:
+#: **Off by default because it was built for a gap that did not exist.** The
+#: twelve seconds it was meant to cover were an artefact of reading transcript
+#: timestamps, which mark when a turn *finished*, so the interval between two of
+#: them is the second one being spoken. Composition never exceeded 1943ms.
+#:
+#: Left in the code rather than deleted. It could be worth rebuilding if it can
+#: be made to fire on what was actually just said and never over a candidate who
+#: is still talking, and neither is true today: on a real interview it spoke
+#: 0.2s after the candidate began a sentence, and elsewhere reflected back a
+#: phrase ninety seconds out of date.
+FILLER_ENABLED_ENV = "FILLER_ENABLED"
+
+
+def filler_enabled() -> bool:
+    """Whether the interviewer speaks while the next question is composed.
+
+    Read at the moment it is needed, like `recording_enabled`, so a test can set
+    it and the next call sees it.
+    """
+    return os.environ.get(FILLER_ENABLED_ENV, "").strip().lower() in _TRUTHY
+
+
+def recording_enabled() -> bool:
+    """Whether interviews are recorded. Read at the moment it is needed.
+
+    Not cached and not resolved at import, so a test can set it and the next
+    call sees it, and so the consent notice and the bot can never be answering
+    from two different snapshots of the environment.
+    """
+    return os.environ.get(RECORDING_ENABLED_ENV, "").strip().lower() in _TRUTHY

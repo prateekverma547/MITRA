@@ -127,12 +127,15 @@ async def test_a_hanging_recording_start_gives_up_rather_than_blocking(monkeypat
     assert reason and "did not acknowledge" in reason
 
 
-async def test_the_interview_keeps_running_when_the_recording_fails(client):
+async def test_the_interview_keeps_running_when_the_recording_fails(client, monkeypatch):
     """The whole point. The interview stays in progress, the reason is written
     down, and nothing raises out of the handler."""
     from app import db
     from bot.run_bot import begin_recording
 
+    # These three describe what happens when recording is on, so they turn it
+    # on. Off is the default and has its own tests below.
+    monkeypatch.setenv("RECORDING_ENABLED", "1")
     interview_id = await make_interview(status=db.InterviewStatus.IN_PROGRESS, ended_at=None)
 
     recording_on = await begin_recording(
@@ -157,7 +160,7 @@ class WillingTransport:
         return ("stream-1", None)
 
 
-async def test_the_recording_reference_is_written_while_the_call_is_live(client):
+async def test_the_recording_reference_is_written_while_the_call_is_live(client, monkeypatch):
     """Mid-session, not in the `finally` block.
 
     A killed process never reaches its `finally`, and a recording nobody has
@@ -167,6 +170,9 @@ async def test_the_recording_reference_is_written_while_the_call_is_live(client)
     from app import db
     from bot.run_bot import begin_recording
 
+    # These three describe what happens when recording is on, so they turn it
+    # on. Off is the default and has its own tests below.
+    monkeypatch.setenv("RECORDING_ENABLED", "1")
     interview_id = await make_interview(status=db.InterviewStatus.IN_PROGRESS, ended_at=None)
 
     assert await begin_recording(
@@ -181,12 +187,15 @@ async def test_the_recording_reference_is_written_while_the_call_is_live(client)
         assert interview.recording_offset_seconds is not None
 
 
-async def test_the_retention_deadline_is_set_from_the_interview_not_from_access(client):
+async def test_the_retention_deadline_is_set_from_the_interview_not_from_access(client, monkeypatch):
     """The clock starts at the interview. A window that reset whenever somebody
     opened the video would not be the promise the candidate was shown."""
     from app import db
     from bot.run_bot import begin_recording
 
+    # These three describe what happens when recording is on, so they turn it
+    # on. Off is the default and has its own tests below.
+    monkeypatch.setenv("RECORDING_ENABLED", "1")
     interview_id = await make_interview(status=db.InterviewStatus.IN_PROGRESS, ended_at=None)
     await begin_recording(
         WillingTransport(), interview_id=interview_id, session_id="s", clock_zero=0.0
@@ -667,37 +676,262 @@ def test_stopping_is_not_the_only_thing_that_ends_a_recording():
     assert "room empties" in source or "last participant leaves" in source
 
 
-def test_the_consent_notice_says_what_now_happens():
-    from pathlib import Path
+def rendered_page(monkeypatch, *, recording: bool) -> str:
+    """The candidate page as it is actually served, at one setting of the switch.
 
-    page = (
-        Path(__file__).resolve().parents[2] / "frontend" / "candidate" / "index.html"
-    ).read_text()
-    notice = page[page.index("<h2>Before you begin</h2>") : page.index("I understand and agree")]
+    Rendered rather than read off disk. The file now carries both versions of
+    the notice, so reading it proves nothing about what anybody is shown.
 
-    # Recorded, and it says so.
+    The cache is cleared because `_render_page` is `lru_cache`d, which is right
+    in production, where the environment does not change under a running
+    process, and wrong for a test that needs to see both settings.
+    """
+    from app.main import _render_page
+
+    monkeypatch.setenv("RECORDING_ENABLED", "1" if recording else "")
+    _render_page.cache_clear()
+    return _render_page("candidate/index.html")
+
+
+def rendered_notice(monkeypatch, *, recording: bool) -> str:
+    page = rendered_page(monkeypatch, recording=recording)
+    return page[page.index("<h2>Before you begin</h2>") : page.index("I understand and agree")]
+
+
+def test_the_notice_describes_a_recording_when_one_is_being_made(monkeypatch):
+    notice = rendered_notice(monkeypatch, recording=True)
+
     assert "recorded" in notice
     assert "video and sound" in notice
-    # A person may watch it.
+    # A person may watch it, and for how long it is kept.
     assert "watch the recording" in notice
-    # And for how long it is kept, from the constant rather than typed.
-    assert "{{RETENTION_DAYS}} days" in notice
-    # The claim Phase 1 made, which this change makes false, is gone.
-    assert "camera picture is not saved" not in notice
+    assert f"kept for {RECORDING_RETENTION_DAYS} days" in notice
+    # And the claim from before recording existed is not also on the page.
+    assert "The interview is not recorded" not in notice
 
 
-def test_the_notice_still_promises_no_analysis_of_the_video():
-    """A recording a person watches is a different thing from a recording a
-    system reads, and the candidate is told which this is."""
+def test_the_notice_does_not_describe_a_recording_when_none_is_being_made(monkeypatch):
+    """The point of the change rather than tidying after it.
+
+    A candidate is agreeing to this. A notice that describes a system we are not
+    running is the same fault recorded six times in the changelog, and it is
+    worse here than anywhere else it has happened.
+    """
+    notice = rendered_notice(monkeypatch, recording=False)
+
+    assert "The interview is not recorded" in notice
+    # Nothing anywhere in it claims a recording is kept, watched or shared.
+    assert "watch the recording" not in notice
+    assert "video and sound" not in notice
+    assert "days" not in notice, "a retention promise survived with recording off"
+
+
+def test_the_camera_is_still_described_as_on_either_way(monkeypatch):
+    """Recording went off. The camera did not."""
+    for recording in (True, False):
+        notice = rendered_notice(monkeypatch, recording=recording)
+        assert "camera and microphone are on" in notice, recording
+
+
+def test_the_transcript_is_described_either_way(monkeypatch):
+    """It is kept and shared in both settings, and it is the thing the candidate
+    is actually assessed on."""
+    for recording in (True, False):
+        notice = rendered_notice(monkeypatch, recording=recording)
+        assert "transcript" in notice
+        assert "shared with the employer" in notice
+        assert "not scored" in notice
+        assert "expression" in notice
+
+
+def test_the_device_check_follows_the_switch_too(monkeypatch):
+    for recording, expected, forbidden in (
+        (True, "on and recorded during the interview", "Nothing on this screen leaves"),
+        (False, "Nothing on this screen leaves", "on and recorded during the interview"),
+    ):
+        page = rendered_page(monkeypatch, recording=recording)
+        check = page[page.index("Your browser will ask for permission") : page.index('id="grant"')]
+        assert expected in check, recording
+        assert forbidden not in check, recording
+
+
+def test_no_marker_ever_reaches_the_browser(monkeypatch):
+    """The markers are a build detail. A candidate reading an HTML comment about
+    which half of a consent notice was suppressed is not the intent."""
+    for recording in (True, False):
+        page = rendered_page(monkeypatch, recording=recording)
+        assert "RECORDING ON" not in page, recording
+        assert "RECORDING OFF" not in page, recording
+
+
+# -- the switch itself -------------------------------------------------------
+
+
+def test_recording_is_off_unless_it_is_switched_on(monkeypatch):
+    """Off is the default, and a half-set variable stays off.
+
+    The wrong direction here costs money for as long as nobody notices; the
+    right direction costs a reviewer one video.
+    """
+    from bot.config import recording_enabled
+
+    monkeypatch.delenv("RECORDING_ENABLED", raising=False)
+    assert recording_enabled() is False
+
+    for value in ("1", "true", "TRUE", "yes", "on"):
+        monkeypatch.setenv("RECORDING_ENABLED", value)
+        assert recording_enabled() is True, value
+
+    for value in ("", "0", "false", "no", "off", "maybe", " "):
+        monkeypatch.setenv("RECORDING_ENABLED", value)
+        assert recording_enabled() is False, value
+
+
+class CountingTransport:
+    """Records whether Daily was asked to record at all."""
+
+    def __init__(self):
+        self.asked = 0
+
+    async def start_recording(self, *a, **k):
+        self.asked += 1
+        return ("stream-1", None)
+
+
+async def test_nothing_is_recorded_when_the_switch_is_off(client, monkeypatch):
+    """Daily is never asked, which is what stops the bill.
+
+    Asserting the interview record alone would not be enough: a recording that
+    started and was then forgotten about still costs a recorded minute and then
+    storage for as long as it sits there.
+    """
+    from app import db
+    from bot.run_bot import begin_recording
+
+    monkeypatch.delenv("RECORDING_ENABLED", raising=False)
+    interview_id = await make_interview(status=db.InterviewStatus.IN_PROGRESS, ended_at=None)
+    transport = CountingTransport()
+
+    assert await begin_recording(
+        transport, interview_id=interview_id, session_id="s", clock_zero=0.0
+    ) is False
+    assert transport.asked == 0, "Daily was asked to record with the switch off"
+
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, interview_id)
+        # The interview is untouched, and the panel already has a sentence for
+        # this state rather than a player.
+        assert interview.status == db.InterviewStatus.IN_PROGRESS
+        assert interview.recording_status == db.RecordingStatus.NOT_RECORDED
+        assert interview.recording_error is None
+
+
+async def test_turning_the_switch_on_restores_the_old_behaviour(client, monkeypatch):
+    """Nothing else has to be edited to get the feature back."""
+    from app import db
+    from bot.run_bot import begin_recording
+
+    monkeypatch.setenv("RECORDING_ENABLED", "1")
+    interview_id = await make_interview(status=db.InterviewStatus.IN_PROGRESS, ended_at=None)
+    transport = CountingTransport()
+
+    assert await begin_recording(
+        transport, interview_id=interview_id, session_id="s", clock_zero=0.0
+    ) is True
+    assert transport.asked == 1
+
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, interview_id)
+        assert interview.recording_status == db.RecordingStatus.RECORDING
+        assert interview.recording_started_at is not None
+        assert interview.recording_expires_at is not None
+        assert interview.recording_offset_seconds is not None
+
+
+async def test_the_sweep_still_collects_a_recording_made_before_the_switch_went_off(
+    client, monkeypatch
+):
+    """Switching recording off must not strand what is already there.
+
+    There is a recording sitting in Daily right now. It still has to be pulled
+    down and Daily's copy deleted, or it keeps accruing storage charges for
+    ever, which is the thing switching recording off was meant to stop.
+    """
+    from app import db, recordings
+    from bot.services.daily import DailyRecording
+
+    monkeypatch.delenv("RECORDING_ENABLED", raising=False)
+    interview_id = await make_interview(recording_status=db.RecordingStatus.RECORDING)
+    order = []
+
+    async def fake_find(*, api_key, room_name):
+        return DailyRecording(id="left-over-1", room_name=room_name, start_ts=0, duration_seconds=60)
+
+    async def fake_download(*, api_key, recording_id, destination):
+        order.append("download")
+        a_recording_file(destination)
+        return destination.stat().st_size
+
+    async def fake_delete(*, api_key, recording_id):
+        order.append("delete")
+
+    monkeypatch.setattr(recordings, "find_recording", fake_find)
+    monkeypatch.setattr(recordings, "download_recording", fake_download)
+    monkeypatch.setattr(recordings, "delete_recording", fake_delete)
+
+    counts = await recordings.run_sweep(api_key="test")
+
+    assert counts["stored"] == 1
+    assert order == ["download", "delete"], "Daily's copy was left behind"
+    async with db.get_sessionmaker()() as session:
+        interview = await session.get(db.Interview, interview_id)
+        assert interview.recording_status == db.RecordingStatus.STORED
+
+
+def test_the_sweep_does_not_read_the_recording_switch():
+    """Structural, because the consequence is invisible until a bill arrives.
+
+    If the sweep ever consults the flag, everything already sitting at Daily
+    stops being collected and stops being deleted the moment somebody turns
+    recording off, which is exactly when they were trying to stop paying for it.
+    """
     from pathlib import Path
 
-    page = (
-        Path(__file__).resolve().parents[2] / "frontend" / "candidate" / "index.html"
-    ).read_text()
-    notice = page[page.index("<h2>Before you begin</h2>") : page.index("I understand and agree")]
+    source = (Path(__file__).resolve().parents[1] / "app" / "recordings.py").read_text()
 
-    assert "not scored" in notice
-    assert "face" in notice and "expression" in notice
+    assert "recording_enabled" not in source
+    assert "RECORDING_ENABLED" not in source
+
+
+def test_only_the_bot_start_path_reads_the_switch():
+    """One flag, one place. A second reader is how a switch starts half working."""
+    import subprocess
+    from pathlib import Path
+
+    backend = Path(__file__).resolve().parents[1]
+    hits = subprocess.run(
+        ["grep", "-rln", "recording_enabled", "--include=*.py", str(backend)],
+        capture_output=True, text=True,
+    ).stdout.splitlines()
+    names = sorted(Path(h).name for h in hits)
+
+    assert names == ["config.py", "main.py", "run_bot.py", "test_recordings.py"], names
+
+
+def test_the_room_still_permits_recording_whatever_the_switch_says():
+    """Rooms are booked before the interview happens, sometimes a day before.
+
+    Withholding permission at booking time would mean flipping the switch on did
+    nothing for every interview already scheduled, and the flag would look
+    broken. Permission is not billed; starting a recording is.
+    """
+    import inspect
+
+    from bot.services import daily
+
+    source = inspect.getsource(daily.create_room)
+    assert '"enable_recording": "cloud"' in source
+    assert "recording_enabled" not in source
 
 
 def test_nothing_feeds_the_video_to_a_model():

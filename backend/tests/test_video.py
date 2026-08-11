@@ -100,24 +100,35 @@ def test_there_is_still_no_participant_grid():
 # -- what the candidate is told ----------------------------------------------
 
 
-def test_the_notice_describes_a_recording_that_is_actually_made():
-    """This test has now been true in both directions, and that is the point.
+def test_the_notice_describes_whatever_is_actually_happening():
+    """This test has now been true in three directions, and that is the point.
 
-    When it was written the notice promised a recording nothing made, so it
-    asserted the word was absent. Recording is real as of Phase 2, so the same
-    rule now requires the opposite: the notice claims one, and one happens. What
-    is being held constant is that the page and the system agree, never a
-    particular sentence.
+    First it asserted the notice must not mention a recording, because none was
+    made. Then recording shipped and it required the opposite. Now recording is
+    behind a switch that is off by default, so the assertion is about the page
+    tracking the switch rather than about any particular sentence. What is held
+    constant throughout is that the page and the system agree.
+
+    It reads the served page rather than the file, because the file now carries
+    both versions and reading it proves nothing about what a candidate sees. The
+    detail lives in `test_recordings.py`; this is the marker left where the last
+    two versions of the claim were made.
     """
-    notice = PAGE[PAGE.index("<h2>Before you begin</h2>") : PAGE.index("I understand and agree")]
+    assert "not recorded" in _notice_now()
 
-    assert "recorded" in notice
-    # The vague old wording, which said less than it seemed to.
-    assert "recorded and transcribed" not in notice
+
+def _notice_now() -> str:
+    """The notice as served under the current environment, recording off."""
+    from app.main import _render_page
+
+    _render_page.cache_clear()
+    page = _render_page("candidate/index.html")
+    return page[page.index("<h2>Before you begin</h2>") : page.index("I understand and agree")]
 
 
 def test_the_notice_no_longer_says_the_camera_is_unused():
-    notice = PAGE[PAGE.index("<h2>Before you begin</h2>") : PAGE.index("I understand and agree")]
+    """The camera stayed on when recording went off, so this holds either way."""
+    notice = _notice_now()
 
     assert "voice only" not in notice
     assert "Your camera is not used" not in notice
@@ -125,14 +136,13 @@ def test_the_notice_no_longer_says_the_camera_is_unused():
 
 
 def test_the_notice_says_what_is_actually_kept():
-    """Phase 1 required the notice to say the camera picture was not saved, which
-    was true then. Phase 2 saves it, so that sentence had to go and be replaced
-    by how long it is kept for."""
-    notice = PAGE[PAGE.index("<h2>Before you begin</h2>") : PAGE.index("I understand and agree")]
+    """Phase 1 said the camera picture was not saved. Phase 2 saved it and gave
+    a retention period instead. With recording switched off the transcript is
+    the only thing kept, and that is what it now says."""
+    notice = _notice_now()
 
-    assert "transcript" in notice
-    assert "Your camera picture is not saved" not in notice
-    assert "kept for {{RETENTION_DAYS}} days" in notice
+    assert "transcript is kept" in notice
+    assert "No video or sound from" in notice
     assert "not scored" in notice
 
 

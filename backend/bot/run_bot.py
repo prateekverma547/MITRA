@@ -37,7 +37,13 @@ from bot.blueprint_source import BlueprintUnavailable, resolve_blueprint
 from bot.brain.brain import InterviewBrain
 from bot.brain.drivers import OpenAIJudge
 from bot.brain_director import BrainDirector
-from bot.config import SESSIONS_DIR, MissingConfig, Settings
+from bot.config import (
+    RECORDING_ENABLED_ENV,
+    SESSIONS_DIR,
+    MissingConfig,
+    Settings,
+    recording_enabled,
+)
 from bot.observers import (
     TranscriptObserver,
     TurnLatencyObserver,
@@ -112,7 +118,20 @@ async def begin_recording(
     failure path can actually be tested. An interview surviving a broken
     recording is a claim, and this codebase has a history of claims of that shape
     turning out to be untrue.
+
+    **This is the only place the recording switch is read on the bot side, and
+    the check is first.** Off means Daily is never asked, so nothing is billed
+    for the minute or for storing it afterwards. Nothing else changes: the
+    interview runs exactly as it would have, and the interview record keeps its
+    default `not_recorded`, which the panel already has a sentence for.
     """
+    if not recording_enabled():
+        logger.info(
+            f"[{session_id}] recording is off ({RECORDING_ENABLED_ENV} is not set), "
+            f"so this interview is not being recorded"
+        )
+        return False
+
     failure = await start_recording(transport)
     if failure:
         logger.error(f"[{session_id}] NOT RECORDING: {failure}")

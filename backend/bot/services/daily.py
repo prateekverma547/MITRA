@@ -82,6 +82,14 @@ async def create_room(
             # Permission to record, not an instruction to. Nothing starts until
             # the bot asks, which it does once it is in the room, so a room that
             # is booked and never used records nothing.
+            #
+            # **Deliberately not gated on `RECORDING_ENABLED`.** Rooms are
+            # created when an interview is scheduled and used whenever the
+            # candidate turns up, which can be a day later. Withholding
+            # permission here would mean every room booked while recording was
+            # off could never record, so switching it back on would silently do
+            # nothing for those interviews and the flag would look broken.
+            # Permission costs nothing; only starting a recording is billed.
             "enable_recording": "cloud",
         },
     }
