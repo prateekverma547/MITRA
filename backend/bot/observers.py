@@ -38,8 +38,10 @@ from pipecat.frames.frames import (
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
-from pipecat.metrics.metrics import TurnMetricsData
+from pipecat.metrics.metrics import LLMUsageMetricsData, TurnMetricsData
 from pipecat.observers.base_observer import BaseObserver, FramePushed
+
+from bot.turn_taking import SMART_TURN_STOP_SECS
 
 
 #: A turn that ends and is resumed within this many seconds did not end because
@@ -84,6 +86,11 @@ class TurnRecord:
     #: Smart-turn model verdict that ended the turn, if it was the model.
     model_probability: float | None = None
     was_interrupted: bool = False
+    #: Input tokens the composition call actually sent. Recorded because a
+    #: rising prompt and a contended event loop look identical in a latency
+    #: number, and separating them once took a whole session and a lucky
+    #: observation about timer precision.
+    prompt_tokens: int | None = None
     #: Seconds from true end of speech until the STT transcript for that
     #: segment arrived. This is the quantity Pipecat's `ttfs_p99_latency`
     #: is supposed to describe; measuring ours lets us set it from evidence
@@ -121,6 +128,7 @@ class TurnRecord:
             "model_probability": _round(self.model_probability, 3),
             "was_interrupted": self.was_interrupted,
             "stt_lag_s": [round(s, 2) for s in self.stt_lag_s],
+            "prompt_tokens": self.prompt_tokens,
         }
 
 
@@ -232,6 +240,12 @@ class TurnLatencyObserver(_DedupObserver):
             for item in frame.data:
                 if isinstance(item, TurnMetricsData) and self._current:
                     self._current.model_probability = item.probability
+                elif isinstance(item, LLMUsageMetricsData) and self._turns:
+                    # Attached to the turn that just closed, not the open one.
+                    # A record is finished the moment first audio goes out, and
+                    # usage arrives after the model has finished generating, so
+                    # by the time this lands `_current` is already None.
+                    self._turns[-1].prompt_tokens = item.value.prompt_tokens
 
     def _finish_turn(self):
         if not self._current:
@@ -247,16 +261,49 @@ class TurnLatencyObserver(_DedupObserver):
         self._current = None
 
     def summary(self) -> dict:
-        """Aggregate the DoD numbers."""
+        """Aggregate the DoD numbers.
+
+        **Time to first audio is bimodal and a median cannot describe it.** A
+        turn either ends because the smart-turn model was confident, at roughly
+        1.7s, or because it was unsure and the four-second fallback expired, at
+        roughly 5.4s. There is almost nothing in between: measured across five
+        real interviews the two modes were 1570-1815ms and 4808-5469ms, and both
+        were *identical* in every one of them.
+
+        Only the mix moves. It went from 36-47% fallback to 64% when a different
+        candidate sat down, and because that crosses one half, the median stepped
+        from one mode to the other in a single jump: 2.04s to 5.27s. The panel
+        reported a 2.6x regression in a system that had not changed, and
+        diagnosing it took a session.
+
+        So the median stays, because it is the DoD number and it is comparable
+        to every figure already recorded, but it is no longer reported alone. The
+        mean moves with the mix instead of stepping across it, and the two mode
+        medians say whether a mode itself moved or only how often each was hit.
+        Those are different facts: the first is the system getting slower, the
+        second is this candidate being waited for more.
+        """
         ttfas = sorted(t.ttfa_ms for t in self._turns if t.ttfa_ms is not None)
         endpointings = [t.endpointing_ms for t in self._turns if t.endpointing_ms is not None]
         pauses = [p for t in self._turns for p in t.tolerated_pauses]
         stt_lags = sorted(s for t in self._turns for s in t.stt_lag_s)
+        prompt_tokens = sorted(
+            t.prompt_tokens for t in self._turns if t.prompt_tokens is not None
+        )
+
         return {
             "turns_measured": len(ttfas),
             "ttfa_median_ms": _round(_median(ttfas)),
             "ttfa_p90_ms": _round(_percentile(ttfas, 0.9)),
             "ttfa_max_ms": _round(max(ttfas)) if ttfas else None,
+            # The mean, and the two modes kept apart. If a mode itself moves the
+            # system got slower; if only the share moves, this candidate was
+            # waited for more. Those need different answers.
+            **bimodal_latency([t.to_dict() for t in self._turns]),
+            # Evidence for telling a growing prompt apart from a busy event
+            # loop, which look the same in a latency number.
+            "prompt_tokens_median": _round(_median(prompt_tokens)),
+            "prompt_tokens_max": max(prompt_tokens) if prompt_tokens else None,
             "endpointing_median_ms": _round(_median(sorted(endpointings))),
             # Evidence for tuning ttfs_p99_latency in services/stt.py.
             "stt_lag_median_s": _round(_median(stt_lags), 2),
@@ -283,6 +330,49 @@ class TurnLatencyObserver(_DedupObserver):
                 else None
             ),
         }
+
+
+#: Endpointing at or above this counts as having waited out the fallback rather
+#: than having been released by the turn model. Derived from
+#: `SMART_TURN_STOP_SECS`, not chosen: the fallback fires within 5ms of that
+#: constant, and the fast mode sits three and a half seconds below it.
+_FALLBACK_ENDPOINTING_MS = SMART_TURN_STOP_SECS * 1000 * 0.9
+
+
+def bimodal_latency(turns: list[dict]) -> dict:
+    """The two modes of time to first audio, from stored per-turn samples.
+
+    A pure function over the dicts that `TurnRecord.to_dict` produces, so it can
+    be computed when a session ends and again when an old one is read back.
+    Interviews recorded before these fields existed still have their per-turn
+    samples, and those are all this needs.
+    """
+    ttfas = sorted(t["ttfa_ms"] for t in turns if t.get("ttfa_ms") is not None)
+    if not ttfas:
+        return {
+            "ttfa_mean_ms": None,
+            "ttfa_median_ready_ms": None,
+            "ttfa_median_waiting_ms": None,
+            "turns_waiting": 0,
+            "fallback_share": None,
+        }
+    waiting = sorted(
+        t["ttfa_ms"] for t in turns
+        if t.get("ttfa_ms") is not None
+        and (t.get("endpointing_ms") or 0) >= _FALLBACK_ENDPOINTING_MS
+    )
+    ready = sorted(
+        t["ttfa_ms"] for t in turns
+        if t.get("ttfa_ms") is not None
+        and (t.get("endpointing_ms") or 0) < _FALLBACK_ENDPOINTING_MS
+    )
+    return {
+        "ttfa_mean_ms": _round(sum(ttfas) / len(ttfas)),
+        "ttfa_median_ready_ms": _round(_median(ready)),
+        "ttfa_median_waiting_ms": _round(_median(waiting)),
+        "turns_waiting": len(waiting),
+        "fallback_share": _round(len(waiting) / len(ttfas), 2),
+    }
 
 
 def _median(sorted_values: list[float]) -> float | None:

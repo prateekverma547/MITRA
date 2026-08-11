@@ -291,3 +291,140 @@ def test_the_confidence_bar_is_above_pipecats_coin_flip():
     from bot.turn_taking import TURN_END_CONFIDENCE
 
     assert 0.5 < TURN_END_CONFIDENCE < 1.0
+
+
+# -- the two modes of time to first audio ------------------------------------
+
+
+def _turn(ttfa, endpointing):
+    return {"ttfa_ms": ttfa, "endpointing_ms": endpointing}
+
+
+def test_a_session_that_never_waited_reports_no_fallback():
+    from bot.observers import bimodal_latency
+
+    got = bimodal_latency([_turn(1700, 515), _turn(1650, 520), _turn(1800, 530)])
+
+    assert got["fallback_share"] == 0
+    assert got["turns_waiting"] == 0
+    assert got["ttfa_median_waiting_ms"] is None
+    assert got["ttfa_median_ready_ms"] == 1700
+
+
+def test_a_session_that_always_waited_reports_a_full_fallback():
+    from bot.observers import bimodal_latency
+
+    got = bimodal_latency([_turn(5400, 4200), _turn(5500, 4201), _turn(5300, 4198)])
+
+    assert got["fallback_share"] == 1
+    assert got["turns_waiting"] == 3
+    assert got["ttfa_median_ready_ms"] is None
+    assert got["ttfa_median_waiting_ms"] == 5400
+
+
+def test_a_bimodal_session_reports_a_mean_between_the_modes():
+    """**The case that was missed.**
+
+    Time to first audio has two modes and almost nothing in between. When the
+    share of waiting turns crossed one half the median stepped from one mode to
+    the other in a single jump, and the panel reported a 2.6x regression in a
+    system that had not changed. The mean moves with the mix; the median steps
+    across it.
+    """
+    from bot.observers import bimodal_latency
+
+    # Eight ready turns and fourteen waiting, the real shape of int_7ffd1be01f56.
+    turns = [_turn(1700, 515) for _ in range(8)] + [_turn(5450, 4200) for _ in range(14)]
+    got = bimodal_latency(turns)
+
+    ready, waiting = got["ttfa_median_ready_ms"], got["ttfa_median_waiting_ms"]
+    assert ready == 1700 and waiting == 5450
+    # The median sits ON a mode. That is the defect, and it is pinned here so a
+    # future reader can see why the mean is reported next to it.
+    ttfas = sorted(t["ttfa_ms"] for t in turns)
+    median = ttfas[len(ttfas) // 2]
+    assert median in (ready, waiting)
+    # The mean sits between them, which is what makes it usable.
+    assert ready < got["ttfa_mean_ms"] < waiting
+    assert got["fallback_share"] == 0.64
+
+
+def test_no_measured_turns_is_not_a_crash():
+    from bot.observers import bimodal_latency
+
+    got = bimodal_latency([])
+
+    assert got["fallback_share"] is None
+    assert got["ttfa_mean_ms"] is None
+    assert got["turns_waiting"] == 0
+
+
+def test_the_fallback_cut_comes_from_the_turn_taking_constant():
+    """Not a round number. The fallback fires within 5ms of the constant and the
+    fast mode sits three and a half seconds below it, so nothing lands near."""
+    from bot.brain.state import BrainConfig  # noqa: F401  (import-order guard)
+    from bot.observers import _FALLBACK_ENDPOINTING_MS
+    from bot.turn_taking import SMART_TURN_STOP_SECS
+
+    assert _FALLBACK_ENDPOINTING_MS < SMART_TURN_STOP_SECS * 1000
+    assert _FALLBACK_ENDPOINTING_MS > 602  # the slowest measured "ready" turn
+
+
+def test_an_old_interview_backfills_its_modes_on_read():
+    """`latency_summary` is computed when a session ends, so interviews recorded
+    before these fields existed do not carry them. The per-turn samples were
+    always stored, so the same function fills them in on read and nothing is
+    written back."""
+    from app.interviews import _with_latency_modes
+
+    old = {
+        "latency_summary": {"ttfa_median_ms": 5272, "ttfa_p90_ms": 5713},
+        "turns": [_turn(1700, 515)] * 8 + [_turn(5450, 4200)] * 14,
+    }
+
+    got = _with_latency_modes(old)["latency_summary"]
+
+    assert got["ttfa_median_ms"] == 5272, "the existing numbers are left alone"
+    assert got["fallback_share"] == 0.64
+    assert got["ttfa_median_ready_ms"] == 1700
+    # Nothing was mutated in place.
+    assert "fallback_share" not in old["latency_summary"]
+
+
+def test_backfill_leaves_a_session_that_already_has_the_modes_alone():
+    from app.interviews import _with_latency_modes
+
+    already = {"latency_summary": {"fallback_share": 0.1, "ttfa_mean_ms": 1}, "turns": []}
+
+    assert _with_latency_modes(already) is already
+
+
+def test_backfill_survives_an_interview_with_no_samples():
+    from app.interviews import _with_latency_modes
+
+    assert _with_latency_modes(None) is None
+    assert _with_latency_modes({}) == {}
+    assert _with_latency_modes({"latency_summary": {}})["latency_summary"] == {}
+
+
+def test_the_panel_shows_both_modes_and_survives_an_empty_session():
+    """No JS harness, so this reads the file. What matters is that the label no
+    longer says median, and that a session with nothing measured still renders."""
+    from pathlib import Path
+
+    panel = (
+        Path(__file__).resolve().parents[2] / "frontend" / "admin" / "admin.js"
+    ).read_text()
+    block = panel[panel.index("function responseTime"):panel.index("function brainCard")]
+
+    # The label changed with the number. A figure called median that is not a
+    # median is the failure this repo has recorded repeatedly.
+    assert "Median response" not in panel
+    assert "<div>Response time</div>" in panel
+
+    assert "when ready" in block          # the system
+    assert "waited to be sure on" in block  # the candidate
+    assert "overall" in block             # the mean, not the median
+    # Every path returns something, including a session with nothing measured.
+    assert "ready == null && mean == null" in block
+    assert '"n/a"' in block

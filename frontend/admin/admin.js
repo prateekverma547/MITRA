@@ -1054,6 +1054,41 @@ function quoteBlock(q) {
   </blockquote>`;
 }
 
+// How long the interviewer took to answer, said in a way that cannot mislead.
+//
+// **The number here used to be a median, and a median cannot describe this.**
+// A turn ends one of two ways: the turn model was confident and the interviewer
+// answers in about 1.7s, or it was unsure and waits out the four second
+// fallback before answering in about 5.4s. Across five real interviews both
+// modes were identical every time; only the proportion moved. When it crossed
+// one half the median stepped from 2.04s to 5.27s and this panel reported a
+// 2.6x regression in a system nobody had touched.
+//
+// So it shows the speed when the interviewer was ready to answer, which is the
+// system, and separately how often it waited, which is the candidate. Those are
+// different facts and the old line could not tell them apart. The mean is given
+// as the overall figure because it moves with the mix rather than jumping
+// across it.
+function responseTime(latency) {
+  const ready = latency.ttfa_median_ready_ms;
+  const mean = latency.ttfa_mean_ms;
+  if (ready == null && mean == null) {
+    return latency.ttfa_median_ms
+      ? `${(latency.ttfa_median_ms / 1000).toFixed(2)}s median`
+      : "n/a";
+  }
+  const share = latency.fallback_share;
+  const secs = (ms) => `${(ms / 1000).toFixed(2)}s`;
+  // No waiting at all: one number is the whole truth, so say only that.
+  if (!share) return `${secs(ready ?? mean)} when ready`;
+  const waited = Math.round(share * 100);
+  return `${secs(ready)} when ready, ${secs(mean)} overall`
+    + `<div class="small muted">waited to be sure on ${waited}% of turns`
+    + `${latency.ttfa_median_waiting_ms
+        ? `, ${secs(latency.ttfa_median_waiting_ms)} on those` : ""}</div>`;
+}
+
+
 function brainCard(iv, metrics, latency) {
   const turns = iv.transcript?.turns || [];
   const outcomes = (iv.section_outcomes || []).filter((o) => o.turns_spent > 0);
@@ -1069,8 +1104,8 @@ function brainCard(iv, metrics, latency) {
       <div class="kv">
         <div>Length</div><div>${((iv.transcript?.duration_seconds || 0) / 60).toFixed(1)} min</div>
         <div>Turns</div><div>${turns.length}</div>
-        <div>Median response</div>
-        <div>${latency.ttfa_median_ms ? (latency.ttfa_median_ms / 1000).toFixed(2) + "s" : "n/a"}</div>
+        <div>Response time</div>
+        <div>${responseTime(latency)}</div>
         <div>Longest pause tolerated</div>
         <div>${latency.longest_tolerated_pause_s == null
           ? "n/a" : `${latency.longest_tolerated_pause_s}s`}</div>

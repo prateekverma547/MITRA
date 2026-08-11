@@ -12,6 +12,89 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-11 — The panel reported a 2.6x latency regression that had not happened
+
+**What**
+
+The session page said "Median response 5.27s". It now says how fast the
+interviewer was when it was ready to answer, how often it waited before
+answering, and the overall figure. The word median is gone, because the number
+was not describing what the label claimed.
+
+Every interview already recorded carries the new view, computed from samples
+that were always stored.
+
+**Why**
+
+**Time to first audio has two modes and almost nothing in between.** A turn ends
+one of two ways: the smart-turn model was confident, and the interviewer answers
+in about 1.7 seconds, or it was unsure and waits out the four second fallback,
+answering in about 5.4. Across five real interviews:
+
+| interview | ready | waiting | share waiting | median | mean |
+| --- | --- | --- | --- | --- | --- |
+| int_edd2a30a5ea7 | 1693ms | 4808ms | 36% | 1865 | 2934 |
+| int_c9e7d27bd702 | 1570ms | 5200ms | 43% | 1931 | 2950 |
+| int_0603d5dfc7d5 | 1815ms | 5404ms | 36% | 1914 | 3125 |
+| int_3edf8d579d2c | 1611ms | 5398ms | 47% | 2044 | 3479 |
+| int_7ffd1be01f56 | **1692ms** | **5469ms** | **64%** | **5272** | 4330 |
+
+**Both modes are identical in all five.** Nothing got slower. What changed is
+the mix, and it changed because a different candidate sat down: median
+`model_probability` 0.765 against 0.85 to 0.92, and the fallback fired on 64% of
+turns instead of 36 to 47.
+
+Because that crosses one half, the median stepped from one mode to the other in
+a single jump. 2.04s became 5.27s and the system was untouched. **A session of
+work went into diagnosing a regression that had not occurred**, and the thing
+that eventually settled it was that the fourteen fallback values spanned four
+milliseconds, which is a timer expiring rather than a loaded event loop.
+
+The mean tells the truth the median cannot: 3479 to 4330ms, +24%. Real, felt by
+the candidate, and a quarter of what was reported.
+
+**How**
+
+`bot/observers.py`. `bimodal_latency()` is a pure function over the per-turn
+sample dicts, so it can be computed when a session ends and again when an old
+one is read back, and the two cannot drift. It returns the mean, the median
+within each mode, the count of waiting turns, and the share.
+
+The cut between the modes is `SMART_TURN_STOP_SECS * 0.9`, taken from the
+constant rather than picked. The gap it sits in is enormous: measured ready
+turns run 490 to 602ms and fallback turns 4197 to 4202ms, so nothing lands near
+it.
+
+`app/interviews.py` fills the fields in on read for interviews recorded before
+they existed. `latency_summary` is computed at write time, so those five would
+otherwise show nothing; their per-turn samples were always stored, so it is
+derivable rather than lost. Nothing is written back.
+
+`frontend/admin/admin.js`. The line reads
+*"1.69s when ready, 4.33s overall"* with *"waited to be sure on 64% of turns,
+5.47s on those"* underneath. The first number is the system, the second is the
+candidate, and the old line could not tell them apart. A session that never
+waits shows one number and no second line.
+
+**Also added, because it was cheap and the next version of this question will
+need it:** per-turn `prompt_tokens`, captured from the usage metrics the
+observer already receives. A growing prompt and a busy event loop look identical
+in a latency number, and this time it took a lucky observation about timer
+precision to separate them. It is an observer, so nothing on the spoken path
+changed and no new measurement was added.
+
+**Not done**
+
+- `SMART_TURN_STOP_SECS` is untouched. It is the largest real latency in the
+  product and a deliberate trade, and this candidate's `false_turn_end_rate` was
+  0.07, the lowest of the five: the four seconds bought exactly what they are
+  there to buy.
+- The fallback share is now visible but nothing acts on it. If it turns out that
+  some candidates are systematically waited for, the answer is a listening
+  session, not a smaller timeout.
+- `prompt_tokens` is recorded and not yet reported anywhere. It is evidence for
+  the next investigation, not a number for the panel.
+
 ## 2026-08-04 — Interviews are recorded, and a person can watch them back
 
 **What**

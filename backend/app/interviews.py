@@ -143,6 +143,34 @@ def _settings() -> Settings:
     return Settings.load()
 
 
+def _with_latency_modes(session_metrics: dict | None) -> dict | None:
+    """Fill in the two latency modes for an interview recorded before they existed.
+
+    Time to first audio is bimodal, and until now only the median was stored. A
+    median cannot describe two modes: when the share of turns that waited out
+    the endpointing fallback crossed one half, it stepped from 2.04s to 5.27s
+    while both modes stayed exactly where they were.
+
+    The per-turn samples were always stored, so this is derivable rather than
+    lost. Computed on read by the same function that computes it on write, so
+    the two cannot drift, and nothing is written back.
+    """
+    if not session_metrics:
+        return session_metrics
+    summary = session_metrics.get("latency_summary")
+    if not isinstance(summary, dict) or "fallback_share" in summary:
+        return session_metrics
+
+    from bot.observers import bimodal_latency
+
+    turns = session_metrics.get("turns")
+    if not isinstance(turns, list):
+        return session_metrics
+    enriched = dict(session_metrics)
+    enriched["latency_summary"] = {**summary, **bimodal_latency(turns)}
+    return enriched
+
+
 def _validated_report(interview_id: str, stored: dict | None) -> dict | None:
     """Re-validate a stored report on the way out, so computed fields exist.
 
@@ -423,7 +451,7 @@ async def get_interview(interview_id: str) -> InterviewView:
             failure_reason=interview.failure_reason,
             transcript=interview.transcript,
             section_outcomes=interview.section_outcomes,
-            session_metrics=interview.session_metrics,
+            session_metrics=_with_latency_modes(interview.session_metrics),
             feedback_report=_validated_report(interview.id, interview.feedback_report),
             feedback_status=interview.feedback_status,
             feedback_error=interview.feedback_error,
