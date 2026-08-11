@@ -202,6 +202,120 @@ term to a candidate five times running, which is what it was built for.
 
 ---
 
+## 2026-08-11 — A scripted candidate who is good at the job, and a baseline against them
+
+**What**
+
+Every scripted candidate this repo has is a bad candidate. Vague, deflecting, or
+jargon with nothing behind it, and every one of them uses an unexplained term in
+every single answer. So the interviewer's own questions and the "ask about that
+term" instruction never had to compete for a turn, and two changes made this week
+were measured against conversations that could not detect what they changed.
+
+There is now a candidate who answers well: ordinary vocabulary of the field
+("LLM", "fine tuning", "agent"), real specifics next to it (Sarvam-M 24B, GPTQ
+4-bit at 14.2 GB, 97.08 percent on 308 held-out examples, KL divergence), and a
+few honest "I don't know"s where the real person had them. Every answer is taken
+from a real interview rather than invented.
+
+Also here: a blueprint fixture that carries claims about a real person, and a
+signal that was inverted has been replaced.
+
+**No behaviour changed.** Nothing in the prompt, the brain or the judge was
+touched. This is a candidate to measure against and the measurement itself.
+
+**Why**
+
+The case that matters most for a hiring tool is the candidate who is good, and
+nothing tested it. It is also the only case where a wasted turn is visible:
+asking a bad candidate what they mean is the right question, and asking a senior
+engineer what an LLM is, is a turn thrown away. Both have to be possible from
+the same script or the difference cannot be seen.
+
+**The old specific-terms signal was inverted and is gone.** It counted a probed
+term as specific when it shared a word with the seed questions or the CV claims.
+Scored against a real interview it called "agent", "LLM" and "fine tuning"
+specific and "KL divergence" generic, which is exactly backwards: the seed
+questions are written in the field's vocabulary too, so overlapping with them is
+evidence of nothing.
+
+**What the new one does, and what it gets wrong.** Deciding whether a term names
+one particular thing or a category is semantic. "LLM" and "ECAPA" are the same
+length, the same shape and the same capitalisation, and only knowing what they
+refer to tells them apart. Doing it properly needs a model call, and this signal
+runs fifteen times per comparison, so it does not make one. The proxy is: a digit
+or an internal capital. It misses named methods and single proper nouns, so "KL
+divergence", "GPTQ", "systemd" and "Whisper-small" read as generic when a person
+would call all four specific.
+
+That error direction is chosen. A false "specific" hides the failure the signal
+exists to catch, which is what the old one did. A false "generic" overstates the
+waste and sends a reader to the transcript. **The probed terms are now printed
+verbatim next to the count**, because reading four strings settles in five
+seconds what the proxy cannot settle at all.
+
+**How**
+
+- `backend/bot/brain/harness.py` — `competent_candidate()`, section-keyed across
+  all six competencies plus the opening. Thirty-two answers, five or six per
+  section, because a section runs four or five turns and a bank of two means the
+  rest of it is the fallback reply. The first baseline was run and thrown away
+  for exactly that: three sections were mostly fallback, which measured the
+  script rather than the interviewer.
+- `backend/bot/fixtures/ml_senior.json` — new fixture, derived from the real
+  blueprint the last interview ran against. **It carries six `claims_to_verify`;
+  the two existing fixtures carry none**, which is why the specific-terms signal
+  had nothing to score against and still printed a number.
+- `backend/scripts/compare_models.py` — `competent` scenario; `SCENARIO_BLUEPRINT`
+  so a scenario can name its own fixture (`run_one` previously always loaded the
+  Senior PM one, and an ML engineer's answers against a PM blueprint would
+  measure the off-topic redirect instead); `_specific_terms` rewritten.
+
+One defect was found in the new signal by reading its first output: the brain
+keys raise counts by `term.lower()`, so "LiveKit Agents" arrived as "livekit
+agents" and the internal-capital rule could never fire. The casing is recovered
+from the transcript in the script rather than by changing what the brain stores.
+
+**Deliberately not done**
+
+- No prompt, brain or judge change of any kind.
+- The reordering from earlier today stays unmerged and unproven.
+- Nothing was tuned to make the baseline read better.
+- The proxy does not make a model call, and is stated as a proxy everywhere it
+  appears.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 677 passed, 22 skipped
+    uv run python scripts/compare_models.py --scenarios competent \
+        --models gpt-4.1-mini --runs 3
+
+**What the baseline says**
+
+Three runs, gpt-4.1-mini. Seed questions asked: 7, 8 and 10 of 24. The
+interviewer reached 4, 6 and 5 of the six CV claims. Median interviewer turn: 15,
+20 and 16 words, and it is now doing about 31 percent of the talking rather than
+the 48 percent measured on a real call. The communication section asked about
+communicating 4, 3 and 2 times and about mechanism zero times, in every run.
+Let-gos: 3 queued, **1 actually spoken**.
+
+**The finding is the evaluation section, and it is the imitation effect.** It
+asked 0 of its 4 seed questions in all three runs. All five of its turns, in all
+three runs, are the same sentence: "You said LoRA. Walk me through how that
+actually works", repeated with the term barely changing. **The brain sanctioned
+none of them** — no term probe was queued in that section in any run — so this is
+the model copying the shape of its own previous turn out of the verbatim window,
+which is now the fourth separate problem that effect has caused.
+
+The cost is exact and readable. That section exists to test how this person
+evaluates a model, and the candidate is holding 97.08 percent on 308 held-out
+examples, why accuracy rather than a language metric, and KL divergence for
+comparing distributions. **None of the three was ever asked for.** The section
+spent every turn asking what LoRA is.
+
+---
+
 ## 2026-08-11 — The section's own questions now come before the term block, and it did not help
 
 **What**

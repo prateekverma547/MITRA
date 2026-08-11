@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "blueprint_id": "ml_senior",
+  "evaluation_spec": {
+    "schema_version": 1,
+    "role_title": "Senior AI/ML Engineer \u2014 Applied LLM and Voice",
+    "seniority": "Senior",
+    "experience_expectation": "4+ years in machine learning, with at least 2 years shipping to production. Strong Python and ML experience (inferred from the JD, not specified by you).",
+    "competencies": [
+      {
+        "id": "applied_llm_depth",
+        "name": "Depth in Applied LLMs",
+        "description": "Can discuss, at a conceptual level, the process and reasoning behind fine-tuning, serving, and evaluating LLMs in production settings. Explains tradeoffs and choices clearly.",
+        "weight": 0.35
+      },
+      {
+        "id": "evaluation_reasoning",
+        "name": "Evaluation Reasoning",
+        "description": "Explains how and why evaluation metrics and methods were chosen for past LLM projects. Can articulate what makes an evaluation meaningful and how to design experiments that could disprove their own hypothesis.",
+        "weight": 0.25
+      },
+      {
+        "id": "ml_service_deployment",
+        "name": "ML Service Deployment and Debugging",
+        "description": "Demonstrates ability to deploy and debug their own ML services using containers and cloud tools. Does not need deep infrastructure expertise, but should be comfortable with the basics.",
+        "weight": 0.15
+      },
+      {
+        "id": "client_communication",
+        "name": "Client Communication",
+        "description": "Can explain technical findings and evaluation results clearly to non-technical stakeholders. Handles negative or unexpected results with honesty and clarity.",
+        "weight": 0.1
+      },
+      {
+        "id": "python_ml_basics",
+        "name": "Python and ML Fundamentals",
+        "description": "Shows strong working knowledge of Python and core ML concepts, as relevant to applied LLM work (inferred from the JD, not specified by you).",
+        "weight": 0.1
+      },
+      {
+        "id": "voice_audio_exposure",
+        "name": "Voice/Audio Exposure",
+        "description": "Has some exposure to real-time audio or voice agent systems, even if not a primary focus (inferred from the JD, not specified by you).",
+        "weight": 0.05
+      }
+    ],
+    "red_flags": [
+      "Cannot explain why specific evaluation metrics or methods were chosen",
+      "Describes evaluation or deployment in vague or generic terms with no real examples",
+      "Cannot describe a time they deployed or debugged their own ML service",
+      "Avoids or deflects when asked about negative results or failures"
+    ],
+    "duration_minutes": 20,
+    "overrun_grace_minutes": 5,
+    "language": "en",
+    "tone": "Direct, technical, and practical. Focus on real-world application and clear communication."
+  },
+  "candidate_name": "Karan",
+  "candidate_summary": "Karandeep Saluja is an AI/ML engineer with five years of experience building production machine learning systems, including two years focused on real-time voice agents and applied LLM work. He has deployed multiple voice agents using LiveKit Agents and OpenAI Realtime, and has experience with model fine-tuning, quantisation, and MLOps on cloud platforms like SageMaker. His background includes work in speech/audio, computer vision, and platform observability, as well as ownership of ML service deployment and maintenance.",
+  "claims_to_verify": [
+    {
+      "claim": "Built six production voice agents on LiveKit Agents with OpenAI Realtime, deployed on a shared Ubuntu VM under systemd.",
+      "source": "cv"
+    },
+    {
+      "claim": "Established a pattern for voice agent safety guardrails, moving rules from prompts to Python code, resulting in 100 percent success on emergency routing.",
+      "source": "cv"
+    },
+    {
+      "claim": "Replaced GPT-4o with a fine-tuned Sarvam-M 24B for a health-tech tool call classifier, achieving 97.08 percent decision accuracy against the GPT-4o reference.",
+      "source": "cv"
+    },
+    {
+      "claim": "Quantised the Sarvam-M 24B model to GPTQ 4-bit at 14.2 GB with statistically flat accuracy against the bf16 baseline.",
+      "source": "cv"
+    },
+    {
+      "claim": "Built an audio language identification prototype using VoxLingua107 ECAPA and Whisper-small, benchmarked on FLEURS across seven Indian languages.",
+      "source": "cv"
+    },
+    {
+      "claim": "Built the observability stack for an internal AI governance platform using OTel Collector, Tempo, Prometheus, Loki, Grafana, Langfuse, and Metabase.",
+      "source": "cv"
+    }
+  ],
+  "opening_minutes": 2.0,
+  "closing_minutes": 2.0,
+  "competency_plans": [
+    {
+      "competency_id": "applied_llm_depth",
+      "name": "Depth in Applied LLMs",
+      "target_depth": "At senior level, expects detailed discussion of end-to-end LLM fine-tuning, serving, and productionisation, including tradeoffs and reasoning for choices made, with clear evidence of hands-on leadership.",
+      "seed_questions": [
+        "Can you walk me through a recent project where you fine-tuned or deployed an LLM in production?",
+        "What led you to replace GPT-4o with Sarvam-M 24B for the health-tech tool call classifier, and how did you approach the fine-tuning process?",
+        "How did you decide on the training setup, including the use of bf16 LoRA and the choice of SageMaker ml.g7e.2xlarge?",
+        "What tradeoffs did you encounter when quantising Sarvam-M 24B to GPTQ 4-bit, and how did you validate that accuracy remained flat?"
+      ],
+      "time_budget_minutes": 3.0
+    },
+    {
+      "competency_id": "evaluation_reasoning",
+      "name": "Evaluation Reasoning",
+      "target_depth": "Should show clear, practical reasoning for metric selection and experiment design, including how they validated model improvements and handled ambiguous or negative results.",
+      "seed_questions": [
+        "Can you describe how you evaluated the performance of your LLM or voice agent models in production?",
+        "For the Sarvam-M 24B classifier, what metrics did you use to measure decision accuracy and why?",
+        "How did you establish that the quantised model's accuracy was statistically flat compared to the bf16 baseline?",
+        "Can you give an example of a time when evaluation results were negative or ambiguous, and how you responded?"
+      ],
+      "time_budget_minutes": 3.0
+    },
+    {
+      "competency_id": "ml_service_deployment",
+      "name": "ML Service Deployment and Debugging",
+      "target_depth": "Should demonstrate hands-on experience deploying and debugging ML services using containers, cloud, or orchestration tools, and discuss how issues were identified and resolved.",
+      "seed_questions": [
+        "What does your typical deployment process look like for a production ML service?",
+        "Can you tell me about deploying the voice agents on a shared Ubuntu VM under systemd and any challenges you faced?",
+        "How did you handle debugging the stutter issue in the drive-thru agent, and what steps did you take to isolate the root cause?",
+        "Have you used Docker or other container tools for ML deployment, and if so, can you describe a specific example?"
+      ],
+      "time_budget_minutes": 2.5
+    },
+    {
+      "competency_id": "client_communication",
+      "name": "Client Communication",
+      "target_depth": "Should be able to explain technical results clearly to non-technical stakeholders, including how negative results or limitations were communicated.",
+      "seed_questions": [
+        "Can you describe a time when you had to explain model results or a technical finding to a non-technical client?",
+        "How did you communicate the limitations of the language ID prototype, especially the confusion between Hindi and Urdu, to stakeholders?",
+        "When you found that the prong-open detector performed at chance, how did you present this to the client and what recommendations did you make?",
+        "How do you handle conversations when results do not meet expectations or when there is a failure in production?"
+      ],
+      "time_budget_minutes": 2.5
+    },
+    {
+      "competency_id": "python_ml_basics",
+      "name": "Python and ML Fundamentals",
+      "target_depth": "Should show fluency in Python and core ML concepts relevant to LLM and voice agent work, including practical coding and debugging experience.",
+      "seed_questions": [
+        "What Python libraries and frameworks do you use most often for your ML work?",
+        "Can you give an example of a bug or tricky implementation detail you solved in Python while building a voice agent?",
+        "How did you use Python to enforce safety guardrails for the medical booking agent?",
+        "What is your process for testing and validating ML code before deployment?"
+      ],
+      "time_budget_minutes": 2.5
+    },
+    {
+      "competency_id": "voice_audio_exposure",
+      "name": "Voice/Audio Exposure",
+      "target_depth": "Should demonstrate hands-on exposure to real-time audio or voice agent systems, including any relevant models, pipelines, or deployment experience.",
+      "seed_questions": [
+        "What kinds of real-time audio or voice agent systems have you worked on?",
+        "Can you walk me through the audio language identification prototype you built with VoxLingua107 ECAPA and Whisper-small?",
+        "How did you benchmark the language ID system on FLEURS, and what challenges did you encounter with the different languages?",
+        "What did you learn from diagnosing the silence-detection issue, and how did you fix it?"
+      ],
+      "time_budget_minutes": 2.5
+    }
+  ],
+  "suggested_opening": "Thanks for joining today. This conversation is for the Senior AI/ML Engineer role focused on applied LLMs and voice. To get us started, can you tell me what you are working on at the moment and how long you have been working in the AI/ML field?",
+  "interviewing_guidance": [
+    "This candidate claims full ownership of several production ML systems, so press for specifics on what they personally built, deployed, and debugged.",
+    "Several achievements are quantified and technical, so verify the numbers and how they were measured.",
+    "They reference both LLM and voice/audio experience, but some claims (like the Sarvam-M fine-tuning and quantisation) are dense and need unpacking for depth.",
+    "Client communication is implied but not deeply evidenced. Spend extra time on how they present and explain technical results to non-technical stakeholders.",
+    "Look for clear, specific reasoning behind technical choices, especially around evaluation and deployment. Watch for generic or vague answers.",
+    "Probe for examples of negative results or failures and how these were communicated or handled."
+  ],
+  "domain_language": {
+    "domain": "applied LLMs and real-time voice agents",
+    "vocabulary": [
+      "LiveKit Agents",
+      "OpenAI Realtime",
+      "systemd",
+      "safety guardrails",
+      "prompt-level rules",
+      "Python",
+      "Sarvam-M 24B",
+      "bf16 LoRA",
+      "SageMaker ml.g7e.2xlarge",
+      "Mistral-format jinja template",
+      "GPTQ 4-bit",
+      "Qwen3-VL-4B"
+    ]
+  }
+}
