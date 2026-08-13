@@ -59,9 +59,42 @@ MAX_REPAIR_ATTEMPTS = 2
 #: enough; the second ask exists because the second ask is what caught the
 #: deflection. Nothing in any transcript was ever resolved by a third.
 #:
-#: Recording that the ground was never covered is more honest than grinding at
-#: somebody who has already said all they have.
+#: **Lowered to one and put back.** A term cost three turns — ask, escalate, let
+#: go — in a topic that gets four or five, so the escalation looked like the
+#: thing to cut. It was not. Distinct subjects per topic read 2.5 before and 2.5
+#: after: the freed turns went straight to the depth ramp, which asked about the
+#: same term again unprompted. And on a deflecting candidate it cost more, not
+#: less, because one ask per term means a topic's allowance buys two different
+#: terms rather than two attempts at one, each with its own let-go. 19% of turns
+#: became 29%. What was eating the topic was the ramp, not this.
 MAX_TERM_ATTEMPTS = 2
+
+#: How many questions a whole interview may spend unpacking terms.
+#:
+#: **The per-section allowance cannot bound this and five attempts proved it.**
+#: A section has two probes and the judge always has something unexplained to
+#: nominate, because every answer contains a term it does not define. So the
+#: allowance is always spent, on whatever is left. Explaining `bf16` in the
+#: fixture took its ten probes to zero and handed all ten to `Mistral jinja
+#: template`: 31 probes before, 31 after. Changing WHICH term gets probed has
+#: been tried five times; only a total budget addresses the fact that something
+#: always does.
+#:
+#: **Eight, from reading every probe in six interviews and judging whether a
+#: human would have asked it.** Worth-asking came to 7, 4 and 8 on the competent
+#: candidate and 6, 6, 6 on the deflecting one. Set at the top of that range
+#: rather than the mean, for the reason `MIN_COMPETENCY_TURNS` is the old flat
+#: ceiling: a cap must not be able to remove a question that was worth asking.
+#:
+#: Spent front to back, which the same reading says is safe: the worthwhile
+#: probes fall early, and the latest of them sat at position seven of twelve.
+#:
+#: **Nothing is said when it runs out.** The let-go exists because a candidate
+#: pushed twice on one word and then met with silence is left wondering whether
+#: they failed something. A budget quietly ending is not that: nobody has been
+#: pushed, and "I have run out of questions about what words mean" is not a
+#: sentence a person says. The section simply asks its own questions.
+MAX_TERM_PROBES_PER_INTERVIEW = 8
 
 #: How many questions one section may spend unpacking terms, whatever they are
 #: called.
@@ -215,13 +248,25 @@ class InterviewBrain:
         #: Still-unexplained terms for the section in progress, as of the last
         #: judgement. Not accumulated: see `apply_judgment`.
         self._open_terms: list[UnexplainedTerm] = []
-        #: How many times each term has been put in front of the interviewer,
-        #: surviving the list being replaced.
-        self._term_raises: dict[str, int] = {}
-        #: Terms that hit the cap. They never come back: not later in this
-        #: section and not in a later one, because two asks is the whole
-        #: allowance and a third somewhere else is still a third.
-        self._closed_terms: set[str] = set()
+        # `term_raises` and `closed_terms` live on the Section. See `state.py`.
+        #: Term probes spent across the whole interview, against
+        #: `MAX_TERM_PROBES_PER_INTERVIEW`. Kept beside the per-section count
+        #: rather than derived from it: the section counts reset and this must
+        #: not.
+        self._term_probes_spent = 0
+        #: Terms the candidate was asked about and then explained, anywhere in
+        #: the interview. Interview-wide on purpose: "could they explain this"
+        #: is a fact about a person, not about a topic, and an answer given two
+        #: topics late is still an answer.
+        self._explained_terms: set[str] = set()
+        #: Terms already set aside out loud. Was inferred from the report list
+        #: until the two came apart.
+        self._let_go_said: set[str] = set()
+        #: Terms put to the candidate since the last verdict landed. The only
+        #: window in which the judge's silence about a term means they answered
+        #: it: see `_note_what_they_explained`.
+        self._asked_since_judged: set[str] = set()
+
         #: One term, waiting for the interviewer to say out loud that it is
         #: setting it aside. Consumed by the turn that does it.
         self._term_to_let_go: UnexplainedTerm | None = None
@@ -752,9 +797,11 @@ class InterviewBrain:
         # That is the case this exists for.
         if judgment.section_id == self.current_section.id:
             for term in judgment.unexplained_terms:
-                term.times_raised = self._term_raises.get(term.term.lower(), 0)
+                term.times_raised = section.term_raises.get(term.term.lower(), 0)
             self._open_terms = judgment.unexplained_terms
             section.unexplained_terms = list(judgment.unexplained_terms)
+            self._note_what_they_explained(section, judgment)
+            self._let_go_of_what_was_asked_and_not_answered(section)
 
         for contradiction in judgment.contradictions:
             if contradiction.later_statement not in {
@@ -860,7 +907,42 @@ class InterviewBrain:
         judge decides: it is asked each turn for what is still unexplained, and
         this returns whatever it last said. Ordered so the term the interviewer
         has already asked about comes first.
+
+        **A second sort key was tried here and reverted.** It preferred a term
+        no earlier section had spent its asks on, to stop every section opening
+        on the same word. It cannot work from here: `_open_terms` is assigned
+        only in `apply_judgment` and only for the current section, so at a
+        section's first turn the list still holds the previous section's terms.
+        All of them were asked elsewhere, the tie-break marks them equally
+        stale, and the judge's order decides again. Correct inside a section,
+        where nothing needed changing, and inert at the boundary, which is the
+        only moment it was for. See the changelog for what it cost.
         """
+        # Imported here rather than at module scope, the way this file already
+        # imports the prompt renderer: `bot/brain/` stays free of anything that
+        # reads the environment at import time.
+        from bot.config import term_probing_disabled
+
+        if term_probing_disabled():
+            # **One gate, and it is the only place the feature can be switched
+            # off from.** Everything downstream reads this: the prompt block
+            # renders from what this returns, `_offered_term` is taken from it,
+            # and the director's filler asks it too. Returning nothing here
+            # means no term is put in front of the model, so none is ever
+            # counted, capped, escalated, let go of, or written to the report.
+            #
+            # What carries on is everything else. The judge still runs after
+            # every answer and still names the terms it thinks are unexplained;
+            # `section.unexplained_terms` still records what it said. The depth
+            # ramp still fires, contradictions still take the mandatory slot,
+            # and the section's own questions are untouched.
+            return []
+        if self._term_probes_spent >= MAX_TERM_PROBES_PER_INTERVIEW:
+            # The interview's whole budget is gone. Whatever is still unexplained
+            # is a fact for the report rather than another question, and the
+            # per-section allowance below no longer gets a say: it is the thing
+            # that could not bound this.
+            return []
         section = self.current_section
         if section.kind != SectionKind.COMPETENCY:
             return []
@@ -868,10 +950,45 @@ class InterviewBrain:
             # Spent. Whatever is still unexplained is a fact for the report, not
             # another question for the candidate.
             return []
+        # **`times_raised` is a cached copy of this section's count, and at a
+        # section's first turn the cache is a section out of date.**
+        #
+        # `_open_terms` is only replaced in `apply_judgment`, and only for the
+        # section being judged, so at the first turn of a new section it still
+        # holds the previous section's term objects. Those carry the previous
+        # section's raise count. `section.term_raises` is correct and says zero;
+        # the field on the object says one or two, and the field is what the
+        # prompt reads.
+        #
+        # So the block rendered "you have said X twice now" as a section's FIRST
+        # ask, 29 times across six runs, and the brain logged "raised 1x" on the
+        # same turn. That is the falsehood `terms.py` exists to prevent —
+        # telling somebody they have been asked twice when they have been asked
+        # once — and it was not the model imitating anything. Checked: the
+        # phrase was nowhere in its context on any of the 29, not in the bridge
+        # and not in the window. The prompt told it to say that.
+        #
+        # Refreshed from the section, which is the authoritative count, before
+        # anything reads it. `apply_judgment` already makes exactly this
+        # assignment; doing it here too means it no longer depends on a fresh
+        # judgement having arrived. It also fixes the ordering below, which was
+        # sorting by the same stale field.
+        for term in self._open_terms:
+            term.times_raised = section.term_raises.get(term.term.lower(), 0)
+
         return sorted(
-            (t for t in self._open_terms if t.term.lower() not in self._closed_terms),
+            (t for t in self._open_terms if t.term.lower() not in section.closed_terms),
             key=lambda t: -t.times_raised,
         )
+
+    def terms_asked_about(self) -> set[str]:
+        """Every term actually put to the candidate, lowercased.
+
+        Public because a measurement script was reading `_term_raises` off the
+        brain and broke silently the day that state moved onto the Section. What
+        it wants is this question, not that field.
+        """
+        return {key for section in self._sections for key in section.term_raises}
 
     def mark_term_raised(self, term: UnexplainedTerm) -> None:
         """Record that the interviewer was told to ask about this.
@@ -882,10 +999,11 @@ class InterviewBrain:
         not know what it does".
         """
         key = term.term.lower()
-        self._term_raises[key] = self._term_raises.get(key, 0) + 1
-        term.times_raised = self._term_raises[key]
-
         section = self.current_section
+        self._term_probes_spent += 1
+        section.term_raises[key] = section.term_raises.get(key, 0) + 1
+        self._asked_since_judged.add(key)
+        term.times_raised = section.term_raises[key]
         section.term_probes_spent += 1
         logger.info(
             f"term probe spent: {term.term!r} raised {term.times_raised}x, "
@@ -899,13 +1017,98 @@ class InterviewBrain:
             self._term_to_let_go = term
 
         if term.times_raised >= MAX_TERM_ATTEMPTS:
-            # Closed to further asking, and queued to be let go of out loud.
-            # Silently dropping it would leave a candidate who has just been
-            # pushed twice wondering whether they failed something.
-            self._closed_terms.add(key)
+            # Closed to further asking IN THIS SECTION. It has had its
+            # allowance here; a later section starts it again from nothing,
+            # which is what lets a communication topic ask how they explained
+            # something a technical topic asked the workings of.
+            section.closed_terms.add(key)
+
+        # **The let-go is NOT queued here**, and that is kept from the one-ask
+        # experiment because it is right at any cap. This runs as the question
+        # is spoken, before anybody has answered it, so queueing here says "let's
+        # leave that one there" on the strength of having asked rather than on
+        # the strength of the answer. At two asks that was survivable only by
+        # accident: the second ask happened to give the judge a turn to rule on
+        # the first answer.
+        #
+        # It is queued in `apply_judgment` instead, the first moment we know
+        # whether the answer explained anything. Explained, and nothing is said
+        # and nothing reaches the report. Still unexplained, and the sentence is
+        # queued and the term is recorded as asked-and-unanswered. It also fixed
+        # a count that had been wrong for days: let-gos actually spoken on the
+        # deflecting candidate went from 3, 3, 4 to 9, 5, 5.
+
+    def _note_what_they_explained(self, section: Section, judgment: Judgment) -> None:
+        """A term was asked about here and the judge has stopped reporting it.
+
+        That is the only positive evidence an explanation ever produces: the
+        judge is asked each turn for what is STILL unexplained, so a term
+        dropping off its list after being asked about is the candidate having
+        answered it.
+
+        **Gated on the term having been asked about since the last verdict, and
+        that window is the whole of the soundness.** A first version looked at
+        everything this section had ever asked and struck anything missing from
+        the judge's current list. That is wrong, and measurably: a term leaves
+        the list when the conversation moves on at least as often as when it is
+        explained, and it struck two of the three terms a run recorded. The
+        judge answers "what is unexplained in what I can see", so its silence
+        only means an answer on the one verdict that read the answer to the
+        question about that term.
+
+        Once explained it is struck from every topic's record, including topics
+        that recorded it earlier. The report says what a person could and could
+        not do, and answering two topics late is still answering. It also fails
+        in the direction this repo chooses everywhere else: an unstable judge
+        drops a claim about somebody rather than inventing one.
+        """
+        asked, self._asked_since_judged = self._asked_since_judged, set()
+        still_open = {t.term.lower() for t in judgment.unexplained_terms}
+        for key in asked:
+            if key in still_open or key in self._explained_terms:
+                continue
+            self._explained_terms.add(key)
+            logger.info(f"explained after asking: {key!r}, struck from the record")
+            for other in self._sections:
+                other.unexplained_after_asking = [
+                    t for t in other.unexplained_after_asking if t.term.lower() != key
+                ]
+
+    def _let_go_of_what_was_asked_and_not_answered(self, section: Section) -> None:
+        """A term was asked about, and the answer did not explain it. Say so.
+
+        Called only from `apply_judgment`, because only the judge can tell an
+        explanation from a restatement, and it is the judge still listing a term
+        after it was asked about that makes the let-go true.
+
+        Queued once per term. The judge re-reports an unexplained term on every
+        subsequent turn, and re-queueing would have the interviewer set the same
+        thing aside repeatedly.
+        """
+        for term in self._open_terms:
+            key = term.term.lower()
+
+            # **The RECORD turns on having been asked, not on the allowance.**
+            # Those were one condition and they answer different questions. A
+            # term asked once here and once two topics later never spends either
+            # topic's allowance, so under the old rule it reached no report at
+            # all: measured at five terms recorded falling to two. Being asked
+            # once and not answering is the fact a reader wants, wherever it
+            # happened, and the section it happened in is where it is written.
+            if section.term_raises.get(key, 0) >= 1 and key not in self._explained_terms:
+                if all(t.term.lower() != key for t in section.unexplained_after_asking):
+                    section.unexplained_after_asking.append(term)
+
+            # **The LET-GO turns on the allowance, and does not change.** It is
+            # the sentence said out loud when this topic has finished asking, so
+            # it belongs to the topic that ran out of asks.
+            if key not in section.closed_terms:
+                continue
+            if key in self._let_go_said:
+                continue
+            self._let_go_said.add(key)
             self._term_to_let_go = term
-            if all(t.term.lower() != key for t in section.unexplained_after_asking):
-                section.unexplained_after_asking.append(term)
+            logger.info(f"asked and not answered, letting go of {term.term!r}")
 
     def _count_if_it_asked(self, bot_text: str) -> None:
         """Spend an attempt only if the question was actually about the term.

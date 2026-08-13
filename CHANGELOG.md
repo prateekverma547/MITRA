@@ -12,6 +12,128 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-13 — Term probes get a budget for the whole interview
+
+**What**
+
+`MAX_TERM_PROBES_PER_INTERVIEW = 8`, sitting above the per-section allowance,
+which is unchanged.
+
+**Why a total, when five attempts have changed which term gets probed**
+
+Because the per-section allowance cannot bound this and that is now measured. A
+section has two probes and the judge always has something unexplained to
+nominate, because every answer contains a term it does not define. Explaining
+`bf16` in the fixture took its ten probes to zero and handed all ten to
+`Mistral jinja template`: 31 probes before, 31 after. Something always gets
+probed. Only a total budget addresses that.
+
+**Where the 8 came from**
+
+Every sanctioned probe in six interviews, read, judging whether a human
+interviewer would have asked that question. Worth-asking came to **7, 4 and 8**
+on the competent candidate and **6, 6, 6** on the deflecting one. Set at the top
+of that range rather than the mean, for the same reason `MIN_COMPETENCY_TURNS`
+is the old flat ceiling: a cap must not be able to remove a question that was
+worth asking.
+
+About half of all probes now read as worth asking, 37 of 72, against 17 of 72
+before the false-escalation fix. That is what makes a cap the right tool: when
+most probes were waste the problem was which ones, not how many.
+
+**Three decisions**
+
+**Nothing is said when the budget runs out.** The let-go exists because somebody
+pushed twice on one word and then met with silence is left wondering whether
+they failed. A budget quietly ending is not that: nobody has been pushed, and "I
+have run out of questions about what words mean" is not a sentence a person
+says. The topic asks its own questions instead.
+
+**Spent front to back**, which the reading says is safe: the worthwhile probes
+cluster in the first two topics and the heaviest competency, and the latest of
+them sat at position seven of twelve. The three late communication probes that
+worried me survive at 8.
+
+**The per-section allowance stays underneath.** It is what re-enabled a
+communication topic asking how somebody explained a term a technical topic asked
+the workings of, and it stops one topic spending the whole interview.
+
+**Measured, ten runs a side, twenty interviews each arm**
+
+Three runs has misled this project repeatedly, so this is ten. On identical code
+the before arm produced consecutive-same-subject anywhere from **12% to 59%**,
+which is wider than most differences read into three-run comparisons this week.
+
+| competent, n=10 | before | after |
+| --- | --- | --- |
+| sanctioned probes | 9.00 ± 2.14 [6..12] | **7.80 ± 0.60 [6..8]** |
+| mechanism questions | 38% ± 7% [30..52] | 29% ± 14% [12..55] |
+| distinct answers per section | 2.58 ± 0.24 | **3.08 ± 0.54** |
+| consecutive on one subject | 34% ± 14% [12..59] | 29% ± 5% [18..35] |
+| terms reaching the report | 1.80 ± 0.98 | 1.30 ± 0.90 |
+| let-gos spoken | 3.70 ± 1.00 | 2.80 ± 1.33 |
+| median interviewer turn | 18.85 | 18.50 |
+
+| deflecting, n=10 | before | after |
+| --- | --- | --- |
+| **sanctioned probes** | **11.90 ± 0.30 [11..12]** | **8.00 ± 0.00 [8..8]** |
+| mechanism questions | 18% ± 6% [13..33] | 14% ± 4% [10..25] |
+| distinct answers per section | 1.17 ± 0.00 | 1.17 ± 0.00 |
+| consecutive on one subject | 33% ± 11% | 29% ± 7% |
+| **terms reaching the report** | **1.70 ± 0.78** | **1.70 ± 0.78** |
+| **let-gos spoken** | **5.70 ± 0.46** | **3.80 ± 0.40** |
+| median interviewer turn | 18.40 | 18.40 |
+
+**What survives the spread, and it is a short list.** Sanctioned probes on the
+deflecting candidate, 11.90 to 8.00 with no overlap at all. Let-gos on the same,
+5.70 to 3.80 with no overlap, which follows: fewer probes means fewer terms
+reach their per-term cap. And the collapse in variance on the competent
+candidate, standard deviation 2.14 down to 0.60, which is what a ceiling does to
+an upper tail.
+
+**Everything else overlaps and is reported as not surviving.** Mechanism
+questions fell 38% to 29% and 18% to 14%, but the after arm's spread is 12 to 55
+percent, so the fall cannot be told from noise. Consecutive-same-subject barely
+moved. Distinct answers per section rose 2.58 to 3.08, which is about one
+combined standard deviation and is the most promising of the soft numbers
+without being conclusive.
+
+**Nothing on the guard list moved.** Terms reaching the report on the deflecting
+candidate are **identical**, 1.70 ± 0.78 in both arms, so deflection is caught
+exactly as well. The let-go is still spoken. Mechanism questions at 29% and 14%
+are far above the probing-off baseline of 3 to 5 percent, so the cap is not too
+tight.
+
+**How**
+
+- `backend/bot/brain/brain.py` — the constant, an interview-wide counter beside
+  the per-section one, and a gate above the per-section gate.
+- `backend/tests/test_brain.py` — one test asserting both bounds, because a
+  budget that replaced the per-section allowance would let one topic spend the
+  whole interview.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 689 passed, 22 skipped
+
+**Not done**
+
+- **Repetition is bounded, not fixed.** Distinct answers per section on the
+  deflecting candidate is identical to three decimal places, 1.17 in both arms:
+  the candidate still gives the same answer to the probes that remain. There is
+  simply less probing. A cap cannot make a question better, only rarer.
+- The interview-wide budget makes the earlier N=3 reading properly void, and it
+  should be re-read on these transcripts before the number is trusted a second
+  time. The population changed again.
+- The two arms were run as parallel per-scenario processes to fit forty
+  interviews into ninety minutes rather than three and a half hours. The before
+  arm ran through a scratch wrapper that neutralises the new constant, because
+  the code was already edited by then; that reproduces the pre-cap condition
+  without reverting and re-reverting.
+
+---
+
 ## 2026-08-13 — The scripted candidate explains its own terms, and the loop moves rather than ends
 
 **What**
@@ -116,6 +238,409 @@ selector change, no production code.
 - `Mistral jinja template` is now the most-probed term and is not explained
   anywhere. Explaining it would move the loop again rather than end it, which is
   the point above.
+
+---
+
+## 2026-08-13 — A section's first question stops claiming it asked before
+
+**What**
+
+A section's first ask about a term said *"You have said X twice now. What does
+it actually do?"* while the brain's own log recorded *"raised 1x, section
+evaluation_reasoning has spent 1 of 2"* on the same turn. It happened 29 times
+across six runs, 43 percent of every term probe fired.
+
+**The cause was not what anybody thought, including this changelog**
+
+It was written up here, and by me last week, as the model carrying the phrasing
+across a section boundary out of the bridge. **That is wrong, and it was checked
+rather than assumed.** For all 29, the reconstructed window the model actually
+had was searched for the phrase: it was in the bridge 0 times and elsewhere in
+the window 0 times. **The model was not imitating anything. The prompt told it
+to say that.**
+
+`times_raised` is a cached copy of a section's raise count, carried on the
+`UnexplainedTerm` object. `_open_terms` is replaced only in `apply_judgment`,
+and only for the section being judged, so at a new section's first turn it still
+holds the previous section's objects with the previous section's counts.
+`section.term_raises` correctly said zero; the field on the object said one or
+two; and the field is what the prompt branch reads. Two representations of one
+fact, disagreeing.
+
+Proved directly before changing anything: drive a term to one ask in section
+one, advance, and render — the block emits the escalated wording while the
+section's own count is empty.
+
+**How**
+
+`unexplained_terms` refreshes `times_raised` from `section.term_raises` before
+anything reads it. `apply_judgment` already makes exactly this assignment; doing
+it here too means it no longer depends on a fresh judgement having arrived.
+
+It also fixes the ordering, which sorted by the same stale field: at a section
+start, terms were being ranked by the previous section's raise counts.
+
+**Not a prompt instruction**, deliberately. Telling the model not to say "twice
+now" would have been the sixth attempt to fix something by adding a sentence,
+and it would have been aimed at a cause that does not exist.
+
+**Measured**
+
+Three runs each, competent and deflecting, `gpt-4.1-mini`, at 22 seconds.
+
+| | before | after |
+| --- | --- | --- |
+| **escalation on a section's first ask** | **29** | **0** |
+| the real escalation, later in a section | 8 | **22** |
+| mechanism questions, competent | 22/120 = 18% | **44/118 = 37%** |
+| mechanism questions, deflecting | 24/237 = 10% | **42/237 = 18%** |
+| probes worth asking, read | 17/72 = 24% | **44/67 = 66%** |
+| consecutive questions on one subject, competent | 41% | **23%** |
+| consecutive questions on one subject, deflecting | 27% | 37% |
+| questions quoting an earlier section | 27% and 27% | **19% and 20%** |
+| let-gos spoken | 1,4,5 and 6,6,5 | 4,6,2 and 6,6,6 |
+| terms reaching the report | 1,1,1 and 2,1,1 | **3,2,2** and 2,1,1 |
+| unsupported attributions | 2 and 0 | **0 and 0** |
+| median interviewer turn | 20, 20, 18 | 17, 18, 17 |
+
+**The numerator moved, which was not expected.** The prediction was that
+removing 29 false escalations would take probes-worth-asking toward 41 percent
+by shrinking the denominator. It went to 66, because those turns were not merely
+wasted — they were *displacing* real questions. With the count true, a section's
+first ask is a plain first ask about whatever term is actually open, and the
+sections stopped circling one word: the competent runs now probe `agent`, `tool
+call classifier`, `bf16`, `LiveKit Agents`, `refuses`, `leaked` and
+`deterministic` where they used to probe one term twelve times.
+
+**One number to read carefully.** Mechanism questions doubled while sanctioned
+probes fell from 72 to 67, so the rise is not the term block firing more — it is
+more probe-shaped questions overall, including unsanctioned ones. It is a real
+rise and it is not all attributable to this change.
+
+**And one that moved the wrong way.** Consecutive questions on one subject rose
+on the deflecting candidate, 27 to 37 percent. That candidate has about four
+nominatable terms in total, so a section that asks about them properly returns
+to them; it is not obviously wrong, and it is not dismissed.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 688 passed, 22 skipped
+
+**Not done**
+
+- The stale `_open_terms` at a boundary is still stale. This fixes the count it
+  carries, not the fact that a new section's first offer comes from the previous
+  section's list. That is still the prerequisite for any selection fix.
+- Nothing here caps probes per interview. The reading that produced N = 3 was
+  taken before this fix, on a run set where 43 percent of probes were the
+  falsehood; it should be redone on these transcripts before a cap is chosen.
+
+---
+
+## 2026-08-12 — A baseline for the interview without term probing, and it is not what anyone expected
+
+**What**
+
+`TERM_PROBING_DISABLED`. Absent means today's behaviour, which is the opposite
+polarity to `RECORDING_ENABLED` and `FILLER_ENABLED` and deliberately so: those
+guard features nobody has switched on yet, this guards one that has shipped in
+every measurement ever taken here.
+
+**Nothing is removed.** The block, its state, its caps, its tests and its
+default are untouched.
+
+**What it suppresses, and what carries on**
+
+One gate, in `unexplained_terms`. Everything downstream reads that: the prompt
+block renders from what it returns, `_offered_term` is taken from it, the
+director's filler asks it. Return nothing and no term is put in front of the
+model, so none is counted, capped, escalated, let go of, or written to the
+record.
+
+Everything else runs. The judge still fires after every answer and still names
+what it thinks is unexplained; `section.unexplained_terms` still records what it
+said. The depth ramp still fires, contradictions still take the mandatory slot,
+the section's own questions are untouched.
+
+**Measured: twelve interviews, then all twelve scored**
+
+**The transcripts. The feature does exactly what it was built to do.**
+
+| | probing on | probing off |
+| --- | --- | --- |
+| mechanism questions, competent | 22/120 = **18%** | 3/114 = **3%** |
+| mechanism questions, deflecting | 24/237 = **10%** | 13/237 = **5%** |
+| consecutive questions on one subject, competent | 41% | **26%** |
+| consecutive questions on one subject, deflecting | 27% | 36% |
+| questions quoting an earlier section, competent | 27% | **17%** |
+| questions quoting an earlier section, deflecting | 27% | **12%** |
+| a section's first ask says "twice now" | **15 and 14** | **0 and 0** |
+| terms reaching the record | 1,1,1 and 2,1,1 | 0,0,0 |
+| unsupported attributions, competent | 2 | **0** |
+| median interviewer turn | 20, 20, 18 | 18, 18, 18 |
+
+**The off condition reproduces the pre-feature baseline**, which is what makes
+this measurable: mechanism questions ran at 2 in 39 real opportunities, 5%,
+before term probing existed, and off reads 3% and 5%. The feature triples to
+quadruples that. It is not a small effect and it is real.
+
+**The reports. This is where the expectation broke.**
+
+| | probing on | probing off |
+| --- | --- | --- |
+| competent, recommendation | limited ×3 | limited, **mixed**, limited |
+| competent, competencies scored | 6/6, 5/6, 5/6 | **6/6, 6/6, 6/6** |
+| competent, gaps named | 6, 1, 3 | 3, 3, 3 |
+| deflecting, recommendation | **insufficient_signal ×3** | limited_evidence ×3 |
+| deflecting, competencies scored | 0/6 ×3 | 4/6, 6/6, 6/6 |
+| deflecting, dealbreaker fired | **3 of 3** | **3 of 3** |
+
+**The dealbreaker fires in both conditions on the deflecting candidate**, with
+verified quotes, and it is true of them in both. The feature is not what catches
+it. The scorer reads the transcript, sees a candidate answering every question
+with the same sentence, and says so:
+
+> The transcript shows the candidate repeating a generic explanation of
+> concurrency and session management in response to nearly every question,
+> regardless of topic. There is no evidence of specific decisions, trade-offs,
+> stakeholder management, metrics, or leadership beyond this repeated phrase.
+
+That is the off condition. It is as damning as the on condition's six
+`insufficient_signal` verdicts, and it is arguably more useful, because a 2.0
+with a rationale is a judgement a recruiter can act on where "we could not tell"
+is not.
+
+**And the finding that reframes the whole thing: the record never reaches
+anybody.** `FeedbackReport` has no field for unexplained terms, and
+`_render_sections` passes the scorer `coverage`, `turns`, `declined_turns` and
+`shortfall_reason` — not `unexplained_terms`. **The asked-and-unexplained record
+that the caps, the escalation, the let-go and three tasks of work all produce is
+stored in `SectionOutcome` and read by nobody.** The feature's only route to the
+report is its effect on the transcript.
+
+**What the fixture does to this, and which result to trust**
+
+62% of the concentration on the competent runs is the fixture: no answer in the
+script defines "tool call classifier", so the judge can never drop it and the
+probe can never resolve. **That inflates the case against probing on the
+competent candidate** — with somebody who could explain the term, the on
+condition would look better than it does here.
+
+So the deflecting result is the one to trust, and it is the one where the two
+conditions come out level.
+
+**Read side by side, the competent transcripts are worse with probing.** Every
+one of six sections in one run opens with the false escalation, and its
+communication section asks the same question four times verbatim. Without
+probing the same run's evaluation section runs: validate against GPT-4o, then
+which metric and why, then statistical flatness against bf16, then what
+statistical test established it. Roughly 27 distinct subjects with probing, 35
+without.
+
+**How**
+
+- `backend/bot/config.py` — the flag, with its polarity explained.
+- `backend/bot/brain/brain.py` — one gate in `unexplained_terms`, and a local
+  import so `bot/brain/` stays free of anything that reads the environment at
+  import time.
+- `backend/tests/test_brain.py` — a test that off means off and that the judge
+  still runs and its list is still recorded.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 687 passed, 22 skipped
+    TERM_PROBING_DISABLED=1 uv run python scripts/compare_models.py \
+        --scenarios competent deflecting --models gpt-4.1-mini --runs 3
+
+**Not done**
+
+- Nothing is switched off. The default is unchanged and this is a measuring
+  instrument, not a deprecation.
+- **The record not reaching the report is the thing to fix before judging this
+  feature.** It is the one output the off condition cannot produce, and it is
+  currently dead weight. Wiring it into `_render_sections` and the report, then
+  re-running this comparison, is the honest next step — the feature has never
+  been measured with its own output visible.
+- The false escalation is gone in the off condition (0 against 15 and 14),
+  which is a second demonstration that it comes from the term block's wording
+  being carried across a section boundary.
+
+---
+
+## 2026-08-12 — The term-selection change is reverted
+
+**What**
+
+The second sort key added below is out. `unexplained_terms` orders by
+`-times_raised` again, as it did before.
+
+**The entry below stands.** It records the attempt and the measurement, and it
+should not be read as describing the code: this supersedes it, the way the
+reordering entry was superseded.
+
+**Why**
+
+It cannot fire where it was written for. `_open_terms` is assigned only in
+`apply_judgment`, and only when the judgement is for the current section, so at
+the first turn of a new section the list still holds the **previous** section's
+terms. Every one of those was asked in an earlier topic, so the tie-break marked
+them all equally stale, the judge's order decided again, and the same term was
+picked. The rule was correct inside a section, where nothing needed changing,
+and inert at the boundary, which was the only moment it was for.
+
+And it was not free:
+
+| | before | after |
+| --- | --- | --- |
+| mechanism questions, competent | 27% | **22%** |
+| terms reaching the report, deflecting | 2, 2, 2 | **1, 1, 1** |
+| worst single run | 8 of 10 asks on one term | **12 of 12** |
+
+**The diagnosis that did not hold, which is the third in this area**
+
+"The judge offers six distinct terms in a single section and the interviewer
+asks about one" came from a judge replay on the **competent** candidate. The
+deflecting candidate's whole script is five sentences containing about four
+nominatable terms, so its ceiling on distinct terms is its own vocabulary and
+not the selection rule. **"A selection problem, not a judge problem" was true of
+one scenario and was stated without that qualification.**
+
+The pattern is the useful part, and it is now three for three here: the
+imitation diagnosis was really the carried-claims block; the brain-level term
+state diagnosis moved a number and left the transcripts identical; and this one
+generalised from the scenario where the fixture, not the product, causes the
+concentration. Every one of them was confident. **The two things that worked all
+week — the harness clock and the report fairness work — came from measuring
+something and reading the output, not from reasoning about what the model was
+attending to.**
+
+**How**
+
+- `backend/bot/brain/brain.py` — the key, and the `asked_elsewhere` set it
+  needed. A short note stays on `unexplained_terms` saying what was tried and
+  why it cannot work from there, so the next person does not rediscover it.
+- `backend/tests/test_brain.py` — the test that came with it, and the top-level
+  import it added. Every other use of `UnexplainedTerm` in that file has its own
+  local import, so the import block is byte-identical to the committed one again.
+
+Everything else from this week is untouched: the depth-ramp rotation,
+`seconds_per_turn` from `SECONDS_PER_COMPETENCY_TURN`, the harness trigger fixes
+and `--reverse-sections`, the per-section allowance with the interview-wide
+record, `QuestioningHealth`, and the carried-claims boundary rule. Verified by
+fingerprinting all twelve changed files before and after: only these three moved.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 686 passed, 22 skipped
+
+**Not done — and this is the real state of the problem**
+
+- **The stale `_open_terms` at a section boundary is the prerequisite for any
+  selection fix.** Nothing can choose a fresh term at a boundary while the only
+  candidates are the previous section's. Clearing it means no term block renders
+  on the first turn of a section, which is a behaviour change in its own right
+  and needs measuring alone rather than bundled with a selection rule.
+- **The false escalation is still there.** A section's first ask says "you have
+  said X twice now" 11 times on the competent runs and 13 on the deflecting
+  ones, while the brain's own count correctly reads it as the first ask in that
+  section. The model carries the phrasing across the boundary in the bridge.
+  This is the falsehood `terms.py` was written to prevent arriving by a route
+  that file cannot see.
+
+---
+
+## 2026-08-12 — The term is chosen differently now, and it changed nothing
+
+**What**
+
+The interviewer picked which term to ask about with one sort key,
+`-times_raised`, then took the first item. Python sorts stably, so on ties it
+kept the judge's own order, and the judge listed the same term first every time.
+Counts reset at every section boundary, so every section began on the same tie
+and picked the same word.
+
+There is a second key now. `-times_raised` still leads, so within a topic
+nothing moves and the second ask still escalates, still reaches the cap, still
+closes, still gets let go of out loud. The tie-break prefers a term no earlier
+topic has already spent its asks on, and the judge's order still decides among
+those.
+
+**It did not work, and the bar was set in advance**
+
+Three runs each, competent and deflecting, `gpt-4.1-mini`. The bar was: on the
+deflecting scenario, distinct sanctioned terms per run goes up and the top
+term's share goes down, without mechanism questions falling. **All three
+failed.**
+
+| deflecting | before | after |
+| --- | --- | --- |
+| distinct sanctioned terms per run | 2, 2, 2 | **2, 2, 1** |
+| top term's share of asks | 7/12, 6/12, 8/10 | **6/12, 6/12, 12/12** |
+| mechanism questions | 36/237 = 15% | **32/237 = 14%** |
+| terms reaching the report | 2, 2, 2 | **1, 1, 1** |
+
+| competent | before | after |
+| --- | --- | --- |
+| distinct sanctioned terms per run | 2, 1, 4 | 3, 1, 2 |
+| mechanism questions | 32/120 = 27% | **27/120 = 22%** |
+| consecutive questions on one subject | 19% | 18% |
+| questions quoting an earlier section | 25% | 25% |
+| terms reaching the report | 0, 1, 2 | 2, 1, 1 |
+| unsupported attributions | 1 | **0** |
+| median interviewer turn | 16.5, 18.5, 15 | 17.5, 19, 18 |
+
+**Why it did not work, and it is a flaw in the fix rather than a mystery**
+
+`_open_terms` is assigned only in `apply_judgment`, and only when the judgement
+is for the current section. **At the first turn of a new section no judgement
+for that section has arrived yet, so the list still holds the previous
+section's terms.** Every one of them has been asked in an earlier topic, so the
+new tie-break marks them all equally stale, the judge's order decides again, and
+the same term is picked.
+
+The rule is right inside a topic and inert at the boundary, which is the only
+moment it was written for.
+
+**And the earlier diagnosis was drawn from the wrong scenario.** The judge
+replay that found "six distinct terms offered in one section, one asked about"
+was run on the competent candidate. The deflecting candidate says five
+sentences containing about four nominatable terms in total, so its ceiling on
+distinct terms is its own vocabulary, not the selection rule. "A selection
+problem, not a judge problem" holds for one scenario and not the other, and it
+was stated without that qualification.
+
+**How**
+
+- `backend/bot/brain/brain.py` — one sort key added to `unexplained_terms`.
+- `backend/tests/test_brain.py` — a test asserting both halves: the escalation
+  still leads inside a topic, and a term an earlier topic spent its asks on goes
+  last in the next. It passes, which is the point: the rule does what it says
+  and that turns out not to be enough.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 687 passed, 22 skipped
+    uv run python scripts/compare_models.py --scenarios competent deflecting \
+        --models gpt-4.1-mini --runs 3
+
+**Not done**
+
+- **The false escalation, deliberately left.** Every section after the first
+  still opens with "you have said X twice now" on what the brain correctly
+  counts as the first ask there: 10 of 6 runs before, 11 after. The brain's
+  count is right; the model carries the phrasing across the boundary in the
+  bridge. Fixing it needs its own mechanism and would have been confounded with
+  this.
+- **The stale `_open_terms` at a boundary**, which is the prerequisite for this
+  rule to fire at all. Clearing it would mean no term block on the first turn of
+  a topic, which is a behaviour change worth measuring on its own rather than
+  bundling here.
+- Mechanism questions fell 5 points on the competent candidate. Small, one
+  scenario, three runs, and in the direction the term block exists to protect.
 
 ---
 
@@ -244,6 +769,240 @@ runs are identical across both passes, so this sits inside sampling.
 - Nothing here makes the interviewer ask better questions. It stops the report
   blaming the candidate for the questions it asked.
 - The residual cases above.
+
+---
+
+## 2026-08-12 — The term allowance and the term record are two fields now, and the record still does not fill
+
+**What**
+
+How many times a topic may ask about a word, and what the candidate was asked
+about and could not explain, were one field. They answer different questions and
+they are now two.
+
+  ALLOWANCE  per topic. `Section.term_raises` and `Section.closed_terms`,
+             unchanged. A fresh topic starts clean, which is what re-enabled a
+             communication topic asking how they explained something a technical
+             topic asked the workings of.
+
+  RECORD     turns on having been ASKED, not on the allowance being spent.
+             Written into the topic it happened in; a word asked about in two
+             topics and explained in neither appears against both, which is the
+             truth a reader wants.
+
+  EXPLAINED  interview-wide. Struck from every topic's record, because "could
+             they explain this" is a fact about a person and an answer given two
+             topics late is still an answer.
+
+**The three decisions**
+
+*Asked once here and once two topics later, never explained.* Both topics carry
+it. Neither spent its allowance, so under the old rule it reached no report at
+all — that was the regression this is for.
+
+*Asked, unexplained, then explained later.* It goes. The report says what
+somebody could and could not do, and leaving "asked about X and could not
+explain it" against a person who explained it is a written claim that is false
+by the end.
+
+*The let-go.* Unchanged, still on the allowance being spent within a topic. It
+is the sentence said out loud when this topic has finished asking.
+
+**The explained signal was wrong first, and measurably**
+
+The first version struck any term that left the judge's list. The judge answers
+"what is unexplained in what I can see now", so a term leaves that list when the
+conversation moves on at least as often as when somebody explains it: it struck
+two of the three terms one run recorded. The window is now the single verdict
+that read the answer to the question about that term. Three strikes across six
+runs, all of them terms this candidate does explain.
+
+**Measured, and it did not do what it was for**
+
+| terms reaching the report | before | after | target |
+| --- | --- | --- | --- |
+| competent | 2, 2, 2 | **0, 1, 2** | 5, 5, 4 |
+| deflecting | 1, 1, 2 | **2, 2, 2** | 3, 3, 4 |
+
+**Only eight distinct terms are ever asked about across six runs.** The record
+can only record what was asked, and the interview asks about the same word in
+every topic: one run put `prompt-level rules` to the candidate twice in each of
+six sections. That is the per-topic allowance from the previous entry doing
+exactly what was predicted of it, and it is upstream of anything here.
+
+**The competent number falling is probably right.** That candidate explains
+things, so a report listing five terms they could not explain was overstating
+it — the 5, 5, 4 came from a state that recorded terms after they had been
+explained. The deflecting number rising is the fix working on the candidate it
+matters for: OLTP, session management and concurrency control session now reach
+the report in every run, where one run previously recorded OLTP alone.
+
+Other numbers, competent: material reached 40% to 43%, term machinery 45% to
+38%, consecutive questions on one subject 21% to 18%, median turn 16.5 to 18.5
+words, one unsupported attribution.
+
+**Drift did not move, as expected.** Competent 17% to 26%, deflecting 25% to
+24%. The 17% in the previous entry was noise around a measure that is fooled by
+the scripted candidate repeating an earlier answer; 26% is where it has sat for
+three entries. Nothing here was aimed at it.
+
+**How**
+
+- `backend/bot/brain/brain.py` — the record gates on `term_raises >= 1`;
+  `_explained_terms` and `_asked_since_judged`; `_let_go_said` so the let-go
+  stops inferring itself from the report list now the two have come apart.
+- `backend/bot/brain/state.py` — unchanged this time.
+- `backend/scripts/compare_models.py` — reads `brain.terms_asked_about()`, a new
+  public accessor. It read `brain._term_raises`, broke when that moved onto the
+  Section, was repointed at `section.term_raises`, and would have broken again
+  today. What it wants is the question, not whichever field answers it.
+- `backend/tests/test_brain.py` — five tests, and each was checked by breaking
+  the code both ways: gating the record on the allowance again fails two of
+  them, and letting the allowance run across topics fails two.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 682 passed, 22 skipped
+    uv run python scripts/compare_models.py --scenarios competent deflecting \
+        --models gpt-4.1-mini --runs 3
+
+**Not done**
+
+- The report does not fill because the interview asks about almost nothing: 8
+  distinct terms in 6 runs. Until the same word stops taking every topic's
+  allowance, splitting the record from the allowance cannot show much.
+- Drift, untouched and unmoved. The loop is the judge reporting from the last
+  answer, the candidate repeating an earlier answer, and the depth ramp pointing
+  at whatever was just said.
+- Distinct subjects per topic was not re-read for this run. It has read 4.0 to
+  4.3 across the last three changes and nothing here targets it; the reading is
+  an hour of transcript work and would not have been informative.
+
+---
+
+## 2026-08-12 — Term state is per section now, and it did not fix the drift
+
+**What**
+
+How many times a term has been asked about, and whether it has had its
+allowance, are now facts about a section rather than about the interview. Each
+section starts with a clean slate.
+
+**Why**
+
+One bug with two faces, written down two weeks before it was fixed. A term that
+spent its two asks in the first competency was closed for the whole interview,
+so a later section could not ask about it even where that was the right
+question. And a term first raised in the first competency stayed live to the
+last, which is what filled later sections with earlier sections' material: in
+one measured run the sixth topic asked six questions and every one was about the
+first topic's.
+
+`term_probes_spent` was already scoped this way. This follows it.
+
+**A term legitimately belongs to two sections and that is now possible again.**
+The section-aware branch exists so a technical topic asks what a word means and
+a communication topic asks how they explained it — a different question about
+the same word, built deliberately. Brain-level closure suppressed the second one
+whenever the first had used its allowance. Per-section closure restores it.
+
+**What happens to a term explained in an earlier section.** The judge is asked
+per section and sees only that section's transcript, so it has no memory that
+section one explained something. If the candidate uses the word again in section
+five without explaining it there, the judge reports it and the interviewer asks.
+**Nothing stops that, and nothing did before either** — brain-level closure only
+blocked it once the term had been asked twice, which is a different condition.
+Whether it needs stopping is left open: a word used unexplained in a new context
+is a fair question, and the case that was measured as a bug was inside one
+section, which the judge already handles.
+
+**Measured, and the result is negative**
+
+Three runs each, competent and deflecting, `gpt-4.1-mini`, at 22 seconds.
+
+| competent | before | after |
+| --- | --- | --- |
+| material reached in its own section | 12/30 = 40% | **14/30 = 47%** |
+| distinct subjects per section, read | 4.3 | **4.2** |
+| questions quoting an earlier section | 26% | **17%** |
+| **terms reaching the report** | **5, 5, 4** | **2, 2, 2** |
+| term machinery | 45% | 37% |
+| consecutive questions on one subject | 21% | 26% |
+| unsupported attributions | 1 | **0** |
+| median interviewer turn | 16.5, 17, 17.5 | 18, 18, 17 |
+
+| deflecting | before | after |
+| --- | --- | --- |
+| questions quoting an earlier section | 18% | **25%** |
+| terms reaching the report | 3, 3, 4 | **1, 1, 2** |
+| consecutive questions on one subject | 30% | 36% |
+| unsupported attributions | 1 | **3** |
+
+**The drift number moved and the drift did not.** Reading the transcripts, the
+same pattern is there in a new form: one term now restarts its allowance in
+every section and dominates several in a row. In one run `prompt-level safety
+rules` opened four consecutive sections; in another `systemd` ran through five;
+in a third `LiveKit Agents` ran through four. Before, a term stayed live because
+it was never closed. Now it is closed and re-opened at every boundary, and the
+transcripts look the same.
+
+**And the measure is fooled here, which is worth writing down.** "Quoting an
+earlier section" asks whether the candidate said the term in this section. The
+scripted candidate answers a cross-section question with the same answer, which
+puts the term into this section's turns, so the next question about it counts as
+local. The 26 to 17 improvement is substantially that artefact. Distinct
+subjects per section, which is read rather than counted, did not move: 4.3 to
+4.2.
+
+**Terms reaching the report dropped, and that is a real cost, not a wash.**
+Two asks no longer accumulate across sections, so a term asked once in each of
+three sections is never recorded as asked-and-unanswered anywhere. Deflection is
+still caught — OLTP and concurrency control still reach the report in every
+deflecting run — but the record is thinner: run 2 records `OLTP` alone where it
+previously recorded `OLAP` and `concurrency control session` as well. The
+product output says less about what the candidate could not explain.
+
+**Unsupported attributions on the deflecting candidate went from 1 to 3.** Not
+dismissed and not attributed: three runs at temperature 0.6, and this measure has
+read 0, 1 and 2 across the last four comparisons without any change aimed at it.
+
+**How**
+
+- `backend/bot/brain/state.py` — `Section.term_raises` and
+  `Section.closed_terms`.
+- `backend/bot/brain/brain.py` — the brain-level dict and set are gone; every
+  read and write goes through the current section.
+- `backend/tests/test_brain.py` — a test asserting both directions: the cap
+  still binds inside a section, and the next section starts the same term from
+  nothing. **No existing test failed**, which is how this survived two weeks:
+  nothing covered cross-section term behaviour at all.
+- `backend/scripts/compare_models.py` — one read followed the state. The
+  specific-terms signal reached into `brain._term_raises`, which no longer
+  exists, and the comparison crashed on the first run until it was pointed at
+  the sections instead.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 678 passed, 22 skipped
+    uv run python scripts/compare_models.py --scenarios competent deflecting \
+        --models gpt-4.1-mini --runs 3
+
+**Not done**
+
+- **The drift is not fixed and the cause is elsewhere.** Six questions in the
+  voice topic about section-one material was never term tracking alone. The
+  judge reports terms from whatever the candidate just said, the candidate
+  repeats earlier answers when asked earlier questions, and the depth ramp
+  points at whatever is in the last answer. That loop is what carries a topic,
+  and none of it is term state.
+- Nothing prevents a term explained in one section being asked about in another.
+  See above; whether it should is an open question rather than an oversight.
+- The report getting thinner is a genuine regression and this change does not
+  address it. Recording a term as asked-and-unanswered when it has been asked
+  once in each of three sections would need the report to count across sections
+  while the allowance stays within one.
 
 ---
 
@@ -611,6 +1370,133 @@ fabrication from yesterday did not recur.
   day's. They were measured before the crash was noticed. Clear the output
   directory before a comparison run, so a partial run cannot be read as a
   complete one.
+
+---
+
+## 2026-08-12 — A term costs one question instead of three, and it did not buy what it was meant to
+
+**What**
+
+Two changes. A bug in the test harness, and a change to how long the interviewer
+spends on one word.
+
+**The harness bug first, because it was making the interviewer look worse than
+it is.** The scripted candidate picks its answer by matching the question
+against what each answer is about. One answer carried the trigger words
+"interviewer", "working on" and "building" — and the interviewer's own greeting
+is "I'm Mitra, an AI interviewer", while the opening question the prompt models
+is "tell me what you're working on at the moment". So the greeting selected an
+answer about the candidate's own product, the opening's real answer was
+unreachable in every run, and it was counted against the interviewer as material
+it had failed to reach.
+
+**Then the change that matters.** Asking about a term used to cost three turns:
+ask, ask again more pointedly, then say out loud that we are leaving it. In a
+topic that gets four or five questions that is most of the topic. It now costs
+one ask, and if the answer did not explain it, the next thing said is that we
+are leaving it there.
+
+**Why**
+
+Measured on a candidate who answers well: term machinery took 38 of 77
+questions. The single best stretch of questioning in any run was the topic where
+no term was nominated until the fifth turn; the worst spent five turns on what
+"bf16 baseline" means, to somebody holding a decision-accuracy number, a
+significance argument and a named divergence metric.
+
+**The result did not follow, and it is recorded here as a result rather than an
+improvement.**
+
+| | before | after |
+| --- | --- | --- |
+| term machinery, competent candidate | 38/77 = **49%** | 30/78 = **38%** |
+| term machinery, deflecting candidate | 32/171 = **19%** | 50/171 = **29%** |
+| distinct subjects per topic, read from the transcripts | **2.5** | **2.5** |
+
+The escalation turns went away, nine of them. **The freed turns did not become
+new subjects.** They went to asking about the same term again unprompted, which
+the brain no longer sanctions and the depth ramp still asks for: it says the
+technique in their last answer is your question, and it says it again on every
+turn after the second. One topic asked about LoRA five times running with only
+the first ask sanctioned.
+
+**And on a deflecting candidate it costs more, not less.** One ask per term means
+the topic's allowance now buys two different terms rather than two attempts at
+one, and each of those two carries its own let-go. Four turns where there were
+three.
+
+**How**
+
+- `backend/bot/brain/brain.py` — `MAX_TERM_ATTEMPTS` 2 → 1. The term closes the
+  moment it has been asked about once.
+- **The let-go moved to where the judge answers.** It used to be queued at the
+  moment the question was asked, which was safe at two asks because the second
+  ask gave the judge a turn to rule on the first answer. At one ask that would
+  say "let's leave that one there" to somebody who had just explained the thing
+  properly. It is now queued in `apply_judgment`, the first point at which we
+  know whether the answer explained anything. Explained, and nothing is said and
+  nothing reaches the report; still unexplained, and the sentence is queued and
+  the term is written down as asked-and-unanswered.
+- `backend/bot/brain/prompting.py` — the escalated wording is gone from both
+  branches, and the let-go no longer claims two asks.
+- `backend/bot/brain/harness.py` — three trigger words removed.
+- `backend/tests/test_brain.py` — twelve tests rewritten to assert the new
+  behaviour rather than relaxed. Two changed what they protect rather than
+  losing it: the test that checked the escalation had a real ask behind it now
+  checks the same thing about the let-go, which makes the same kind of claim
+  about a person; the test that a term offered three times and asked about once
+  stays open now asserts it for a term offered three times and never asked.
+
+**Measured**
+
+Three runs each on the competent and deflecting candidates, `gpt-4.1-mini`, with
+the harness fix in place on both sides so the comparison is honest.
+
+**Deflection is still caught.** The terms a candidate could not explain still
+reach the report in every run: OLTP, OLAP, session management and concurrency
+control, the same set as before. One ask was enough to establish it, because
+what establishes it is the judge still reporting the term afterwards, not the
+number of times it was asked.
+
+**The let-go is spoken more, not less.** Competent 2, 1, 4 → 3, 1, 4. Deflecting
+3, 3, 4 → 9, 5, 5. The queue-on-judgement path fires more reliably than the
+queue-on-second-ask path it replaced.
+
+Nothing else moved: the communication topic still asks about communicating
+(3, 4, 4 against zero mechanism questions), and the median question is 18 to 19
+words against a twenty-word rule.
+
+**One thing did move the wrong way and it is not dismissed.** A fabricated
+attribution appeared in one deflecting run: *"You mentioned handling
+disagreements with your engineering lead"*, said to a candidate who never
+mentioned an engineering lead or any disagreement. There were none in the runs
+before this change. Three runs at temperature 0.6 cannot establish that this
+change caused it, and the mechanism is not obvious, but there is a plausible
+route: a let-go turn has to invent its own next question with no term to anchor
+on, and there are now roughly twice as many of them. It needs watching whatever
+happens to this change.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 677 passed, 22 skipped
+    uv run python scripts/compare_models.py --scenarios competent deflecting \
+        --models gpt-4.1-mini --runs 3
+
+**Not done**
+
+- The depth ramp still renders its final stage identically on every turn after
+  the second, and that is where the freed turns went. Deliberately untouched, so
+  this change could be attributed; it is the obvious next thing.
+- The let-go's cost is overstated by the measure above. Its own block tells the
+  interviewer to say the sentence and then ask its next question, and the
+  transcripts show it doing exactly that, so a let-go turn is not a wasted turn.
+  Counting only the turns whose whole content is the mandatory term question:
+  competent 40% → 29%, deflecting 13% → 18%. Same shape, smaller numbers.
+- Whether this change is worth keeping is a judgement for the person reading it.
+  It does what it was designed to do on one candidate, the opposite on the
+  other, and moves the thing it was aimed at — how much of a good candidate the
+  interview reaches — not at all.
 
 ---
 

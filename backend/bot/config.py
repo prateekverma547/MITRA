@@ -117,6 +117,35 @@ _TRUTHY = {"1", "true", "yes", "on"}
 FILLER_ENABLED_ENV = "FILLER_ENABLED"
 
 
+#: The one switch that turns term probing OFF. Absent means on.
+#:
+#: **The polarity is inverted against the two flags above, deliberately.** Those
+#: guard features that are off until somebody decides to pay for them. This
+#: guards a feature that has shipped in every measurement ever taken here, so
+#: absent has to mean today's behaviour or the flag would silently change the
+#: product.
+#:
+#: It exists because nobody knows what term probing is worth. It was added
+#: because the interviewer never followed anything up — mechanism questions ran
+#: at 2 in 39 real opportunities before it — and repetition and cross-section
+#: drift arrived with it. Five attempts to separate the two have failed, four of
+#: them on wrong diagnoses, and every one was argued without a baseline for the
+#: product without the feature. This makes that baseline measurable.
+#:
+#: Not a deprecation. Nothing about term probing is removed and the default is
+#: unchanged.
+TERM_PROBING_DISABLED_ENV = "TERM_PROBING_DISABLED"
+
+
+def term_probing_disabled() -> bool:
+    """Whether to stop offering the interviewer a term to ask about.
+
+    Read at the moment it is needed, like the two above, so a test or a
+    comparison run can set it and the next call sees it.
+    """
+    return os.environ.get(TERM_PROBING_DISABLED_ENV, "").strip().lower() in _TRUTHY
+
+
 def filler_enabled() -> bool:
     """Whether the interviewer speaks while the next question is composed.
 

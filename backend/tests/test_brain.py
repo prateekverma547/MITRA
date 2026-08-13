@@ -1053,6 +1053,178 @@ def test_letting_go_is_said_out_loud_once():
     assert "LET THIS ONE GO" not in brain.plan_turn().system_instruction
 
 
+def test_the_record_crosses_sections_and_the_allowance_does_not():
+    """**Both directions, because either alone passes a half-fixed brain.**
+
+    The allowance and the record were one field and they answer different
+    questions. Scoping the field per section was right for the allowance and
+    silently cost the record: a term asked once here and once two topics later
+    spends neither topic's allowance, so it reached no report at all. Measured
+    at five terms recorded falling to two.
+
+    Asserted here together. A brain that records across sections but also lets
+    the allowance run across them fails the second half; one that bounds the
+    allowance but records nothing fails the first.
+    """
+    from bot.brain.brain import MAX_TERM_ATTEMPTS
+
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    first = brain.current_section.id
+
+    # ONE ask here. Not enough to spend the allowance, so nothing is let go of.
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    brain.mark_term_raised(brain.unexplained_terms()[0])
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    assert brain.term_to_let_go() is None, "one ask spent a two-ask allowance"
+
+    # ...and it is on the record anyway, which is the half that was lost.
+    outcome = next(o for o in brain.outcomes() if o.section_id == first)
+    assert [t.term for t in outcome.unexplained_terms] == ["session management"]
+
+    while brain.current_section.id == first and not brain.is_finished:
+        brain.observe(
+            bot_text="And what happened next?",
+            candidate_text="We shipped it in the third quarter and retention improved.",
+        )
+    second = brain.current_section.id
+    assert second != first, "never reached a second competency"
+
+    # The allowance did NOT come with it: a full fresh allowance is available.
+    for _ in range(MAX_TERM_ATTEMPTS):
+        brain.apply_judgment(_term_judgment(brain, "session management"))
+        offered = brain.unexplained_terms()
+        assert offered, "the allowance carried across a section boundary"
+        brain.mark_term_raised(offered[0])
+
+    # Both sections carry the finding, which is the truth: asked in two topics,
+    # explained in neither.
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    recorded = {
+        o.section_id
+        for o in brain.outcomes()
+        if any(t.term == "session management" for t in o.unexplained_terms)
+    }
+    assert recorded == {first, second}, f"recorded in {recorded}, expected both"
+
+
+def test_a_term_answered_when_asked_is_struck_from_the_record():
+    """An answer given two topics late is still an answer.
+
+    The report says what a person could and could not do, so leaving "asked
+    about session management and could not explain it" against somebody who did
+    explain it is a written claim about them that is false by the end.
+
+    **The window is the verdict that read the answer**, and that is the whole of
+    what makes this sound. See the paired test below for the case it must not
+    strike.
+    """
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    section_id = brain.current_section.id
+
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    brain.mark_term_raised(brain.unexplained_terms()[0])
+    # The next verdict is the one that read their answer, and it drops the term.
+    brain.apply_judgment(_term_judgment(brain))
+
+    outcome = next(o for o in brain.outcomes() if o.section_id == section_id)
+    assert outcome.unexplained_terms == [], "a real answer left the finding standing"
+
+
+def test_a_term_that_merely_stopped_coming_up_stays_on_the_record():
+    """**The paired case, and the one a first version got wrong.**
+
+    That version struck anything this section had asked about as soon as it left
+    the judge's list. But the judge answers "what is unexplained in what I can
+    see now", and a term leaves that list when the conversation moves on at
+    least as often as when somebody explains it. Measured, it struck two of the
+    three terms a run recorded.
+
+    Here the verdict that read the answer still reports it — they deflected — and
+    only a later verdict goes quiet. That is the subject changing, not an
+    answer, and the finding has to survive it.
+    """
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    section_id = brain.current_section.id
+
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    brain.mark_term_raised(brain.unexplained_terms()[0])
+    brain.apply_judgment(_term_judgment(brain, "session management"))  # deflected
+    brain.apply_judgment(_term_judgment(brain))                        # moved on
+
+    outcome = next(o for o in brain.outcomes() if o.section_id == section_id)
+    assert [t.term for t in outcome.unexplained_terms] == ["session management"]
+
+
+def test_a_term_nobody_asked_about_is_never_recorded():
+    """The judge reporting a term is not a finding about the candidate.
+
+    Only having been asked and not answered is. Without this, every term the
+    judge ever mentioned would land in the report as though the candidate had
+    failed to explain something nobody put to them.
+    """
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    section_id = brain.current_section.id
+
+    for _ in range(3):
+        brain.apply_judgment(_term_judgment(brain, "session management"))
+        brain.plan_turn()
+        brain.observe(
+            bot_text="What did you decide not to build that year?",
+            candidate_text="The session management manages those people per sessions.",
+        )
+
+    outcome = next(o for o in brain.outcomes() if o.section_id == section_id)
+    assert outcome.unexplained_terms == [], "recorded a term nobody asked about"
+
+
+def test_a_terms_allowance_is_per_section_and_starts_again_in_the_next():
+    """**Nothing covered this, which is how it survived two weeks in writing.**
+
+    The raise count and the closed set were brain-level, and that is one bug
+    with two faces. A term that spent its asks in the first competency could
+    never be asked about again, however right the question; and a term first
+    raised in the first competency stayed live to the last, which is what filled
+    later topics with earlier topics' material. Measured: in one run the sixth
+    topic asked six questions and every one was about the first topic's.
+
+    Both directions are asserted here, because fixing one and not the other
+    would pass a test written for either alone.
+    """
+    from bot.brain.brain import MAX_TERM_ATTEMPTS
+
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    first = brain.current_section.id
+
+    for _ in range(MAX_TERM_ATTEMPTS):
+        brain.apply_judgment(_term_judgment(brain, "session management"))
+        brain.mark_term_raised(brain.unexplained_terms()[0])
+
+    # Spent here, and it stays spent here.
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    assert brain.unexplained_terms() == [], "the cap stopped binding inside a section"
+
+    while brain.current_section.id == first and not brain.is_finished:
+        brain.observe(
+            bot_text="And what happened next?",
+            candidate_text="We shipped it in the third quarter and retention improved.",
+        )
+    assert brain.current_section.id != first, "never reached a second competency"
+
+    # A different section, so a clean slate: the same word can be asked about
+    # again, and it is asked with the first-ask wording rather than the
+    # escalation, because in this section nobody has asked yet.
+    brain.apply_judgment(_term_judgment(brain, "session management"))
+    offered = brain.unexplained_terms()
+    assert offered, "a term capped in an earlier section was still closed here"
+    assert offered[0].times_raised == 0
+    assert brain.current_section.closed_terms == set()
+
+
 def test_a_capped_term_does_not_come_back_while_the_section_still_has_room():
     """The per-term cap sits underneath the section allowance, so one term
     cannot take both attempts when two genuinely different terms are open."""
@@ -1084,6 +1256,13 @@ def test_a_term_asked_twice_and_never_explained_reaches_the_report():
     for _ in range(2):
         brain.apply_judgment(_term_judgment(brain, "session management"))
         brain.mark_term_raised(brain.unexplained_terms()[0])
+
+    # The judge still reports it after the second ask. That is what makes it a
+    # finding, and it is the point at which it is recorded: see
+    # `_let_go_of_what_was_asked_and_not_answered`. Recording it when the
+    # question was asked would write "asked and could not say" about somebody
+    # whose answer nobody had read yet.
+    brain.apply_judgment(_term_judgment(brain, "session management"))
 
     outcome = next(o for o in brain.outcomes() if o.section_id == section_id)
     assert [t.term for t in outcome.unexplained_terms] == ["session management"]
@@ -1635,3 +1814,167 @@ def test_the_opening_and_closing_bounds_are_untouched():
 
     assert brain._turn_bounds(opening) == (2, 3)
     assert brain._turn_bounds(closing) == (1, 2)
+
+
+def test_term_probing_can_be_switched_off_without_touching_anything_else(monkeypatch):
+    """A baseline for the product without the feature, which never existed.
+
+    Term probing was added because the interviewer never followed anything up:
+    mechanism questions ran at 2 in 39 real opportunities before it. Repetition
+    and cross-section drift arrived with it, five attempts to separate the two
+    have failed, and every one was argued without a measurement of the interview
+    without it, because it has been present in every run ever taken.
+
+    **Off means off, and everything else carries on.** The judge still runs and
+    still names what it thinks is unexplained; only the offer to the interviewer
+    stops, and with it everything downstream of the offer.
+    """
+    from shared.contracts import UnexplainedTerm
+
+    def fresh():
+        brain = InterviewBrain(load_blueprint())
+        finish_opening(brain)
+        section_id = brain.current_section.id
+        brain.apply_judgment(
+            Judgment(
+                section_id=section_id,
+                coverage=CoverageLevel.PARTIAL,
+                unexplained_terms=[
+                    UnexplainedTerm(term="session management", said="we used it",
+                                    section_id=section_id, turn_index=1)
+                ],
+            )
+        )
+        return brain
+
+    monkeypatch.delenv("TERM_PROBING_DISABLED", raising=False)
+    on = fresh()
+    assert [t.term for t in on.unexplained_terms()] == ["session management"]
+    assert "MANDATORY: THIS TURN" in on.plan_turn().system_instruction
+
+    monkeypatch.setenv("TERM_PROBING_DISABLED", "1")
+    off = fresh()
+    assert off.unexplained_terms() == [], "a term was still offered"
+    assert "MANDATORY: THIS TURN" not in off.plan_turn().system_instruction
+    assert off.term_to_let_go() is None
+
+    # What carries on: the judge ran, and what it said is still on the section.
+    assert [t.term for t in off.current_section.unexplained_terms] == ["session management"]
+
+
+def test_a_sections_first_ask_never_claims_it_asked_before():
+    """**The falsehood `terms.py` exists to prevent, arriving from the prompt.**
+
+    A section's first ask said "you have said X twice now" 29 times across six
+    runs, while the brain logged "raised 1x" on the same turn. It was not the
+    model imitating: the phrase was in neither the bridge nor the window on any
+    of the 29. `_open_terms` still held the previous section's objects, whose
+    `times_raised` was that section's count, and the block reads that field.
+
+    Both directions, because a fix that silenced the escalation everywhere would
+    pass a test written only for the first half.
+    """
+    from shared.contracts import UnexplainedTerm
+
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+    first = brain.current_section.id
+
+    def judged(section_id):
+        return Judgment(
+            section_id=section_id,
+            coverage=CoverageLevel.PARTIAL,
+            unexplained_terms=[
+                UnexplainedTerm(term="session management", said="we used it",
+                                section_id=section_id, turn_index=1)
+            ],
+        )
+
+    brain.apply_judgment(judged(first))
+    brain.mark_term_raised(brain.unexplained_terms()[0])
+
+    # A real second ask in the same section. The claim is true, so it is made.
+    assert "twice now" in brain.plan_turn().system_instruction
+
+    while brain.current_section.id == first and not brain.is_finished:
+        brain.observe(
+            bot_text="And what happened next?",
+            candidate_text="We shipped it in the third quarter and retention improved.",
+        )
+    assert brain.current_section.id != first, "never reached a second competency"
+
+    # A new section, and nobody has asked here. No judgement has arrived for it
+    # either, so `_open_terms` still holds the previous section's objects: the
+    # exact state that produced the falsehood.
+    prompt = brain.plan_turn().system_instruction
+    assert "twice now" not in prompt, "claimed a history this section does not have"
+    assert "Walk me through how that actually works" in prompt
+
+
+def test_the_interview_has_a_total_term_budget_under_the_per_section_one():
+    """**The per-section allowance cannot bound this, and that is measured.**
+
+    A section has two probes and the judge always has something unexplained to
+    nominate, so the allowance is always spent on whatever is left. Explaining
+    one term in the fixture took its ten probes to zero and handed all ten to
+    the next term: 31 probes before, 31 after.
+
+    Both bounds are asserted. A budget that replaced the per-section allowance
+    would let one section spend the whole interview, which is the thing the
+    per-section count was added for and which re-enabled a communication topic
+    asking how somebody explained a term a technical topic asked the workings
+    of.
+    """
+    from bot.brain.brain import (
+        MAX_TERM_PROBES_PER_INTERVIEW,
+        MAX_TERM_PROBES_PER_SECTION,
+    )
+    from shared.contracts import UnexplainedTerm
+
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    spent = 0
+    sections_used = 0
+    while spent < MAX_TERM_PROBES_PER_INTERVIEW and not brain.is_finished:
+        section_id = brain.current_section.id
+        here = 0
+        while True:
+            brain.apply_judgment(
+                Judgment(
+                    section_id=section_id,
+                    coverage=CoverageLevel.PARTIAL,
+                    unexplained_terms=[
+                        UnexplainedTerm(term=f"term {spent}-{here}", said="we used it",
+                                        section_id=section_id, turn_index=1)
+                    ],
+                )
+            )
+            offered = brain.unexplained_terms()
+            if not offered:
+                break
+            brain.mark_term_raised(offered[0])
+            spent += 1; here += 1
+        # The per-section allowance still bounds one section.
+        assert here <= MAX_TERM_PROBES_PER_SECTION, "one section spent more than its own allowance"
+        sections_used += 1
+        while brain.current_section.id == section_id and not brain.is_finished:
+            brain.observe(bot_text="And what happened next?",
+                          candidate_text="We shipped it in the third quarter.")
+
+    assert spent == MAX_TERM_PROBES_PER_INTERVIEW
+    assert sections_used > 1, "the budget was spent inside a single section"
+
+    # Spent. Nothing more is offered, anywhere, however fresh the term.
+    brain.apply_judgment(
+        Judgment(
+            section_id=brain.current_section.id,
+            coverage=CoverageLevel.PARTIAL,
+            unexplained_terms=[
+                UnexplainedTerm(term="a brand new term", said="we used it",
+                                section_id=brain.current_section.id, turn_index=1)
+            ],
+        )
+    )
+    assert brain.unexplained_terms() == [], "kept probing past the interview budget"
+    assert "MANDATORY: THIS TURN" not in brain.plan_turn().system_instruction

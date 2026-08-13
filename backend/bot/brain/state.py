@@ -116,6 +116,25 @@ class Section:
     #: own material.
     term_probes_spent: int = 0
 
+    #: How many times each term has been asked about IN THIS SECTION, and which
+    #: have had their allowance here.
+    #:
+    #: **Both were brain-level and both were wrong in the same way, seen from two
+    #: sides.** A term that spent its two asks in the first competency was closed
+    #: for the rest of the interview, so a later section could not ask about it
+    #: even where that was the right question. And a term first raised in the
+    #: first competency stayed live to the last, which is what produced the
+    #: drift: in one measured run the sixth topic asked six questions and every
+    #: one was about material from the first.
+    #:
+    #: A term is a fact about a section. "fine tuning" carried its raise count
+    #: out of `applied_llm_depth` and hit its cap inside `evaluation_reasoning`,
+    #: which is the same bug written down two weeks before it was fixed.
+    #:
+    #: `term_probes_spent` was already scoped this way and is the precedent.
+    term_raises: dict[str, int] = field(default_factory=dict)
+    closed_terms: set[str] = field(default_factory=set)
+
     #: Turns where the candidate declined to answer. Reported honestly: "the
     #: candidate declined" is real signal for a human reader, and quite
     #: different from "the answer lacked depth".
