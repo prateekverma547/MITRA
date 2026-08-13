@@ -12,6 +12,134 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-12 — The report stops blaming the candidate for the interviewer repeating itself
+
+**What**
+
+A report was describing a candidate as repetitive when the interviewer had asked
+the same question four times and the candidate had correctly given the same
+answer each time. And a dealbreaker — "describes evaluation or deployment in
+vague or generic terms with no real examples" — was firing against somebody
+holding 97.08 percent on 308 held-out examples, GPTQ 4-bit at 14.2 GB and KL
+divergence, because none of it was ever asked for.
+
+Both are the same failure: **the report made claims about a real person that
+were artefacts of how they were interviewed.**
+
+`QuestioningHealth` is the third object of a shape this codebase already has
+twice. `ConversationHealth` stops a bad microphone reading as an incoherent
+person. `JudgmentHealth` stops our own analysis failing from reading as a quiet
+candidate. This stops the interviewer repeating itself from reading as a
+candidate who repeats themselves.
+
+**The signal, and why this one**
+
+Questions that ask again what an earlier question in the same topic already
+asked. Derived from the stored transcript like the other two, so an interview
+already in the database picks it up next time its report is rebuilt.
+
+Scoped to a topic on purpose: the same question in two topics can be two
+questions, which is what the section-aware term block is built for. Twice inside
+one topic is not.
+
+The threshold is measured rather than chosen, the way `ECHO_RUN_FRACTION` was.
+Counting question pairs above each candidate line across nine stored runs:
+
+| word overlap | competent, 135 turns | deflecting, 252 turns |
+| --- | --- | --- |
+| 0.4 | 22 | 68 |
+| 0.5 | 21 | 33 |
+| **0.6** | **17** | **14** |
+
+At 0.4 it fires on a quarter of the deflecting interview, where the interviewer
+is working correctly and the candidate is the one going in circles. At 0.6 it
+separates: 12.6% of turns on the runs whose reports called the candidate
+repetitive, 5.6% on the runs that did not. **A follow-up shares the subject;
+asking again shares the question.**
+
+It reaches the scorer exactly as the channel does — a sentence at the top of the
+prompt when degraded, nothing when not — and caps a confident recommendation the
+same way, checked separately from the other two so no degradation can hide
+another.
+
+**And a fourth "not the candidate's fault" rule in the scoring prompt**, next to
+declining, could-not-be-heard and ran-short. It forbids describing the candidate
+as repetitive, and forbids raising a red flag that turns on something being
+absent. Not being asked is not the same as failing to answer.
+
+**Measured**
+
+Nine stored runs scored twice, six competent and three deflecting.
+
+**The attribution flipped, which was the point.** Before, on the competent
+candidate: *"most answers repeated the same high-level description"*, *"the
+majority of answers repeated the same phrase"*. After:
+
+> **The interviewer repeated the same question multiple times**, which limited
+> the candidate's ability to elaborate.
+> Most answers were repeated verbatim **due to interviewer repetition**.
+> **The repetitive questioning** limited the opportunity for the candidate to
+> evidence this competency.
+
+**The deflecting candidate did not go quiet**, which was the thing to protect:
+
+> The candidate responded to nearly every question with the same phrase about
+> concurrency control and session management, without elaboration or variation.
+> The candidate did not provide any metric, experiment, or measurement, only
+> repeating the same phrase.
+
+| | before | after |
+| --- | --- | --- |
+| the vague-and-generic dealbreaker, competent | fired 3 of 6 | **1 of 6** |
+| the equivalent dealbreaker, deflecting | fired 3 of 3 | **3 of 3** |
+| sentences blaming the candidate for repetition, competent | 3 | **2** |
+| sentences naming the interviewer instead | 1 | **3** |
+| competencies scored | 35 | 40 |
+| quotes verified | 75 | 71 |
+| quotes dropped as unverifiable | 0 | 0 |
+| scores downgraded for lost evidence | 0 | 0 |
+
+**It is a reduction, not an elimination, and the numbers say so.** The wrong flag
+still fired once in six. Two sentences still describe the answers as repetitive
+without naming why, one of them in the same report that elsewhere names the
+interviewer correctly.
+
+**One deflecting run moved and I cannot attribute it.** It went from six
+competencies marked `insufficient_signal` to six scored at 2.0 — which on this
+rubric is "generic or textbook answers, no concrete experience behind them", and
+the rationales are unchanged in substance ("did not provide any concrete
+examples", "did not describe"). The red flag still fires and the recommendation
+is still capped. The scorer runs at temperature 0.2 and the other two deflecting
+runs are identical across both passes, so this sits inside sampling.
+
+**How**
+
+- `backend/shared/contracts.py` — `QuestioningHealth`, and
+  `FeedbackReport.questioning_health`.
+- `backend/feedback/health.py` — `assess_questioning`, pure, transcript only.
+- `backend/feedback/score.py` — the prompt rule, the prompt injection, the cap.
+- `backend/feedback/run.py` — derived alongside the other two.
+- `backend/tests/test_health.py` — four tests: repetition is caught, a genuine
+  follow-up is not, the same question in two topics is two questions, and the
+  cap fires.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 686 passed, 22 skipped
+
+**Not done**
+
+- The report still has nowhere to say a dealbreaker was **checked and not
+  observed**. `red_flags_observed` holds only what fired, so "we asked about
+  negative results and they answered well" is unsayable, and two of this
+  employer's four dealbreakers went unaddressed in either direction.
+- Nothing here makes the interviewer ask better questions. It stops the report
+  blaming the candidate for the questions it asked.
+- The residual cases above.
+
+---
+
 ## 2026-08-11 — The list of what the candidate said earlier had become a list of things to ask about
 
 **What**

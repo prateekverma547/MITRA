@@ -409,3 +409,119 @@ def test_a_genuine_echo_still_reaches_the_sentence():
     assert health.echo_turns == 2
     assert health.degraded is True
     assert "own speakers" in health.as_sentence
+
+
+# -- how the interview questioned -------------------------------------------
+
+
+def _iv(texts, section="product_strategy"):
+    from shared.contracts import Speaker, Transcript, TranscriptTurn
+
+    return Transcript(
+        interview_id="q",
+        turns=[
+            TranscriptTurn(index=i, speaker=Speaker.INTERVIEWER, text=t,
+                           at_seconds=float(i), section_id=section)
+            for i, t in enumerate(texts)
+        ],
+    )
+
+
+def test_asking_the_same_question_again_is_the_interviewers_fault():
+    """The failure this exists for, taken from a real run.
+
+    Three of six reports described the candidate as repetitive. What happened
+    was the interviewer asking the same question several times and the candidate
+    correctly giving the same answer.
+    """
+    from feedback.health import assess_questioning
+
+    same = "You said bf16 LoRA. Walk me through how bf16 LoRA actually works."
+    health = assess_questioning(_iv([
+        "What was the bet behind replacing GPT-4o with Sarvam-M 24B?",
+        same,
+        same,
+        same,
+        same,
+    ]))
+    # Four identical questions: the first asks, the other three ask again.
+    assert health.repeated_questions == 3
+    assert health.degraded
+    assert "repeated itself" in health.as_sentence
+
+
+def test_following_up_is_not_repeating():
+    """A follow-up shares the subject. Asking again shares the question.
+
+    If this cannot tell them apart it fires on every competent interview and
+    becomes another signal that flags everything and therefore decides nothing.
+    """
+    from feedback.health import assess_questioning
+
+    health = assess_questioning(_iv([
+        "How did you measure decision accuracy for that classifier?",
+        "What was the size of the held-out set you evaluated on?",
+        "How did you decide that difference was inside the noise?",
+        "What statistical test did you use to establish that?",
+    ]))
+    assert health.repeated_questions == 0
+    assert not health.degraded
+    assert health.as_sentence is None
+
+
+def test_the_same_question_in_two_topics_is_two_questions():
+    """Deliberate, and the term block is built for it: a technical topic asks
+    what a word means and a communication topic asks how they explained it."""
+    from feedback.health import assess_questioning
+    from shared.contracts import Speaker, Transcript, TranscriptTurn
+
+    text = "You said session management. Walk me through how that works."
+    transcript = Transcript(
+        interview_id="q",
+        turns=[
+            TranscriptTurn(index=0, speaker=Speaker.INTERVIEWER, text=text,
+                           at_seconds=0.0, section_id="product_strategy"),
+            TranscriptTurn(index=1, speaker=Speaker.INTERVIEWER, text=text,
+                           at_seconds=1.0, section_id="stakeholders"),
+        ],
+    )
+    assert assess_questioning(transcript).repeated_questions == 0
+
+
+def test_repeated_questioning_caps_the_recommendation():
+    """The same cap the channel and our own analysis already apply, and checked
+    separately from both so no degradation can hide another."""
+    from feedback.score import _recommendation
+    from shared.contracts import (
+        Competency,
+        CompetencyScore,
+        CoverageLevel,
+        EvaluationSpec,
+        EvidenceQuote,
+        QuestioningHealth,
+        RecommendationSignal,
+    )
+
+    spec = EvaluationSpec(
+        role_title="Senior AI/ML Engineer",
+        seniority="Senior",
+        experience_expectation="5 years",
+        duration_minutes=20,
+        competencies=[Competency(id="a", name="Analysis", description="d", weight=1.0)],
+    )
+    scores = [
+        CompetencyScore(
+            competency_id=c.id, name=c.name, score=4.0,
+            coverage=CoverageLevel.SUFFICIENT, rationale="ok",
+            evidence=[EvidenceQuote(turn_index=1, text="we shipped it", at_seconds=1.0)],
+        )
+        for c in spec.competencies
+    ]
+    narrow = QuestioningHealth(interviewer_turns=40, repeated_questions=12)
+    assert narrow.degraded
+    assert _recommendation("strong_evidence_for", scores, spec) == (
+        RecommendationSignal.STRONG_EVIDENCE_FOR
+    )
+    assert _recommendation("strong_evidence_for", scores, spec, questioning=narrow) == (
+        RecommendationSignal.LIMITED_EVIDENCE
+    )

@@ -26,6 +26,7 @@ from openai import AsyncOpenAI
 
 from shared.branding import PROSE_STYLE
 from shared.contracts import (
+    QuestioningHealth,
     CompetencyScore,
     ConversationHealth,
     Contradiction,
@@ -77,6 +78,20 @@ evidence about the connection, not about the person. Say that plainly in the
 rationale and mark the competency insufficient_signal rather than scoring it
 low. Someone with a cheap headset must not read as someone who could not
 answer.
+
+WHERE THE INTERVIEWER REPEATED ITSELF.
+You may be told the interviewer asked the same question more than once. If so:
+- Do NOT describe the candidate as repetitive, circular, or as giving the same
+  answer twice. Somebody asked the same question twice and got the same answer,
+  which is what a person does. Say the interviewer repeated itself, or say
+  nothing about it.
+- A thin topic there is the interview's failing. Mark it insufficient_signal and
+  list it in `coverage_gaps`.
+- **Do not raise a red flag that turns on something being absent.** "No real
+  examples", "cannot explain why", "avoids the question" — none of those can be
+  concluded from a topic that spent its questions asking one thing repeatedly.
+  Not being asked is not the same as failing to answer. A red flag still stands
+  if you can quote the candidate evidencing it directly.
 
 WHERE THE INTERVIEW RAN SHORT.
 If a section was squeezed or never properly reached, that is the interview's
@@ -263,6 +278,7 @@ class FeedbackScorer:
         contradictions: list[dict] | None = None,
         health: ConversationHealth | None = None,
         judgment_health: JudgmentHealth | None = None,
+        questioning: QuestioningHealth | None = None,
     ) -> FeedbackReport:
         outcomes = section_outcomes or []
 
@@ -277,6 +293,7 @@ class FeedbackScorer:
                 transcript=transcript,
                 health=health,
                 judgment_health=judgment_health,
+                questioning=questioning,
                 reason=(
                     "The candidate did not say anything that was recorded, so "
                     "there is nothing to assess. This says nothing about them."
@@ -287,9 +304,14 @@ class FeedbackScorer:
         if health is not None and health.degraded:
             channel = f"RECORDING QUALITY:\n{health.as_sentence}\n\n"
 
+        conduct = ""
+        if questioning is not None and questioning.degraded:
+            conduct = f"HOW THE INTERVIEW WAS CONDUCTED:\n{questioning.as_sentence}\n\n"
+
         user = (
             f"EVALUATION SPEC:\n{spec.model_dump_json(indent=2)}\n\n"
             f"{channel}"
+            f"{conduct}"
             f"WHAT THE INTERVIEWER RECORDED PER SECTION:\n{_render_sections(outcomes)}\n\n"
             f"TRANSCRIPT:\n{_render_transcript(transcript)}"
         )
@@ -317,6 +339,7 @@ class FeedbackScorer:
             contradictions=contradictions or [],
             health=health,
             judgment_health=judgment_health,
+            questioning=questioning,
         )
 
 
@@ -330,6 +353,7 @@ def build_report(
     contradictions: list[dict] | None = None,
     health: ConversationHealth | None = None,
     judgment_health: JudgmentHealth | None = None,
+    questioning: QuestioningHealth | None = None,
 ) -> FeedbackReport:
     """Validate and anchor the model's report. Pure — no network, so it is testable.
 
@@ -427,11 +451,13 @@ def build_report(
         contradictions=[Contradiction.model_validate(c) for c in (contradictions or [])],
         summary=str(payload.get("summary", "")).strip() or "No summary was produced.",
         recommendation=_recommendation(
-            payload.get("recommendation"), ordered, spec, health, judgment_health
+            payload.get("recommendation"), ordered, spec, health, judgment_health,
+            questioning,
         ),
         coverage_gaps=gaps,
         conversation_health=health,
         judgment_health=judgment_health,
+        questioning_health=questioning,
         interview_duration_seconds=transcript.duration_seconds,
     )
 
@@ -468,6 +494,7 @@ def _recommendation(
     spec: EvaluationSpec,
     health: "ConversationHealth | None" = None,
     judgment_health: "JudgmentHealth | None" = None,
+    questioning: "QuestioningHealth | None" = None,
 ) -> RecommendationSignal:
     """Trust the model's signal, but never let it overstate thin evidence.
 
@@ -504,6 +531,16 @@ def _recommendation(
     ):
         return RecommendationSignal.LIMITED_EVIDENCE
 
+    # Nor from an interview that spent its questions asking one thing several
+    # times. Same cap, same reasoning, and checked separately from the two above
+    # so no degradation can hide another: an interview can be well recorded,
+    # fully analysed, and still have gathered less than its length suggests.
+    if questioning is not None and questioning.degraded and signal in (
+        RecommendationSignal.STRONG_EVIDENCE_FOR,
+        RecommendationSignal.SOME_EVIDENCE_FOR,
+    ):
+        return RecommendationSignal.LIMITED_EVIDENCE
+
     total = sum(c.weight for c in spec.competencies) or 1.0
     covered = sum(c.weight for c in spec.competencies if c.id in assessed) / total
 
@@ -527,6 +564,7 @@ def _empty_report(
     reason: str,
     health: ConversationHealth | None = None,
     judgment_health: JudgmentHealth | None = None,
+    questioning: QuestioningHealth | None = None,
 ) -> FeedbackReport:
     return FeedbackReport(
         interview_id=interview_id,
@@ -549,5 +587,6 @@ def _empty_report(
         coverage_gaps=[c.name for c in spec.competencies],
         conversation_health=health,
         judgment_health=judgment_health,
+        questioning_health=questioning,
         interview_duration_seconds=transcript.duration_seconds,
     )

@@ -663,6 +663,79 @@ class JudgmentHealth(BaseModel):
         )
 
 
+class QuestioningHealth(BaseModel):
+    """Evidence about how the interview was conducted, not about the candidate.
+
+    The third of these, and the same idea each time. `ConversationHealth` keeps
+    a bad microphone from reading as an incoherent person. `JudgmentHealth`
+    keeps our own analysis failing from reading as a quiet candidate. This keeps
+    **the interviewer repeating itself** from reading as a candidate who repeats
+    themselves.
+
+    It was found by reading reports rather than transcripts. Three of six said
+    things like "many answers were repeated verbatim and lacked technical
+    depth". What happened was the interviewer asking the same question four
+    times and the candidate correctly giving the same answer each time; one run
+    put the same term to the candidate twice in each of six topics. The report
+    took the interviewer's defect and wrote it down about a person.
+
+    Derived from the stored transcript, like the other two, so an interview that
+    already happened picks this up the next time its report is rebuilt.
+    """
+
+    schema_version: Literal[1] = SCHEMA_VERSION
+
+    interviewer_turns: int = 0
+    #: Questions that ask again what an earlier question in the same topic
+    #: already asked.
+    repeated_questions: int = 0
+    #: Topics where that happened more than once.
+    narrow_sections: list[str] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def degraded(self) -> bool:
+        """True when the questioning is a plausible explanation for thin answers.
+
+        A computed field rather than a property for the reason written on
+        `ConversationHealth.degraded`: as a property it is invisible to every
+        consumer reading this over JSON.
+
+        The threshold is measured, not chosen. Across six competent and three
+        deflecting stored runs, questions repeating an earlier one in the same
+        topic at 0.6 word overlap ran at 12.6% of interviewer turns where the
+        reports called the candidate repetitive, and 5.6% where they did not.
+        One repeat is a follow-up circling back. A tenth of the interview is the
+        interview going nowhere.
+        """
+        if self.interviewer_turns == 0:
+            return False
+        return self.repeated_questions >= max(3, round(0.10 * self.interviewer_turns))
+
+    @computed_field
+    @property
+    def as_sentence(self) -> str | None:
+        """Written once, here, for the same reason the other two are.
+
+        The panel wrote its own copy of the channel sentence and the two
+        drifted, so the scoring model was told one thing and the employer read
+        another. This is the only place this wording exists.
+        """
+        if not self.degraded:
+            return None
+        where = ""
+        if self.narrow_sections:
+            where = f" It happened most in: {', '.join(self.narrow_sections)}."
+        return (
+            f"The interviewer repeated itself: {self.repeated_questions} of "
+            f"{self.interviewer_turns} questions asked again what an earlier "
+            f"question in the same topic had already asked.{where} Thin or "
+            f"repetitive answers may reflect the questioning rather than the "
+            f"candidate, and a subject nobody asked about is not a subject they "
+            f"could not discuss."
+        )
+
+
 class FeedbackReport(BaseModel):
     """Structured evidence for a human decision-maker.
 
@@ -694,6 +767,11 @@ class FeedbackReport(BaseModel):
     #: never a substitute for it: a report can be degraded on both counts, and
     #: one must not hide the other.
     judgment_health: JudgmentHealth | None = None
+
+    #: How the interview was conducted. Read this before reading a low score or
+    #: a red flag that turns on an absence: an interviewer that asked the same
+    #: thing repeatedly gathered less than its length suggests.
+    questioning_health: QuestioningHealth | None = None
 
     interview_duration_seconds: float = 0.0
 

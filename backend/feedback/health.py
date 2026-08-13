@@ -18,6 +18,7 @@ from shared.contracts import (
     ConversationHealth,
     EvaluationSpec,
     JudgmentHealth,
+    QuestioningHealth,
     Speaker,
     Transcript,
 )
@@ -214,4 +215,85 @@ def assess_judgment(
         # spec so the report does not shuffle between rebuilds.
         unjudged_competencies=[c.name for c in spec.competencies if c.id in unjudged],
         unjudged_weight=round(lost_weight / total_weight, 4),
+    )
+
+
+#: How much of two questions has to be the same before one is asking again
+#: rather than following up.
+#:
+#: **Measured, not chosen**, the same way `ECHO_RUN_FRACTION` was. Across six
+#: competent and three deflecting stored runs, counting pairs of questions in
+#: one topic above each candidate line:
+#:
+#:   overlap   competent (135 turns)   deflecting (252 turns)
+#:   0.4                          22                       68
+#:   0.5                          21                       33
+#:   0.6                          17                       14
+#:
+#: At 0.4 it fires on a quarter of the deflecting interview, where the
+#: interviewer is working correctly and the candidate is the one going in
+#: circles. At 0.6 it separates: 12.6% of turns on the runs whose reports called
+#: the candidate repetitive, 5.6% on the runs that did not. A follow-up shares
+#: the subject; asking again shares the question.
+REPEAT_OVERLAP = 0.6
+
+#: Words too common to tell two questions apart.
+_WEAK = {
+    "that", "this", "with", "your", "they", "them", "were", "have", "from",
+    "then", "said", "actually", "works", "walk", "through", "okay", "right",
+    "about", "would", "could", "what", "does", "which", "when", "there",
+}
+
+
+def _question_words(text: str) -> set[str]:
+    return {w for w in _words(text) if len(w) > 3 and w not in _WEAK}
+
+
+def assess_questioning(transcript: Transcript) -> QuestioningHealth:
+    """Did the interviewer ask the same thing more than once?
+
+    Pure, and derived from the stored transcript for the reason written at the
+    top of this module: the interviews that most need explaining are the ones
+    already in the database.
+
+    **Scoped to a topic.** The same question asked in two different topics can
+    be two different questions — a technical topic asking what a term means and
+    a communication topic asking how they explained it is deliberate. Asking it
+    twice inside one topic is not.
+
+    Nothing here says anything about the candidate. It says whether the
+    questioning is a plausible explanation for thin or repetitive answers, so a
+    report can say so instead of writing the interviewer's defect down about a
+    person.
+    """
+    by_section: dict[str, list[str]] = {}
+    for turn in transcript.turns:
+        if turn.speaker != Speaker.INTERVIEWER or not turn.section_id:
+            continue
+        by_section.setdefault(turn.section_id, []).append(turn.text)
+
+    repeated = 0
+    narrow: list[str] = []
+    total = sum(len(qs) for qs in by_section.values())
+
+    for section_id, questions in by_section.items():
+        asked: list[set[str]] = []
+        here = 0
+        for text in questions:
+            words = _question_words(text)
+            if words and any(
+                len(words & earlier) / len(words | earlier) >= REPEAT_OVERLAP
+                for earlier in asked
+                if earlier
+            ):
+                repeated += 1
+                here += 1
+            asked.append(words)
+        if here > 1:
+            narrow.append(section_id)
+
+    return QuestioningHealth(
+        interviewer_turns=total,
+        repeated_questions=repeated,
+        narrow_sections=sorted(narrow),
     )

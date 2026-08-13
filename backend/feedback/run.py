@@ -17,7 +17,7 @@ from loguru import logger
 
 from shared.contracts import EvaluationSpec, FeedbackReport, Transcript
 
-from feedback.health import assess, assess_judgment
+from feedback.health import assess, assess_judgment, assess_questioning
 from feedback.score import FeedbackError, FeedbackScorer
 
 
@@ -90,6 +90,10 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
         # session metrics the bot already wrote; neither needs a new path.
         health = assess(transcript, metrics, repair_requests=_repairs(metrics))
         judgment_health = assess_judgment(metrics, spec)
+        # The third of the same kind, and the only one that needs nothing but
+        # the transcript: how the interview questioned, so its own repetition
+        # cannot be written down about the candidate.
+        questioning = assess_questioning(transcript)
 
         report = await scorer.score(
             interview_id=interview_id,
@@ -100,6 +104,7 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
             contradictions=_contradictions(outcomes),
             health=health,
             judgment_health=judgment_health,
+            questioning=questioning,
         )
     except (FeedbackError, Exception) as exc:  # noqa: BLE001
         logger.error(f"[{interview_id}] feedback generation failed: {exc}")
