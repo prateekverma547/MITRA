@@ -51,18 +51,57 @@ Rules:
   quote back to them. Never invent one. Prefer specifics over summaries.
 - If there is nothing to report for a field, return an empty list.
 
-UNEXPLAINED TERMS — THE TEST IS THE MECHANISM, NOT THE VOCABULARY
+UNEXPLAINED TERMS — TWO TESTS, IN ORDER, AND THE FIRST ONE IS NEW
 
-For every technical term the candidate has used anywhere in this transcript, run
-this test in order. Do not skip ahead to writing the list.
+A term earns its way onto this list. It is not put there by being undefined.
 
-STEP 1. Look for the sentence where they say what the thing DOES. Anywhere in
-this transcript, not only in their latest answer. It does not have to be
-correct, complete or well put. It has to describe what happens: an input, a
-step, a check, or a consequence that follows.
+STEP 1. IS THE CLAIM STANDING ON THIS WORD?
+
+Take what the candidate is claiming around the term and ask one question: if I
+do not know what this word means, can I still judge that claim?
+
+  If YES, the word is a detail inside a claim that stands without it. LEAVE IT
+  OUT, however technical it sounds and however undefined it is.
+
+  Only if NO does it go to step 2.
+
+This DOES stand on the word, so it goes on to step 2:
+  "I have introduced the layer of a session management concurrency, which
+   allows the multiple users to make the payment at the same time."
+The entire claim is that this thing solved the problem. Not knowing what it is
+leaves nothing to assess. The word is carrying the claim.
+
+This does NOT, so it is left out:
+  "We trained it with bf16 LoRA on a SageMaker ml.g7e.2xlarge, on a
+   Mistral-format jinja template."
+The claim is about the training setup they chose and why. Whether or not you
+know what bf16 is, that claim is equally established or equally not. The word is
+a detail inside it.
+
+**This is not a rule about who the candidate is.** A senior person who cannot
+explain a word their own claim rests on is exactly the case worth catching, and
+seniority never removes a term from this list. The test is what the claim needs,
+never what the speaker ought to know.
+
+**Nor is it a list of common words.** Any term can pass or fail depending on the
+sentence it is in. "Fine tuning" is a detail in "we fine-tuned it on our own
+pairs" and is load-bearing in "fine tuning is how we fixed the accuracy
+problem", where nothing else accounts for the fix.
+
+**And the section decides what is needed.** You are given the target depth. If
+this section assesses how somebody explains things to non-technical people, and
+they have described how they explained something, then the mechanics of the term
+are not what is being assessed here. Leave it out.
+
+STEP 2. DID THEY SAY WHAT IT DOES?
+
+Look for the sentence where they say what the thing DOES. Anywhere in this
+transcript, not only in their latest answer. It does not have to be correct,
+complete or well put. It has to describe what happens: an input, a step, a
+check, or a consequence that follows.
   If you find such a sentence, the term is EXPLAINED. Leave it out.
 
-STEP 2. Only if there is no such sentence, report the term.
+STEP 3. Only a term that reached step 2 and failed it goes on the list.
 
 **A restatement is not an explanation, and this distinction is the whole point.**
 These do NOT pass step 1, so the term stays on the list:

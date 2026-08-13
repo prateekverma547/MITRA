@@ -12,6 +12,130 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-13 — The judge is asked which terms the interview NEEDS, not which are undefined
+
+**What**
+
+The judge's unexplained-terms instruction gains a first gate. It used to ask,
+in effect, "did they say what this does" for every technical term. It now asks
+first whether the claim is standing on the word at all.
+
+**Why**
+
+Every change to this feature has bounded HOW MANY probes happen. None improved
+WHICH. The cap proved it: distinct answers per section on the deflecting
+candidate read 1.17 in both arms, identical to two decimals. Four fewer probes,
+the same character of repetition.
+
+The instruction was the reason. It reported "bf16" from an ML engineer using it
+correctly in a sentence about training precision and "session management
+concurrency" from someone who cannot say what it does, because both are
+technical terms without a definition attached. Only one is worth a question.
+
+**The gate, and why this formulation**
+
+> STEP 1. IS THE CLAIM STANDING ON THIS WORD?
+> Take what the candidate is claiming around the term and ask one question: if I
+> do not know what this word means, can I still judge that claim?
+
+Written as a gate a term must pass rather than an exclusion it must escape,
+because that is the shape this repo has measured twice: removing the alternative
+beats adding emphasis. The old wording had "ordinary words of the field used in
+passing" as the last of two exclusions, and it did not hold.
+
+Two worked examples carry it, because a concrete example beats an abstract
+instruction here every time. "I have introduced the layer of a session
+management concurrency, which allows the multiple users to make the payment at
+the same time" stands on the word; "we trained it with bf16 LoRA on a SageMaker
+ml.g7e.2xlarge" does not.
+
+**Explicitly not a seniority rule**, stated in the prompt: a senior person who
+cannot explain a word their own claim rests on is the case worth catching, and
+seniority never removes a term. **Explicitly not a stop-list**: the same word
+passes or fails depending on the sentence, and the prompt says so with "fine
+tuning" as the example.
+
+**Tested on stored transcripts before any interview ran**
+
+Old instruction against new, on four stored sections:
+
+| section | OLD | NEW |
+| --- | --- | --- |
+| competent, evaluation_reasoning | guardrails, prompt-level rules | one clause |
+| competent, applied_llm_depth | guardrails, **GPTQ 4-bit, quantised** | guardrails |
+| deflecting, product_strategy | session management, concurrency control, OLTP, OLAP | **identical** |
+| deflecting, stakeholders | concurrency control session | **identical** |
+
+It drops the field vocabulary from the competent sections and returns the
+deflecting lists unchanged, which is the separation the change is for. Four
+judge calls, before ninety minutes of interviews.
+
+**Measured, ten runs a side**
+
+The before arm is the cap task's after arm, reused rather than re-run.
+
+| competent, n=10 | before | after |
+| --- | --- | --- |
+| **consecutive on one subject** | **29% ± 5% [18..35]** | **16% ± 7% [4..26]** |
+| sanctioned probes per interview | 7.8 | 6.7 |
+| mechanism questions | 29% ± 14% [12..55] | 30% ± 8% [18..42] |
+| distinct answers per section | 3.08 ± 0.54 | 2.93 ± 0.31 |
+| terms reaching the report | 1.30 ± 0.90 | 1.50 ± 0.81 |
+| let-gos spoken | 2.80 ± 1.33 | 2.40 ± 0.92 |
+| unsupported attributions | 0.00 ± 0.00 | **0.40 ± 0.92 [0..3]** |
+| median interviewer turn | 18.50 | 17.90 |
+
+| deflecting, n=10 | before | after |
+| --- | --- | --- |
+| **consecutive on one subject** | **29% ± 7%** | **37% ± 4%** |
+| sanctioned probes per interview | 8.0 ± 0.0 | 8.0 ± 0.0 |
+| mechanism questions | 14% ± 4% | 13% ± 3% |
+| **terms reaching the report** | **1.70 ± 0.78** | **1.60 ± 0.49** |
+| let-gos spoken | 3.80 ± 0.40 | 3.80 ± 0.40 |
+| median interviewer turn | 18.40 | 18.40 |
+
+**What survives the spread.** Consecutive-same-subject on the competent
+candidate, 29 to 16 percent, about two combined standard deviations, while the
+probe count barely moved. And the same measure on the deflecting candidate going
+the other way, 29 to 37. Everything else overlaps.
+
+**The character changed on one candidate and not the other, and the reason is
+visible in the cheap test.** The competent candidate's terms include plenty that
+fail the new gate, so the judge returns a shorter, better list. The deflecting
+candidate's four nominatable terms are all load-bearing: every one passes gate
+one, the list is unchanged, and the same eight probes work through a shorter
+list of targets more often.
+
+**Sampled by reading**, sixteen probes from the after arm: twelve read as worth
+asking, against nineteen of thirty-six before. Directional on that sample size,
+not settled.
+
+**How**
+
+`backend/bot/brain/drivers.py`, the `UNEXPLAINED TERMS` block. The judge runs off
+the live path, so this costs no latency.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 689 passed, 22 skipped
+
+**Not done**
+
+- **Unsupported attributions rose on the competent candidate**, 0.00 to 0.40 per
+  interview, all four instances the same shape: "you said statistically flat" and
+  "you said statistically significant" to a candidate who said "well inside the
+  noise". Those words come from the blueprint's own claim and seed question, not
+  from the candidate, so the interviewer is quoting the CV back as if it were
+  speech. Pre-existing and small, but it went up and it is a claim about a person.
+- The new gate occasionally returns a clause rather than a term, "refuses it if
+  it violates a rule". That produces an awkward probe and was visible in the
+  cheap test before the runs.
+- Deflecting repetition got worse and the cap cannot help there: its probe count
+  is pinned at 8 in both arms.
+
+---
+
 ## 2026-08-13 — Term probes get a budget for the whole interview
 
 **What**
