@@ -22,7 +22,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bot.blueprint_source import load_blueprint  # noqa: E402
-from bot.brain.brain import InterviewBrain  # noqa: E402
+from bot.brain.brain import (  # noqa: E402
+    MAX_CLOSING_TURNS,
+    MAX_REPAIR_ATTEMPTS,
+    SECONDS_PER_COMPETENCY_TURN,
+    InterviewBrain,
+)
 from bot.brain.drivers import OpenAIInterviewer, OpenAIJudge  # noqa: E402
 from bot.brain.harness import (  # noqa: E402
     competent_candidate,
@@ -35,7 +40,7 @@ from bot.brain.harness import (  # noqa: E402
     unheard_candidate,
     write_run,
 )
-from bot.brain.state import BrainConfig  # noqa: E402
+from bot.brain.state import BrainConfig, SectionKind  # noqa: E402
 from bot.config import MissingConfig, Settings  # noqa: E402
 
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "sessions" / "model_comparison"
@@ -226,7 +231,11 @@ def _specific_terms(run, brain) -> dict:
     reported. A term the judge raised and the interviewer never asked about cost
     nobody a turn.
     """
-    probed = [_as_spoken(t, run) for t in brain._term_raises]
+    # Through the brain's own accessor. This read was `brain._term_raises`,
+    # then a comprehension over `section.term_raises`, and it broke the day the
+    # state moved and would have broken again. What it wants is the question,
+    # not whichever field currently answers it.
+    probed = [_as_spoken(t, run) for t in brain.terms_asked_about()]
     if not probed:
         return {"probe_terms_specific": "n/a", "probe_terms": "none"}
 
@@ -537,8 +546,61 @@ def spread(values: list) -> str:
     return f"[{body}]" + ("" if lo == hi else f"  range {hi - lo:g}")
 
 
-async def run_one(scenario: str, model: str, settings: Settings, run_index: int = 0) -> tuple:
+def _runaway_bound(brain: InterviewBrain) -> int:
+    """The most turns a correctly-behaving interview could possibly take.
+
+    **Production has no such cap.** This exists only so a brain that stops
+    advancing cannot sit in a loop burning API credit, so the one thing it must
+    never do is bind on a normal run — and it was doing exactly that. It was a
+    flat 60, chosen when a turn cost 40 seconds. At the measured 22 a full
+    `pm_senior` interview needs 84 turns, so every deflecting run for the last
+    two tasks ended on the cap rather than finishing: its topics could not get
+    longer, its numbers sat still by construction, and the scenario that guards
+    deflection being caught measured nothing at all.
+
+    Derived rather than guessed, and from the brain's own numbers: a section
+    cannot exceed its own ceiling, so the sum of the ceilings is what a correct
+    interview costs. Repairs are the one thing that adds turns without spending
+    one — deliberately, so the depth ramp does not advance on a question nobody
+    heard — and they are capped per question, so a fixed allowance of
+    `MAX_REPAIR_ATTEMPTS` per section covers them.
+
+    That is 61 for `ml_senior` against a 45-turn interview, and 100 for
+    `pm_senior` against 84. Loose enough never to bind, tight enough that a
+    brain looping on one section still trips it.
+    """
+    ceilings = 0
+    for section in brain.sections:
+        if section.kind == SectionKind.COMPETENCY:
+            ceilings += brain._turn_bounds(section)[1]
+        elif section.kind == SectionKind.OPENING:
+            ceilings += brain.config.opening_ceiling_turns
+        else:
+            ceilings += MAX_CLOSING_TURNS
+    return ceilings + MAX_REPAIR_ATTEMPTS * len(brain.sections)
+
+
+async def run_one(
+    scenario: str,
+    model: str,
+    settings: Settings,
+    run_index: int = 0,
+    reverse_sections: bool = False,
+) -> tuple:
     blueprint = load_blueprint(blueprint_id=SCENARIO_BLUEPRINT.get(scenario))
+    if reverse_sections:
+        # **Competency order reversed, and nothing else.** Every plan keeps its
+        # own budget, weight, seeds and target depth; only its slot moves.
+        #
+        # This exists because a fixture can confound position with weight and
+        # nothing in a single ordering can tell them apart. `ml_senior`'s weights
+        # descend monotonically with position, so "later sections reach less"
+        # and "lower-weighted sections reach less" are the same observation seen
+        # twice. Running it reversed separates them, and the first time it was
+        # run it overturned a finding four investigations had built on: the last
+        # slot reached the most and the first slot reached nothing.
+        blueprint = blueprint.model_copy(deep=True)
+        blueprint.competency_plans = list(reversed(blueprint.competency_plans))
     # The ceiling is left unpinned so the script exercises what production does:
     # derived from each section's own budget. It used to pin 6, and then 3, both
     # of which measured a bound the deployed bot does not use.
@@ -554,13 +616,29 @@ async def run_one(scenario: str, model: str, settings: Settings, run_index: int 
         # Judge held at the reasoning tier for every run, so the only variable
         # is the live conversation model.
         judge=judge,
-        seconds_per_turn=40,
-        # Raised with the proportional ceiling. At 24 a run reached two
-        # competencies instead of four, because the cap is on the whole
-        # interview and sections got longer. Production has no such cap.
-        max_turns=60,
+        # **Taken from the brain's own constant so the two cannot drift.** This
+        # was a hardcoded 40 against a measured 22, and nothing connected them.
+        # The brain derives a section's turn ceiling from `budget / 22`, so at 40
+        # the harness exhausted every budget before any ceiling could bind: a
+        # 180-second section got five turns where production gives eight, and a
+        # 150-second one got four where production gives six. Every coverage
+        # number measured here was taken on sections at roughly 60% of their
+        # real length, and one extra turn was measured to nearly double the
+        # material a section reaches.
+        #
+        # A flat constant is still the wrong shape, and this only makes it the
+        # right flat constant. Real turn length varies with how long the
+        # candidate speaks, and this scripted candidate's answers run from 26 to
+        # 46 words, so a section of short answers is charged the same as a
+        # section of long ones. Charging by words actually spoken would be
+        # closer; it is not built here because an instrument change and a
+        # fixture change in the same run cannot be attributed.
+        seconds_per_turn=SECONDS_PER_COMPETENCY_TURN,
+        max_turns=_runaway_bound(brain),
     )
     suffix = "" if run_index == 0 else f"__run{run_index + 1}"
+    if reverse_sections:
+        suffix += "__reversed"
     write_run(run, OUTPUT_DIR / f"{scenario}__{model}{suffix}.json",
               label=f"{scenario} / {model} / run {run_index + 1}")
     return run, brain, interviewer, judge
@@ -573,6 +651,10 @@ async def main() -> int:
     parser.add_argument("--print-transcripts", action="store_true")
     parser.add_argument("--runs", type=int, default=3,
                         help="Runs per model. One tells you nothing at temperature 0.6.")
+    parser.add_argument("--reverse-sections", action="store_true",
+                        help="Run the competencies in reverse order, everything else "
+                             "identical. Separates a section's position from its weight, "
+                             "which a fixture ordered by weight cannot do.")
     args = parser.parse_args()
 
     try:
@@ -589,7 +671,10 @@ async def main() -> int:
         for model in args.models:
             collected: list[dict] = []
             for index in range(args.runs):
-                run, brain, interviewer, judge = await run_one(scenario, model, settings, index)
+                run, brain, interviewer, judge = await run_one(
+                    scenario, model, settings, index,
+                    reverse_sections=args.reverse_sections,
+                )
                 stats = signals(run, brain)
                 stats["live_prompt_tokens"] = interviewer.prompt_tokens
                 stats["live_output_tokens"] = interviewer.completion_tokens

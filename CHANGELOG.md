@@ -12,6 +12,113 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-13 — The scripted candidate explains its own terms, and the loop moves rather than ends
+
+**What**
+
+Six answers in `competent_candidate` now explain the term that selects them.
+Harness only; no production code.
+
+The loop that motivated it, from the transcripts after the escalation fix:
+
+    I:    "You said bf16. Walk me through how that actually works."
+    CAND: "97.08 percent on the bf16 baseline. Same evaluation set, same
+           prompt, same parsing."
+
+The answer named the term and never explained it, so the judge saw bf16
+unexplained again, nominated it again, and the interviewer asked again. It was
+probed in five of six sections in one run.
+
+**The split, and it is three tiers**
+
+**Explained**, because they are checkable specifics a senior engineer would
+define on request: `bf16`, `LoRA`, `GPTQ 4-bit`, `tool call classifier`,
+`systemd` and `LiveKit Agents`, and `confusion matrix`.
+
+**Left unexplained on purpose**: `agent`, `evaluator`, `fine tuning`, `peft`,
+`LLM`. These are the words of the job. **A senior person uses them without
+defining them, and an interviewer that spends a turn asking has wasted it** —
+which is the failure this scenario was built to expose, so the fixture has to
+keep making it possible. A candidate who explains everything the moment it is
+asked about means the term block can never fail and stops being under test.
+
+**The gap, untouched**: Docker, containers, version control, rollback still get
+"I don't know about that one, so I can't tell you." That is the only real hole
+this candidate has and the interview should still be able to find it.
+
+Answers kept their voice and roughly their length: the longest is 58 words
+against 51 before.
+
+**Measured, three runs, competent only**
+
+**It worked for the terms that were properly explained.**
+
+| term | probes before | after |
+| --- | --- | --- |
+| `bf16` | **10** | **0** |
+| `tool call classifier` | **5** | **0** |
+| `Mistral jinja template` | 0 | **10** |
+| `LiveKit Agents` | 2 | **8** |
+
+**And that is the finding: the loop moves, it does not end.** Total probes are
+unchanged, 31 against 31. The section still has two probes to spend and the
+judge always has something unexplained to nominate, so the allowance is always
+spent on whatever is left. Explaining `bf16` did not free the turn; it handed it
+to `Mistral jinja template`.
+
+**Two of my own explanations were too thin to count.** `LiveKit Agents` gained
+"holds the audio session", which is a gesture rather than an explanation, and
+the judge kept nominating it: 2 probes became 8. That is a fair criticism of the
+edit rather than of the product.
+
+| | before | after |
+| --- | --- | --- |
+| distinct answers per section | 2, 1, 1, 4, 2, 3 / 4, 4, 4, 4, 2, 3 / 3, 2, 3, 3, 3, 3 | 6, 3, 1, 3, 3, 3 / 2, 4, 2, 2, 2, 2 / 2, 5, 3, 3, 3, 3 |
+| mechanism questions | 44/118 = 37% | 41/120 = 34% |
+| consecutive questions on one subject | 23% | **41%** |
+| questions quoting an earlier section | 19% | 25% |
+| terms reaching the report | 3, 2, 2 | 2, 1, 5 |
+| unsupported attributions | 0 | 1 |
+| median interviewer turn | 17, 18, 17 | 17, 19, 19.5 |
+
+Distinct answers per section is flat, mean 2.8 against 2.9. Consecutive-
+same-subject got worse, and the honest reading is that it followed whichever
+term happened to become dominant rather than tracking anything about the change.
+
+**Three runs cannot read this and that is stated rather than worked around.**
+The same code produced 2, 3 and 5 distinct probed terms, and one section drew 1
+distinct answer in one run and 5 in another. To separate a real effect from that
+spread would need something closer to ten runs a side, which is about forty
+minutes of wall clock and twenty interviews. This entry reports direction, not
+magnitude.
+
+**How**
+
+`backend/bot/brain/harness.py`, six answer strings. No triggers changed, no
+selector change, no production code.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 688 passed, 22 skipped
+
+**Not done**
+
+- **The selector still returns the same answer to different questions**, and
+  this change does not address it. It reduces the harm, because the answer it
+  returns now explains its term, but a differently-worded question about the
+  same subject still gets identical text.
+- **The loop is structural and no fixture change can end it.** Any answer
+  contains some term that is not defined in it, so the judge can always nominate
+  something and a two-probe allowance will always be spent. Ending it needs a
+  cap on probes per interview, which is the task this was meant to clear the
+  ground for.
+- `Mistral jinja template` is now the most-probed term and is not explained
+  anywhere. Explaining it would move the loop again rather than end it, which is
+  the point above.
+
+---
+
 ## 2026-08-12 — The report stops blaming the candidate for the interviewer repeating itself
 
 **What**
@@ -137,6 +244,238 @@ runs are identical across both passes, so this sits inside sampling.
 - Nothing here makes the interviewer ask better questions. It stops the report
   blaming the candidate for the questions it asked.
 - The residual cases above.
+
+---
+
+## 2026-08-12 — Two fixture faults that made the interviewer look worse than it is
+
+**What**
+
+Two things in the harness, neither in production. A gap the interview could
+never find, and a turn cap that stopped one scenario finishing.
+
+**Why, and what came of it**
+
+**The gap.** This candidate has one genuine hole: they cannot describe Docker,
+version control or a rollback. That hole was gated behind trigger words, and
+across 133 real interviewer questions not one contained any of them, so the two
+answers had never fired in any run at any setting. The topic read as the worst
+in the table for a reason that was the fixture's.
+
+The rule written into this file is that a trigger names what an answer is
+ABOUT. **"I don't know" is about nothing** — its subject lives entirely in the
+question — so gating it on keywords is that rule upside down. It is now the
+topic's declared fallback: what this person says when a question here names
+nothing they have. Two near-identical answers collapse to one, so every topic
+now holds five.
+
+It stays genuinely unanswerable. What changed is that the interviewer can reach
+the gap, not that the candidate found an answer.
+
+**And it changed nothing, which is the finding.** Verified directly: a Docker
+question and a version-control question both reach it now. Across three fresh
+runs it **fired zero times**, because the interviewer still never asks either,
+though the blueprint has a Docker seed question sitting in that topic. The
+fixture was hiding an interviewer failure, not causing one.
+
+**The cap.** `max_turns` was a flat 60, chosen when a turn cost 40 seconds. At
+the measured 22 a full `pm_senior` interview needs 84, so every deflecting run
+for two tasks ended on the cap instead of finishing. Its topics could not get
+longer, its numbers sat still by construction, and **the scenario that guards
+deflection being caught had measured nothing for two tasks.**
+
+Derived now instead of guessed: the sum of the brain's own section ceilings,
+plus `MAX_REPAIR_ATTEMPTS` per section for turns that deliberately do not spend
+one. That is 61 for `ml_senior` against a 45-turn interview and 100 for
+`pm_senior` against 84 — loose enough never to bind, tight enough that a brain
+looping on one topic still trips it. Production has no such cap and still does
+not.
+
+**Three trigger collisions, two of them mine from yesterday.** The audit that
+catches triggers matching what the interviewer says on its own account had not
+been re-run after the depth ramp gained new wording. It now fires on
+`trade-off` and `cost`, because the ramp says "ask for the trade-off they made,
+and what it cost" in so many words, and on `control`, which sits inside "version
+control" and "concurrency control". All removed. **This makes that topic harder
+to hit, not easier.**
+
+**Measured**
+
+Three runs each, competent and deflecting, `gpt-4.1-mini`, at 22 seconds.
+
+**The deflecting scenario finishes for the first time in three tasks**: 84
+turns, `brain_finished`, in all three runs, against 60 and `max_turns` before.
+
+| competent | before | after |
+| --- | --- | --- |
+| material reached, like-for-like against 30 answers | 15/30 = **50%** | 12/30 = **40%** |
+| distinct subjects per topic, read | 4.0 | **4.3** |
+| consecutive questions on one subject | 25% | **21%** |
+| **questions quoting an earlier topic** | **15%** | **26%** |
+| terms reaching the report | 4, 4, 4 | **5, 5, 4** |
+| term machinery | 47% | 45% |
+| unsupported attributions | 0 | 1 |
+| median interviewer turn | 16.5, 17.5, 19 | 16.5, 17, 17.5 |
+
+| deflecting | before | after |
+| --- | --- | --- |
+| how it ended | `max_turns` at 60 | **`brain_finished` at 84** |
+| competency turns | 171 | 237 |
+| terms reaching the report | 3, 2, 3 | **3, 3, 4** |
+| consecutive questions on one subject | 36% | **30%** |
+| term machinery | 21% | 19% |
+
+**Material reached went down, not up, and that is reported as it came out.**
+The fixture was not holding the number down. Sections five and six were taken
+over by terms from sections one and two — in one run the voice topic asked six
+questions and every one was about bf16 LoRA, the jinja template or GPTQ. Cross-
+topic drift rose from 15 to 26 percent of quoted questions, and that is what
+moved it.
+
+**I cannot attribute that rise to these changes.** Three runs, five answers a
+topic, so one answer is twenty points of a topic's score. What can be said is
+that the gap answer fired zero times, so it made nothing easier, and the trigger
+removals make a topic harder to reach rather than easier.
+
+**The honest figure for how much of a good candidate's material the interviewer
+reaches is 40 to 50 percent**, and the spread between those two numbers is
+run-to-run variance on the same code. It was reported as "about a third" while
+the instrument was charging double for a turn; that part was real and is fixed.
+Claiming better than "40 to 50" from three runs would be reading noise.
+
+**How**
+
+- `backend/bot/brain/harness.py` — the gap becomes the topic's declared
+  fallback; `trade-off`, `tradeoff`, `cost`, `control`, `bet behind` and
+  `why not` removed as triggers.
+- `backend/scripts/compare_models.py` — `_runaway_bound()` derives `max_turns`
+  from the blueprint.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 677 passed, 22 skipped
+    uv run python scripts/compare_models.py --scenarios competent deflecting \
+        --models gpt-4.1-mini --runs 3
+
+**Not done**
+
+- The blueprint has a Docker seed question in that topic and the interviewer has
+  never asked it. That is the seed-coverage problem, not a fixture one, and it
+  is now the only thing standing between the interview and the one gap this
+  candidate has.
+- Cross-topic drift at 26 percent is the largest thing in these numbers and
+  nothing here addresses it.
+- The trigger audit needs running whenever prompt wording changes. It was not
+  run after the depth-ramp change and two collisions went in.
+
+---
+
+## 2026-08-12 — The measuring instrument was charging twice what a turn costs
+
+**What**
+
+The harness charged 40 seconds for every exchange. The measured figure is 22,
+recorded in DECISIONS.md and used by the brain itself to work out how many
+questions a topic can hold. Nothing connected the two, so they drifted.
+
+The harness now takes the number from the brain's own constant, so they cannot
+drift again.
+
+**Nothing in production changed.** This is the thing doing the measuring.
+
+**Why it mattered more than it sounds**
+
+The brain sizes a topic at `budget / 22`. At 40 the harness ran the clock out
+before any of those ceilings could bind, so **a three-minute topic got five
+questions where production gives eight, and a two-and-a-half-minute one got four
+where production gives six.** Every coverage number taken here for a week was
+measured on topics at roughly 60 percent of their real length. One extra
+question had already been measured as nearly doubling what a topic reaches.
+
+**Measured**
+
+Three runs each, competent and deflecting, `gpt-4.1-mini`, at 40 and at 22.
+
+| | at 40s | at 22s |
+| --- | --- | --- |
+| **material reached, in its own topic** | 9/31 = **29%** | 15/31 = **48%** |
+| **distinct subjects per topic, read from the transcripts** | **2.9** | **4.0** |
+| questions per topic | 5, 5, 4, 4, 4, 4 | **8, 8, 6, 5.3, 6, 6** |
+| what ended each topic | budget, every one | **the ceiling, every one** |
+| terms the candidate could not explain, reaching the report | 2, 3, 2 | **4, 4, 4** |
+| consecutive questions on one subject, competent | 27% | **25%** |
+| unsupported attributions | 2 and 1 | **0 and 0** |
+| median interviewer turn | 15.5, 17, 17 | 16.5, 17.5, 19 |
+| term machinery, competent | 27/78 = 35% | 56/118 = **47%** |
+
+**"The interviewer reaches about a third of what a good candidate has" was
+substantially the instrument.** It reaches about half. The claim has driven three
+days of work and it was measured on topics missing a third of their questions.
+
+It is not entirely the instrument, and the remaining half is real. But the
+priority list changes: the gap is smaller than reported, and the thing that
+moved it was giving topics the length they are supposed to have, not any change
+to how the interviewer asks.
+
+**The turn ceiling fired for the first time.** It has existed since the
+proportional-ceiling change and had never once been the operative bound —
+budget always ran out first. At 22 it binds in every topic, and it binds
+exactly where it was designed to: 8 questions for a three-minute topic, 6 for a
+two-and-a-half-minute one.
+
+**Two things went the wrong way and are not dismissed.** Term machinery rose
+from 35 to 47 percent of questions, because more questions means more terms
+nominated and more probes: 34 first-asks against 14. And on the deflecting
+candidate, consecutive questions on one subject rose from 27 to 36 percent.
+
+**The deflecting comparison is not clean and should not be read as one.** Both
+its run sets hit the harness's global `max_turns=60` cap rather than finishing,
+at 40 and at 22 alike, so its topic lengths could not change and its numbers
+sit still by construction. Only the competent comparison measures what this
+change did.
+
+**How**
+
+- `backend/scripts/compare_models.py` — `seconds_per_turn` now comes from
+  `SECONDS_PER_COMPETENCY_TURN` rather than a literal 40.
+- **`--reverse-sections` added.** Runs the competencies in reverse order and
+  nothing else: every plan keeps its budget, weight, seeds and target depth, and
+  only its slot moves. It exists because `ml_senior`'s weights descend
+  monotonically with position, so "later topics reach less" and "lower-weighted
+  topics reach less" are the same observation seen twice and no single ordering
+  can separate them. Run as a one-off it overturned a finding four
+  investigations had been built on. Output is written with a `__reversed`
+  suffix so it cannot be mistaken for a normal run.
+
+**A flat constant is still the wrong shape.** This only makes it the right flat
+constant. A real exchange takes as long as the candidate speaks for, and this
+scripted candidate's answers run from 26 to 46 words, so a topic of short
+answers is charged the same as a topic of long ones. Charging by words actually
+spoken would be closer. Not built here: an instrument change and a fixture
+change in the same run cannot be told apart.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 677 passed, 22 skipped
+    uv run python scripts/compare_models.py --scenarios competent deflecting \
+        --models gpt-4.1-mini --runs 3
+    uv run python scripts/compare_models.py --scenarios competent \
+        --models gpt-4.1-mini --runs 3 --reverse-sections
+
+**Not done**
+
+- **Both fixture problems recorded last time still stand, and one still
+  distorts.** `ml_service_deployment` gates two of its six answers behind
+  docker, containers, version control and rollback: across 133 interviewer
+  questions at 22 seconds, **not one mentioned any of those words**, and neither
+  answer has ever fired. Its real ceiling is 4 of 6, so its 33% is 50% of what
+  is reachable. `client_communication`, the other one, stopped mattering: it
+  went from 1 of 5 to 3 of 5 once there were questions to spare, so its sparse
+  triggers were only binding because the topic was short.
+- The deflecting scenario needs `max_turns` raised before it can be compared at
+  all. Left alone here so this change stays attributable.
 
 ---
 

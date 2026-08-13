@@ -411,8 +411,18 @@ def competent_candidate() -> ScriptedCandidate:
                 ),
             ],
             "applied_llm_depth": [
+                # **No trigger here may be a word the interviewer says on its
+                # own account.** This one carried "interviewer", "working on"
+                # and "building", and the greeting is "I'm Mitra, an AI
+                # interviewer" while the opening question the prompt models is
+                # "tell me what you're working on at the moment". So the
+                # greeting selected this answer, the opening's own answer was
+                # unreachable in every run, and it counted against the
+                # interviewer as material it had failed to reach. A trigger has
+                # to name what the answer is ABOUT, not the shape of the
+                # question that would ask for it.
                 Answer(
-                    ("agent", "evaluator", "interviewer", "two systems", "working on", "building"),
+                    ("agent", "evaluator", "two systems"),
                     "The bet was that the interview process is slow and an AI "
                     "interviewer saves everyone's time. There are two systems: the "
                     "agent that takes the interview, and the evaluator that reads the "
@@ -421,25 +431,35 @@ def competent_candidate() -> ScriptedCandidate:
                 Answer(
                     ("gpt-4o", "gpt 4o", "sarvam", "24b", "classifier", "replac", "routing decision", "health-tech"),
                     "For the health-tech classifier we replaced GPT-4o with a "
-                    "fine-tuned Sarvam-M 24B. It is a tool call classifier, so the output is "
-                    "a routing decision rather than prose."
+                    "fine-tuned Sarvam-M 24B. It takes the caller's utterance and picks "
+                    "which tool to call, so the output is a routing decision rather "
+                    "than prose."
                 ),
                 Answer(
                     ("lora", "sagemaker", "g7e", "jinja", "mistral", "adapter", "training setup", "trained it", "fine-tun", "fine tun"),
                     "We trained it with bf16 LoRA on a SageMaker ml.g7e.2xlarge, on a "
-                    "Mistral-format jinja template. LoRA because full fine-tuning a 24B "
-                    "model on that instance is not going to fit, and the adapter is "
+                    "Mistral-format jinja template. LoRA freezes the base weights and "
+                    "trains small low rank matrices beside them, which is why it fits "
+                    "where full fine-tuning a 24B model does not, and the adapter is "
                     "enough when you are teaching it one decision."
                 ),
                 Answer(
-                    ("quantis", "gptq", "4-bit", "four-bit", "14.2", "tradeoff", "trade-off"),
-                    "Then we quantised it to GPTQ 4-bit, which took it to 14.2 GB so it "
+                    # "tradeoff"/"trade-off" removed: they name the shape of a question,
+                    # not what this answer is about, and the depth ramp now says
+                    # "ask for the trade-off they made" in so many words.
+                    ("quantis", "gptq", "4-bit", "four-bit", "14.2"),
+                    "Then we quantised it to GPTQ 4-bit, which rounds the weights to four "
+                    "bit integers with a scale per group, and took it to 14.2 GB so it "
                     "fits alongside the other services on the box. The tradeoff we were "
                     "watching for was whether four-bit weights moved the routing "
                     "decisions, and we checked that before shipping it."
                 ),
                 Answer(
-                    ("cost", "control", "per-call", "own the model", "owning", "bet behind", "why not"),
+                    # Four removed for the same reason. "cost" and "bet behind" are how
+                    # the interviewer phrases a question about anything; "control"
+                    # sits inside "version control" and "concurrency control"; and
+                    # "why not" is not a subject at all.
+                    ("per-call", "own the model", "owning", "cost and control"),
                     "The reason for owning the model at all was cost and control. "
                     "GPT-4o was a per-call charge on every routing decision, and the "
                     "decision is narrow enough that a 24B model taught on our own pairs "
@@ -457,8 +477,9 @@ def competent_candidate() -> ScriptedCandidate:
                 ),
                 Answer(
                     ("97.08", "baseline", "bf16"),
-                    "97.08 percent on the bf16 baseline. Same evaluation set, same "
-                    "prompt, same parsing."
+                    "97.08 percent on the bf16 baseline. bf16 is a sixteen bit float "
+                    "that keeps fp32's exponent range, so you get the dynamic range at "
+                    "half the memory. Same evaluation set, same prompt, same parsing."
                 ),
                 Answer(
                     ("97.40", "308", "inside the noise", "quantised model", "flat", "statistical"),
@@ -485,9 +506,10 @@ def competent_candidate() -> ScriptedCandidate:
                 Answer(
                     ("livekit", "systemd", "ubuntu", "deployment process", "put it up", "put up", "weights", "in pieces", "six voice agent", "six production", "typical deployment"),
                     "Six voice agents on LiveKit Agents with OpenAI Realtime, on a "
-                    "shared Ubuntu VM under systemd. You check the GPU you need is free "
-                    "on the box, then you put it up in pieces rather than in one go: "
-                    "weights first, then the scripts, then the rest."
+                    "shared Ubuntu VM under systemd. LiveKit Agents holds the audio session "
+                    "and systemd starts each agent and restarts it if it dies. You "
+                    "check the GPU is free, then put it up in pieces rather than in "
+                    "one go: weights first, then the scripts, then the rest."
                 ),
                 Answer(
                     ("upload", "loading", "load", "inference", "into memory", "training time"),
@@ -507,12 +529,31 @@ def competent_candidate() -> ScriptedCandidate:
                     "Prometheus for metrics, Loki for logs and Grafana over the top, "
                     "with Langfuse for the LLM calls specifically."
                 ),
+                # **A gap has no subject, so it cannot carry triggers.** These
+                # were two answers gated on "docker, container, kubernetes" and
+                # "version control, rollback, ci/cd". Across 133 real
+                # interviewer questions not one contained any of those words, so
+                # neither ever fired, and this topic read as the worst in the
+                # table for a reason that was the fixture's.
+                #
+                # The rule written above is that a trigger names what the answer
+                # is ABOUT. "I don't know" is about nothing; its subject lives
+                # entirely in the question. Putting the question's subject into
+                # the answer's triggers is that rule upside down, and it turned
+                # the one genuine gap this candidate has into the one thing the
+                # interview could never find.
+                #
+                # So it is the topic's declared fallback instead: what this
+                # person says when a question here names nothing they have. Two
+                # near-identical answers collapse to one, which also makes every
+                # topic five answers rather than this one alone having six.
+                #
+                # **Still genuinely unanswerable.** They cannot describe Docker,
+                # version control or a rollback, and nothing here lets them. What
+                # changed is that the interviewer can reach the gap, not that the
+                # candidate found an answer.
                 Answer(
-                    ("docker", "container", "kubernetes", "orchestrat"),
-                    "I don't know."
-                ),
-                Answer(
-                    ("version control", "rollback", "roll back", "ci/cd", "pipeline", "release"),
+                    (),
                     "I don't know about that one, so I can't tell you."
                 ),
             ],
@@ -527,9 +568,10 @@ def competent_candidate() -> ScriptedCandidate:
                 Answer(
                     ("prong", "at chance", "confusion matrix", "recommend", "stop"),
                     "For the prong-open detector I said it was performing at chance, "
-                    "which means it was not detecting anything. I recommended we stop "
-                    "rather than spend more on it, and I showed them the confusion "
-                    "matrix so it was their call and not mine."
+                    "which means it was not detecting anything. I showed them the confusion "
+                    "matrix, the grid of what it predicted against what was actually "
+                    "true, so they could see the misses themselves. I recommended we "
+                    "stop rather than spend more on it."
                 ),
                 Answer(
                     (),
