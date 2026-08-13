@@ -681,6 +681,38 @@ You are gathering evidence for a human, not reaching a conclusion.
 _MAX_CLAIM_CHARS = 110
 
 
+#: What the fourth turn onward asks for, one per turn, in order.
+#:
+#: **The third stage used to render identically on every turn from the third
+#: onward, and that is what was eating the topic.** Its first instruction is
+#: "the technique in their last answer IS your question", so it unpacked a term,
+#: and then on the next turn it read the same instruction against an answer
+#: about the same thing and unpacked it again. One measured topic asked about
+#: LoRA five times running with a single one of those sanctioned by the brain.
+#:
+#: So the unpacking instruction fires once, on turn three, where it earns its
+#: place: mechanism questions were 2 in 39 opportunities before it existed.
+#: **This removes unsanctioned repeats, not unpacking.** The term block is
+#: unchanged and still fires on the brain's own two-per-topic allowance, which
+#: is where a term the candidate genuinely has not explained gets asked about.
+#:
+#: **One is named rather than four offered**, which is this repo's most
+#: repeated measurement: a preference between available options was 0% and
+#: naming the thing to say was 80%. Offering four also lets the model pick the
+#: same one twice, which is the failure being fixed wearing a different hat.
+#: Rotating by turn index makes consecutive turns different by construction.
+#:
+#: Ordered by what produced the best questioning in the transcripts. The measured
+#: example is an evaluation topic that reached three distinct answers by asking
+#: what was measured, then how it was validated, then what test established it.
+_HARD_QUESTIONS = (
+    "a number, and how they measured it.",
+    "the trade-off they made, and what it cost.",
+    "the thing that went wrong, and what they did about it.",
+    "a decision on this they would still defend, and why.",
+)
+
+
 def _render_depth_ramp(turns_spent: int) -> str:
     """Open a topic broadly; save the hard questions for the follow-ups.
 
@@ -744,7 +776,8 @@ your question. Say something close to this:
 Otherwise go one layer in: what they personally decided, why, and what happened.
 
 """
-    return """\
+    if turns_spent == 2:
+        return """\
 NOW GET TO THE HARD PART
 Ask ONE demanding question, never a list.
 
@@ -759,6 +792,20 @@ Say something close to this:
 Only if everything is already explained, pick ONE instead: the trade-off they
 made, the thing that went wrong, a decision they would defend, or a number and
 how it was measured.
+
+"""
+
+    # Fourth turn onward. The block above is deliberately not repeated: see
+    # `_HARD_QUESTIONS`.
+    wanted = _HARD_QUESTIONS[(turns_spent - 3) % len(_HARD_QUESTIONS)]
+    return f"""\
+NOW GET TO THE HARD PART
+Ask ONE demanding question, never a list.
+
+You have already unpacked a term on this topic. Do not unpack another, and do
+not ask again about anything you have already asked about here.
+
+This turn, ask for {wanted}
 
 """
 

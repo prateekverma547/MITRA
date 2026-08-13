@@ -479,6 +479,141 @@ change in the same run cannot be told apart.
 
 ---
 
+## 2026-08-12 — The interviewer stops asking the same question every turn
+
+**What**
+
+Two parts. Yesterday's term-cap change is reverted, and the thing that was
+actually consuming the topic is fixed.
+
+**The cap goes back to two asks.** Cutting it to one did not move what it was
+aimed at: distinct subjects per topic read 2.5 before and 2.5 after. The turns
+it freed went straight to the depth ramp, which asked about the same term again
+unprompted. And on a deflecting candidate it cost more, not less, because one
+ask per term means a topic's allowance buys two different terms rather than two
+attempts at one, each with its own let-go: 19 percent of turns became 29.
+
+**Two things from that change are kept, because both are right at any cap.** The
+harness trigger fix, and the let-go moving into `apply_judgment` — queueing that
+sentence at the moment the question is asked said "let's leave that one there"
+on the strength of having asked rather than on the strength of the answer, and
+only survived at two asks because the second ask happened to give the judge a
+turn.
+
+**Then the real one.** The depth ramp's third stage rendered identically on
+every turn from the third onward, and its first instruction is that the
+technique in their last answer is the question. So it unpacked a term, then read
+the same instruction against an answer about the same thing and unpacked it
+again. One measured topic asked about LoRA five times running with a single one
+of those sanctioned by the brain.
+
+That stage now fires its unpacking instruction **once**, on the third turn, and
+from the fourth names **one** demanding thing to ask for, rotated by the turn
+index: a number and how they measured it, then the trade-off and what it cost,
+then what went wrong, then a decision they would still defend.
+
+**Why one named rather than four offered.** It used to end with "pick ONE
+instead: the trade-off, the thing that went wrong, a decision they would defend,
+or a number". That is a preference between available options, which is the shape
+this repo has measured at 0 percent compliance against 80 percent for naming the
+thing to say. Offering four also lets the model pick the same one twice, which
+is the failure being fixed wearing a different hat. Rotating makes consecutive
+turns different by construction rather than by hope.
+
+**This removes unsanctioned repeats, not unpacking.** The term block is
+untouched and still asks about a term the candidate has not explained, on the
+brain's own two-per-topic allowance. What is gone is the ramp asking a fourth
+and fifth time off its own bat.
+
+**Measured**
+
+Three runs each on the competent and deflecting candidates, `gpt-4.1-mini`.
+
+**The number that has read 2.5 through every change this week moved.**
+
+| | before | after |
+| --- | --- | --- |
+| **distinct subjects per topic, read from the transcripts** | **2.5** (45 across 18) | **2.9** (53 across 18) |
+| consecutive turns on the same subject, competent | 17/59 = 29% | 16/60 = **27%** |
+| consecutive turns on the same subject, deflecting | 80/153 = **52%** | 41/153 = **27%** |
+| term machinery, competent | 38/77 = 49% | 27/78 = **35%** |
+| term machinery, deflecting | 32/171 = 19% | 36/171 = **21%** |
+| questions asking for a metric, trade-off or failure | 0, 3, 2 of 26 | **8, 6, 6** of 26 |
+| questions unpacking a term | 8, 13, 7 of 26 | 5, 5, 4 of 26 |
+| median interviewer turn | 16.5, 18.5, 16 words | 16, 17, 17 |
+
+The consecutive-subject count is new. Nothing counted the failure directly
+before, which is why it survived four investigations: two consecutive questions
+in a topic count as the same subject when they share three or more content
+words, applied identically on both sides.
+
+**It is a modest result and the competent candidate is where it is weakest.**
+Same-subject runs there went 29 percent to 27, and the longest single streak got
+slightly worse in two of three runs. What moved on that candidate is the
+composition: unpack-shaped questions nearly halved and metric-and-trade-off
+questions went from almost none to a quarter of all turns. On the deflecting
+candidate the repetition halved outright.
+
+**The good questions survived.** The comparison was the evaluation topic in run
+3, which previously reached three answers with real depth. It now reaches four:
+*"How did you measure decision accuracy for that health-tech classifier?"* then
+*"Walk me through how your decision accuracy metric actually works"* then *"How
+did you validate that your held-out set matched production?"* then *"How many
+examples were in your evaluation set?"* — and the rotated demand is visibly
+producing them elsewhere too, *"How did you measure and confirm that difference
+was within noise on those 308 examples?"*
+
+Nothing on the guard list moved. Deflection is still caught, with OLTP, OLAP,
+session management and concurrency control still reaching the report in every
+run. The let-go is still spoken and still fires on the judgement. The
+communication topic still asks about communicating, with zero mechanism
+questions in all three runs. **No fabricated attributions**: three flags, all
+three artefacts of the checker rather than the interviewer — twice the stem
+"quantise" against a candidate who said "quantised", and once a hypothetical
+("when you said no to a senior") parsed as a quotation. The one genuine
+fabrication from yesterday did not recur.
+
+**How**
+
+- `backend/bot/brain/brain.py` — `MAX_TERM_ATTEMPTS` back to 2. The let-go stays
+  in `apply_judgment`.
+- `backend/bot/brain/prompting.py` — the escalated wordings restored; the depth
+  ramp's third stage split at `turns_spent == 2`, and `_HARD_QUESTIONS` added.
+  The new stage is shorter than the one it follows, so the prompt bound is
+  unaffected and its worst case is unchanged.
+- `backend/bot/brain/harness.py` — unchanged from yesterday; the trigger fix
+  stands.
+- `backend/tests/test_brain.py` — restored to its committed state apart from one
+  test, which now applies a judgement after the second ask because that is where
+  the report entry is written.
+
+**Confirm it**
+
+    cd backend
+    uv run pytest -q -m "not llm"          # 677 passed, 22 skipped
+    uv run python scripts/compare_models.py --scenarios competent deflecting \
+        --models gpt-4.1-mini --runs 3
+
+**Not done**
+
+- The rotation is not section-aware. "A number and how they measured it" is a
+  weaker ask in a communication topic than a technical one, and the ramp is not
+  given the section. Left alone because the section-aware branch that already
+  exists is in the term block, and widening this change would have made the
+  result unattributable.
+- Rough seed overlap fell, 4, 4, 9 to 3, 4, 5. It is a diagnostic and not a
+  target, for the reasons recorded two entries below, but it is recorded here
+  rather than left out.
+- One competent run spoke no let-go at all where the previous baseline spoke two.
+  Five against seven across the three runs, small numbers either way.
+- **The first measurement of this was thrown away.** The run crashed partway
+  through on an API timeout, and the transcripts left on disk were the previous
+  day's. They were measured before the crash was noticed. Clear the output
+  directory before a comparison run, so a partial run cannot be read as a
+  complete one.
+
+---
+
 ## 2026-08-11 — The list of what the candidate said earlier had become a list of things to ask about
 
 **What**
