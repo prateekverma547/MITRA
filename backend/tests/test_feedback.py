@@ -16,6 +16,7 @@ from shared.contracts import (
     Competency,
     ConversationHealth,
     CoverageLevel,
+    DealbreakerState,
     EvaluationSpec,
     RecommendationSignal,
     Speaker,
@@ -591,3 +592,115 @@ def test_the_panel_no_longer_builds_a_sentence_of_its_own():
         assert phrase not in panel, f"the panel is composing prose again: {phrase!r}"
     # It reads what it is sent instead.
     assert "as_sentence" in panel
+
+
+# -- every dealbreaker is accounted for, not only the ones that fired --------
+
+
+def test_a_dealbreaker_nobody_asked_about_is_reported_as_not_reached():
+    """Silence in `red_flags_observed` used to mean two different things.
+
+    "We asked and they were fine" and "nobody looked" are different facts about
+    an interview, and a reader could not tell them apart. Every dealbreaker in
+    the spec now appears, and the default is the honest one.
+    """
+    report = report_from({
+        "competency_scores": [],
+        "summary": "…",
+        "recommendation": "mixed",
+    })
+
+    assert [d.dealbreaker for d in report.dealbreakers] == SPEC.red_flags
+    assert all(d.state is DealbreakerState.NOT_REACHED for d in report.dealbreakers)
+    assert "gap in the interview" in report.dealbreakers[0].as_sentence
+
+
+def test_a_cleared_dealbreaker_needs_a_real_quote_like_any_other_finding():
+    report = report_from({
+        "competency_scores": [],
+        "dealbreakers_cleared": [{
+            "description": "Cannot explain hallucination handling",
+            "evidence": [{"turn_index": 3, "text": "Legal wanted a blanket disclaimer"}],
+        }],
+        "summary": "…",
+        "recommendation": "mixed",
+    })
+
+    assert report.dealbreakers[0].state is DealbreakerState.CLEARED
+    assert report.dealbreakers[0].evidence[0].turn_index == 3
+
+
+def test_a_clearance_on_an_invented_quote_falls_back_to_not_reached():
+    """Under-claiming is safe; over-claiming is a false statement about a person.
+
+    An unevidenced red flag is dropped, because the entry itself is the
+    accusation. An unevidenced clearance cannot simply vanish: the entry is the
+    report's account of what it established, and the honest account is that it
+    established nothing.
+    """
+    report = report_from({
+        "competency_scores": [],
+        "dealbreakers_cleared": [{
+            "description": "Cannot explain hallucination handling",
+            "evidence": [{"turn_index": 3, "text": "I always explain hallucinations openly"}],
+        }],
+        "summary": "…",
+        "recommendation": "mixed",
+    })
+
+    assert report.dealbreakers[0].state is DealbreakerState.NOT_REACHED
+    assert report.dealbreakers[0].evidence == []
+
+
+def test_a_dealbreaker_that_fired_wins_over_a_clearance_for_the_same_thing():
+    report = report_from({
+        "competency_scores": [],
+        "red_flags_observed": [{
+            "description": "Cannot explain hallucination handling",
+            "evidence": [{"turn_index": 3, "text": "Legal wanted a blanket disclaimer"}],
+        }],
+        "dealbreakers_cleared": [{
+            "description": "Cannot explain hallucination handling",
+            "evidence": [{"turn_index": 1, "text": "We shipped a support summariser"}],
+        }],
+        "summary": "…",
+        "recommendation": "mixed",
+    })
+
+    assert report.dealbreakers[0].state is DealbreakerState.OBSERVED
+    assert len(report.red_flags_observed) == 1
+
+
+def test_a_paraphrased_dealbreaker_still_matches_the_spec_entry():
+    """The model is asked to copy the text and reflows it often enough to matter.
+
+    Both sides are a closed employer-authored list, so this is matching against
+    four known strings rather than a similarity rule over free text. An
+    unmatched description is dropped, so the failure mode is `not_reached`.
+    """
+    report = report_from({
+        "competency_scores": [],
+        "dealbreakers_cleared": [{
+            "description": "cannot explain hallucination handling.",
+            "evidence": [{"turn_index": 3, "text": "Legal wanted a blanket disclaimer"}],
+        }],
+        "summary": "…",
+        "recommendation": "mixed",
+    })
+
+    assert report.dealbreakers[0].state is DealbreakerState.CLEARED
+
+
+def test_an_empty_report_says_the_dealbreakers_were_never_put():
+    """An empty list would read as "no dealbreakers", the opposite of the truth."""
+    from feedback.score import _empty_report
+
+    report = _empty_report(
+        interview_id="int_1",
+        blueprint_id="bp_1",
+        spec=SPEC,
+        transcript=TRANSCRIPT,
+        reason="The interview produced no usable transcript.",
+    )
+
+    assert [d.state for d in report.dealbreakers] == [DealbreakerState.NOT_REACHED]

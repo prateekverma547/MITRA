@@ -246,6 +246,134 @@ The duplicated dealbreaker and the four statements of the attribution rule.
 cd backend && uv run pytest -q -m "not llm"          # 698 passed, 22 skipped
 ```
 
+## 2026-08-14 — The scorer stops being told sections were squeezed, and a spec must have something to ask about
+
+Two findings from `AUDIT.md`.
+
+### S5 — the label said "SQUEEZED" about things that were never squeezed
+
+`_render_sections` handed the scoring model `SQUEEZED: {shortfall_reason}`.
+`_rebalance_remaining` is the only thing that squeezes anything and it has never
+run in any interview on record. What actually sets that field is a section the
+candidate declined, one that ran out of time, or one the interview never reached
+— and the model was told each of those was a squeeze, in the one place we ask it
+to be careful about attributing causes.
+
+It reads `SHORTFALL:` now. **One neutral label carries all of them** because the
+reason is already a whole sentence naming which it was, and the label only had to
+stop contradicting it:
+
+```
+section ml_service_deployment · coverage=insufficient · turns=6 ·
+  SHORTFALL: Section ended on budget_exhausted after 6 candidate turn(s)…
+section client_communication · coverage=not_started · turns=0 ·
+  SHORTFALL: Candidate chose to end the interview before this competency
+  was covered… This reflects their decision to stop, not their ability.
+section python_ml_basics · coverage=insufficient · turns=3 · DECLINED 3 turns ·
+  SHORTFALL: Candidate declined to answer on this topic (3 time(s))…
+```
+
+**No scoring run.** The changed line renders only when `shortfall_reason` is set,
+and it is set on **0 of 232 sections** across every arm run under the current
+clock. Scoring six competent and three deflecting runs would have produced
+provably identical output, at eighteen model calls, on a scorer whose control arm
+already moves eight quotes on identical input. The effect is deterministic and is
+shown above instead.
+
+### coverage_shortfall — decided, not fixed, and it should come out
+
+The flag is set only for `hard_stop` and `budget_exhausted`. `ceiling` decides
+87 to 91 percent of sections and is not in that set, so the flag is false on
+every section of every current-clock run.
+
+**It is not made to fire on `ceiling`, because a ceiling-ended section is not a
+shortfall.** It spent its whole allocation and stopped because it ran out of
+turns. If the evidence is still thin that is what `coverage` is for, and
+`questioning_health` now says whether the interviewer was the reason.
+
+**The flag is redundant and should be removed.** Everything it tries to say is
+already said, better, by something else:
+
+- "never reached" is `coverage == not_started`, which is a distinct enum value
+- "ran out of time" and "they declined" are in `shortfall_reason`, which the
+  scorer already reads and which is a sentence rather than a boolean
+- "did this section get what it needed" is `coverage`
+
+And it is derived at a moment when the thing it derives from can still change.
+In the one real interview, `applied_llm_depth` ended on `budget_exhausted` and is
+recorded `insufficient` — the exact pair the flag fires on — with the flag
+**False**, because `_finalise` read the coverage before a late judgement rewrote
+it. That is the fourth mechanism this month evaluated at a point where its input
+was not final.
+
+**Not removed here.** It is a contract field with a `schema_version`, zero
+readers, and no urgency; removing it is cleanup rather than a fix, and bundling a
+contract change with a label fix would have made the measurement above harder to
+argue about. Recorded as its own change.
+
+An audit correction while here: `AUDIT.md` says the flag is set on 0 of 120
+sections. That is right for the competent scenario under the current clock, but
+it does fire 83 times across the older stale arms — all of them
+`budget_exhausted`, from when the harness charged 45 seconds a turn and the
+budget bound before the ceiling. The flag is near-constant today, not incapable.
+
+### S13 — a spec with nothing to ask about was a valid spec
+
+`EvaluationSpec` had no validator. Zero competencies was accepted, and so were
+weights summing to 1.8. `clarify.py` normalises weights and then says in a
+comment that "a genuinely malformed spec still fails validation in the contract",
+which was not true, because there was nothing there to fail it.
+
+**At least one competency, not four to seven.** CLAUDE.md asks for four to seven
+and that is a statement about interview quality — "fewer cannot cover a role" —
+rather than a data invariant. Checked before writing the rule: **`sre_staff.json`
+ships with 3, and two stored specs in the local database have 2.** A range would
+reject a shipped fixture and real stored records, none of which is malformed. An
+employer who genuinely wants three gets three; the guidance stays where it
+belongs, in the clarification prompt and in `generate.py`'s warning that thin
+competencies will not fill the duration. Zero is different in kind: not a thin
+interview, no interview.
+
+**Weights within one percent of 1.0, not exactly.** Every consumer that reads a
+weight divides by the total, so the sum is cosmetic to behaviour and the check
+exists to catch gross authoring error. Erring toward accepting matters because
+the system's own repair step rounds to four decimals, and a strict equality would
+reject a spec `clarify.py` had just normalised. Measured: 0.005 of drift is
+accepted, 0.05 is rejected, six-at-0.9 is rejected, zero competencies is
+rejected.
+
+**Every fixture and every stored record still validates**: three fixtures, two
+job specs and four candidate blueprints, all sum to exactly 1.0000.
+
+### The blueprint's missing half, and where it went
+
+The blueprint validator catches `planned > duration` and not `planned < duration`,
+so a plan spending 10 of 20 minutes was accepted. Added as a validator first —
+and it **failed 49 tests**, every one a helper building a small blueprint to
+exercise something else, none of them malformed.
+
+So it is a test over the shipped fixtures instead, where the friction is zero and
+the target is real. Overcommitment is a plan that cannot be executed;
+undercommitment is one that is merely wasteful, and a rule that makes every
+future test balance minutes it does not care about is a rule that gets worked
+around.
+
+**Files**
+
+- `backend/feedback/score.py` — the label.
+- `backend/shared/contracts.py` — `EvaluationSpec` validator.
+- `backend/tests/test_blueprint.py` — every shipped fixture spends its duration.
+
+**Left undone**
+
+Removing `coverage_shortfall`, argued above.
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 696 passed, 22 skipped
+```
+
 ## 2026-08-14 — The third banner reaches the panel, the sweep flag reads like the others, and two dead fields stay dead
 
 Three findings from `AUDIT.md`. Two fixed, one deliberately not — and the third
@@ -476,6 +604,131 @@ owning sections, and no attribution traced to the indexed seed.
 - `backend/bot/brain/prompting.py` — the two headings.
 - `backend/tests/test_blueprint_source.py` — repointed at the new heading, and
   the negative sibling test with it, which would otherwise have gone vacuous.
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 695 passed, 22 skipped
+```
+
+## 2026-08-14 — The report says which dealbreakers it could answer and which it could not
+
+**What**
+
+`red_flags_observed` only ever held what fired. Silence there meant "we asked and
+they were fine" or "nobody looked", and a reader could not tell which. Measured
+across 24 stored reports against one spec: of four dealbreakers, one fired in 10
+of 24 runs and the other three fired zero times, with nothing recording whether
+they were cleared or never put. In the one real interview on the box the report
+cited two of four and said nothing about the rest, and the story that would have
+settled one of them was written into the blueprint, in a topic the interview
+never reached.
+
+`FeedbackReport.dealbreakers` now carries one `DealbreakerFinding` per
+dealbreaker in the spec, always, in spec order, the way `competency_scores`
+already backfills a competency the model skipped. Three states: `observed`,
+`cleared`, `not_reached`.
+
+**Who judges, and at what cost.** The scorer, in the pass it already makes. It
+already reads the transcript against the spec and already produces
+`red_flags_observed`, so this is one more field in the same JSON: no second
+pass, no extra call, nothing on the live path. The prompt grows by about 190
+tokens on a call that runs once per interview, off-path.
+
+**`not_reached` is never the model's to assert.** It is the residue, computed in
+code from whatever is left after the fired list and the cleared list are matched
+back to the spec. The only way to report coverage of a dealbreaker is to produce
+a quote for it, and a model that says nothing produces `not_reached`, which is
+the truthful reading of having said nothing.
+
+**What "cleared" requires.** A verified quote of the candidate doing the
+opposite of the dealbreaker, through the same `verify_quote` machinery as every
+other quote, unchanged. The prompt names the bar in the three shapes that
+actually occur: volunteering a bad result, not being asked about one; giving the
+reason for a choice, not naming the metric; an actual occasion with specifics,
+not a description of how the thing is done in general. Silence never clears
+anything.
+
+A clearance whose quotes do not survive verification falls back to
+`not_reached`, rather than being dropped the way an unevidenced red flag is.
+Dropping is right for a flag because the entry is the accusation. Here the entry
+is the report's account of what it could establish, and the honest account of an
+unverifiable clearance is that nothing was established. The contract refuses to
+construct anything but `not_reached` without evidence.
+
+**`not_reached` reads as a limitation of the interview**, in words rather than
+as an enum: "The interview did not put this to the candidate, and did not
+observe it either way. This is a gap in the interview, not a finding about the
+candidate." Same distinction `QuestioningHealth` exists for.
+
+`red_flags_observed` is untouched and still carries exactly what it did. An
+`observed` finding restates one of those, so old consumers keep working.
+
+**Measured**
+
+Six competent runs and three deflecting, scored with the committed scorer and
+with this one. **The scorer runs at temperature 0.2, so a second before-arm was
+run as a control**, and everything below is read against it.
+
+| | control (before vs before) | change (before vs after) |
+| --- | --- | --- |
+| red flags, total absolute change | 1 | 2 |
+| verified quotes, total absolute change | 8 | 13 |
+| recommendation changed | **0 of 9** | **2 of 9** |
+
+**The new field is stable where it matters.** Across two independent after-arms,
+39 dealbreaker slots: 87 percent identical. All of the movement is between
+`observed` and `not_reached`, which is the pre-existing red-flag noise the
+control also shows. **`cleared` gained nothing and lost one**: 11 stable, 0
+arriving, 1 leaving. Nothing became cleared that was not cleared before, in
+either sample, and all 23 clearance quotes were found in candidate speech.
+Under-claiming is the only direction this drifts.
+
+**The split is consistent and it is informative**, over the six competent runs:
+
+| dealbreaker | cleared | observed | not reached |
+| --- | --- | --- | --- |
+| cannot explain why a metric was chosen | 5 | 0 | 1 |
+| vague or generic, no real examples | 1 | 2 | 3 |
+| cannot describe a time they deployed or debugged | 1 | 0 | 5 |
+| avoids or deflects on negative results | 5 | 0 | 1 |
+
+The two that never fired in 24 reports are now answered in five of six runs
+each. The one that is still mostly unanswered, "a time they deployed or
+debugged", is the one whose seed question sits in a topic these runs reach last.
+
+**The prong-open evidence clears what it should.** In all three runs where the
+candidate says the detector performed at chance and that they told the client to
+stop, the negative-results dealbreaker reads `cleared`, quoting that sentence.
+Two more clear on a different volunteered failure. The sixth has neither and
+reads `not_reached`.
+
+**The deflecting runs are unchanged.** All three still fire the one dealbreaker
+that is true of them, with the same evidence, and report the other four as never
+put. Five dealbreakers, one fired, four `not_reached`, in all three runs.
+
+**What moved that should not have.** The recommendation rose on two of nine runs
+and did so in both after-arms, while the control moved none. Mean rank went 1.67
+and 1.67 across the two before-arms, against 2.00 and 1.78 after. The cap logic
+is untouched; what moved is the model's own signal, and a block asking what the
+candidate put to rest plausibly reframes the whole report. It is small, it is
+upward, and it is not noise. Recorded rather than fixed, because a fix belongs
+in its own measurement.
+
+**Files**
+
+- `backend/shared/contracts.py` — `DealbreakerState`, `DealbreakerFinding`,
+  `FeedbackReport.dealbreakers`.
+- `backend/feedback/score.py` — the clearance block, `_match_dealbreaker`,
+  `_dealbreaker_findings`, wiring for the empty report.
+- `backend/tests/test_feedback.py` — six tests.
+
+**Left undone**
+
+The recommendation drift. Rendering dealbreakers to the interviewer, which needs
+the askable-versus-observable distinction handled first: "describes conflict as
+someone else's fault" is a pattern across answers, not a question, and asking it
+announces the trap.
 
 **Confirm**
 

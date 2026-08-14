@@ -31,6 +31,8 @@ from shared.contracts import (
     ConversationHealth,
     Contradiction,
     CoverageLevel,
+    DealbreakerFinding,
+    DealbreakerState,
     EvaluationSpec,
     EvidenceQuote,
     FeedbackReport,
@@ -102,6 +104,29 @@ RED FLAGS.
 Only report a red flag from the spec if you can quote the candidate evidencing
 it. A red flag with no quote does not go in.
 
+DEALBREAKERS THE CANDIDATE PUT TO REST.
+Separately from the above, list any dealbreaker the transcript shows the
+candidate doing the OPPOSITE of, in `dealbreakers_cleared`. Same evidence
+standard as a red flag, in the other direction: quote them, or leave it out.
+
+The bar is what they did, not what they avoided:
+- "Avoids negative results" is cleared by them VOLUNTEERING a bad result and
+  what they did about it. It is not cleared by an interview that never asked.
+- "Cannot explain why a metric was chosen" is cleared by them giving the reason
+  for a choice. It is not cleared by them naming the metric.
+- "Cannot describe a time they did X" is cleared by an actual occasion with
+  specifics. It is not cleared by them describing how X is done in general.
+
+Silence never clears anything. If the topic was never raised, if they were
+asked and said little, or if you would have to reason from an absence to get
+there, LEAVE IT OUT. Something you leave out is reported as never having been
+put to them, which is the honest outcome and costs the candidate nothing. A
+dealbreaker wrongly called cleared is a false statement about a person in a
+hiring record, and it is the worse error by a wide margin.
+
+A dealbreaker cannot be in both lists. If they did the thing and also the
+opposite of it at different moments, that is the red flag, not a clearance.
+
 TONE.
 Describe what they said and what it shows. Do not speculate about personality,
 motivation, culture fit, or anything you cannot point at in the transcript. Do
@@ -124,6 +149,10 @@ Return JSON exactly in this shape:
   ],
   "red_flags_observed": [
     {"description": "...", "evidence": [{"turn_index": 8, "text": "..."}]}
+  ],
+  "dealbreakers_cleared": [
+    {"description": "the dealbreaker, copied from the spec",
+     "evidence": [{"turn_index": 8, "text": "..."}]}
   ],
   "coverage_gaps": ["competency name: why the interview could not tell"],
   "summary": "A short written assessment for the reader. What the transcript
@@ -206,6 +235,96 @@ def verify_quote(
     return None
 
 
+def _match_dealbreaker(description: str, spec: EvaluationSpec) -> str | None:
+    """Which spec dealbreaker the model meant, or None.
+
+    The model is asked to copy the text and mostly does, but it paraphrases and
+    reflows often enough that equality alone loses real findings. Matched on
+    lowercase alphanumeric containment either way, then on a distinctive-word
+    majority, which is the same shape as quote verification: loose enough to
+    survive tidying, strict enough that it cannot land on the wrong one.
+
+    **This is not a similarity rule over free text.** Both sides are a closed,
+    employer-authored list of four, and an unmatched description is dropped
+    rather than guessed at, so the failure mode is a dealbreaker reading
+    `not_reached` when it was cleared. That is the safe direction.
+    """
+    said = _normalise(description)
+    if not said:
+        return None
+    for flag in spec.red_flags:
+        target = _normalise(flag)
+        if target and (target in said or said in target):
+            return flag
+    said_words = {w for w in said.split() if len(w) > 3}
+    if not said_words:
+        return None
+    for flag in spec.red_flags:
+        words = {w for w in _normalise(flag).split() if len(w) > 3}
+        if words and len(words & said_words) >= max(2, (len(words) + 1) // 2):
+            return flag
+    return None
+
+
+def _dealbreaker_findings(
+    payload: dict,
+    spec: EvaluationSpec,
+    red_flags: list[ObservedRedFlag],
+    transcript: Transcript,
+    audit: QuoteAudit,
+) -> list[DealbreakerFinding]:
+    """Every dealbreaker in the spec, in spec order, with what could be said.
+
+    **`not_reached` is the residue and is never the model's to assert.** It is
+    whatever is left once the fired list and the cleared list have been matched
+    back to the spec, so the only way to report coverage of a dealbreaker is to
+    produce a verified quote for it. A model that says nothing produces
+    `not_reached`, which is the truthful reading of having said nothing.
+
+    A clearance whose quotes do not survive verification falls back to
+    `not_reached` rather than being dropped the way an unevidenced red flag is.
+    Dropping is right for a flag because the entry itself is the accusation;
+    here the entry is the report's account of what it could establish, and the
+    honest account of an unverifiable clearance is that nothing was established.
+
+    Firing wins ties. The prompt already says a dealbreaker cannot be in both
+    lists, and if the model does it anyway the flag is the finding.
+    """
+    fired: dict[str, list[EvidenceQuote]] = {}
+    for flag in red_flags:
+        matched = _match_dealbreaker(flag.description, spec)
+        if matched is not None:
+            fired.setdefault(matched, []).extend(flag.evidence)
+
+    cleared: dict[str, list[EvidenceQuote]] = {}
+    for raw in payload.get("dealbreakers_cleared") or []:
+        if not isinstance(raw, dict):
+            continue
+        matched = _match_dealbreaker(str(raw.get("description", "")), spec)
+        if matched is None or matched in fired:
+            continue
+        evidence = _verify_evidence(raw.get("evidence"), transcript, audit)
+        if not evidence:
+            logger.warning(
+                f"dropped an unevidenced clearance: {str(raw.get('description'))[:80]!r}"
+            )
+            continue
+        cleared.setdefault(matched, []).extend(evidence)
+
+    findings = []
+    for flag in spec.red_flags:
+        if flag in fired:
+            state, evidence = DealbreakerState.OBSERVED, fired[flag]
+        elif flag in cleared:
+            state, evidence = DealbreakerState.CLEARED, cleared[flag]
+        else:
+            state, evidence = DealbreakerState.NOT_REACHED, []
+        findings.append(
+            DealbreakerFinding(dealbreaker=flag, state=state, evidence=evidence)
+        )
+    return findings
+
+
 def _verify_evidence(
     raw: list[dict], transcript: Transcript, audit: QuoteAudit
 ) -> list[EvidenceQuote]:
@@ -254,7 +373,20 @@ def _render_sections(outcomes: list[dict]) -> str:
         if o.get("declined_turns"):
             parts.append(f"DECLINED {o['declined_turns']} turns")
         if o.get("shortfall_reason"):
-            parts.append(f"SQUEEZED: {o['shortfall_reason']}")
+            # **Was "SQUEEZED:", which was true of one writer and false of the
+            # four that actually fire.** `_rebalance_remaining` is the only
+            # thing that squeezes anything, and it has never run in any
+            # interview on record. What does set this is a section the candidate
+            # declined, one that ran out of time, or one the interview never
+            # reached — and the model was being told each of those was a squeeze.
+            #
+            # One neutral label carries all of them because the reason is
+            # already a whole sentence naming which it was: "Candidate declined
+            # to answer on this topic", "Section ended on budget_exhausted
+            # after 6 candidate turn(s)", "Candidate chose to end the interview
+            # before this competency was covered". The label only has to stop
+            # contradicting them.
+            parts.append(f"SHORTFALL: {o['shortfall_reason']}")
         lines.append(" · ".join(str(p) for p in parts))
     return "\n".join(lines)
 
@@ -435,6 +567,8 @@ def build_report(
             ObservedRedFlag(description=str(raw.get("description", "")), evidence=evidence)
         )
 
+    dealbreakers = _dealbreaker_findings(payload, spec, red_flags, transcript, audit)
+
     gaps = [str(g) for g in (payload.get("coverage_gaps") or [])]
     for score in scored.values():
         if score.insufficient_signal and score.name not in " ".join(gaps):
@@ -448,6 +582,7 @@ def build_report(
         role_title=spec.role_title,
         competency_scores=ordered,
         red_flags_observed=red_flags,
+        dealbreakers=dealbreakers,
         contradictions=[Contradiction.model_validate(c) for c in (contradictions or [])],
         summary=str(payload.get("summary", "")).strip() or "No summary was produced.",
         recommendation=_recommendation(
@@ -581,6 +716,13 @@ def _empty_report(
                 insufficient_signal=True,
             )
             for c in spec.competencies
+        ],
+        # Nothing was assessed, so nothing was put to them. Stated rather
+        # than left empty: an empty list reads as "no dealbreakers", which is
+        # the opposite of what an empty report means.
+        dealbreakers=[
+            DealbreakerFinding(dealbreaker=f, state=DealbreakerState.NOT_REACHED)
+            for f in spec.red_flags
         ],
         summary=reason,
         recommendation=RecommendationSignal.INSUFFICIENT_SIGNAL,

@@ -51,6 +51,37 @@ def test_time_budgets_fit_the_interview_duration():
     assert planned <= blueprint.total_duration_minutes
 
 
+def test_every_shipped_fixture_spends_its_whole_duration():
+    """Overcommitment is caught by the contract; undercommitment was not.
+
+    A plan summing to 10 minutes of a 20 minute interview hands half the
+    employer's time back without saying so. `allocate_minutes` settles its
+    rounding onto the exact total, so a generated blueprint cannot reach it, and
+    the only way in is a hand-authored fixture — which is what these are, and
+    which is how every measurement in this repo is taken.
+
+    **Tested here rather than on the contract deliberately.** As a validator it
+    failed 49 tests that build small blueprints to exercise something else, none
+    of them malformed, and a rule that makes every future test balance minutes
+    it does not care about is a rule that gets worked around. Overcommitment is
+    a plan that cannot be executed; undercommitment is one that is merely
+    wasteful, and they do not deserve the same enforcement.
+    """
+    from bot.blueprint_source import FIXTURES_DIR
+
+    for path in sorted(FIXTURES_DIR.glob("*.json")):
+        blueprint = load_blueprint(blueprint_id=path.stem)
+        planned = (
+            blueprint.opening_minutes
+            + blueprint.closing_minutes
+            + sum(p.time_budget_minutes for p in blueprint.competency_plans)
+        )
+        duration = blueprint.evaluation_spec.duration_minutes
+        assert abs(planned - duration) < 0.1, (
+            f"{path.stem} budgets {planned:g} of {duration} minutes"
+        )
+
+
 def test_unknown_blueprint_fails_loudly_and_lists_alternatives():
     with pytest.raises(FileNotFoundError) as exc:
         load_blueprint(blueprint_id="does_not_exist")

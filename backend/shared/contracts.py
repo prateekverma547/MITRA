@@ -72,6 +72,52 @@ class EvaluationSpec(BaseModel):
     language: str = "en"
     tone: str = "warm, professional, conversational"
 
+    @model_validator(mode="after")
+    def _spec_can_actually_be_interviewed(self) -> "EvaluationSpec":
+        """The two things a spec cannot be and still produce an interview.
+
+        This class had no validator at all. A spec with **zero competencies** was
+        accepted and produces an interview that asks nothing; so were weights
+        summing to 1.8. `clarify.py` normalises weights and then says in a
+        comment that "a genuinely malformed spec still fails validation in the
+        contract" — which was not true, because there was nothing here to fail
+        it.
+
+        **At least one competency, not the four-to-seven CLAUDE.md asks for.**
+        Four-to-seven is a statement about interview quality — "fewer cannot
+        cover a role" — and the contract is the wrong place to enforce a quality
+        opinion, because it would reject work that already exists and an
+        employer's genuine choice. Checked before writing this: `sre_staff.json`
+        ships with **3**, and two stored specs in the local database have **2**.
+        A range would reject all of them, and none of them is malformed. The
+        guidance already lives where it belongs: the clarification prompt asks
+        for four to seven, and `generate.py` warns when the competencies are too
+        thin for the duration. Zero is different in kind — it is not a thin
+        interview, it is no interview.
+
+        **Weights within one percent of 1.0, not exactly 1.0.** Every consumer
+        that uses a weight divides by the total (`_recommendation`,
+        `_rebalance_remaining`), so the sum is cosmetic to behaviour and the
+        check exists to catch gross authoring error rather than arithmetic.
+        Erring toward accepting matters here because the system's own repair
+        step rounds to four decimals, so a strict equality would reject a spec
+        `clarify.py` had just finished normalising. Verified: all three fixtures
+        and all six stored specs sum to exactly 1.0000.
+        """
+        if not self.competencies:
+            raise ValueError(
+                f"Spec for '{self.role_title}' has no competencies. An interview "
+                "with nothing to assess has nothing to ask."
+            )
+        total = sum(c.weight for c in self.competencies)
+        if abs(total - 1.0) > 0.01:
+            raise ValueError(
+                f"Spec for '{self.role_title}' has competency weights summing to "
+                f"{total:g}, not 1.0. Weights are the employer's statement of what "
+                "matters and are read as a share of the whole."
+            )
+        return self
+
     @property
     def hard_stop_minutes(self) -> int:
         """The wall the brain must not cross."""
@@ -413,6 +459,87 @@ class ObservedRedFlag(BaseModel):
     evidence: list[EvidenceQuote] = Field(default_factory=list)
 
 
+class DealbreakerState(StrEnum):
+    """What the interview was able to establish about one dealbreaker."""
+
+    #: Quoted the candidate doing the thing the employer said would rule them out.
+    OBSERVED = "observed"
+    #: Quoted the candidate doing the opposite of it.
+    CLEARED = "cleared"
+    #: Neither. The interview did not put it to them or observe it either way.
+    NOT_REACHED = "not_reached"
+
+
+class DealbreakerFinding(BaseModel):
+    """One of the employer's dealbreakers, and what the interview could say.
+
+    **`red_flags_observed` can only ever say that something fired.** Silence
+    there means "we asked and they were fine" or "nobody looked", and a reader
+    cannot tell which. Measured across 24 stored reports against one spec: of
+    four dealbreakers, one fired in 10 of 24 runs and the other three fired
+    zero times, with nothing anywhere recording whether they were cleared or
+    never put. In one real interview the report cited two of four and said
+    nothing about the rest; the story that would have settled one of them was
+    written into the blueprint and sat in a topic the interview never reached.
+
+    So this enumerates **every** dealbreaker in the spec, always, in spec order,
+    the way `competency_scores` backfills a competency the model skipped. A
+    dealbreaker missing from the report is the failure this exists to remove.
+
+    `red_flags_observed` is unchanged and still carries exactly what it did.
+    An `observed` finding here restates one of those: consumers reading the old
+    field keep working, and this field is the complete picture.
+
+    **`not_reached` is a fact about the interview, never about the candidate**,
+    which is the distinction `QuestioningHealth` was built for. Not being asked
+    is not the same as failing to answer, and `as_sentence` says so in words
+    rather than leaving a reader to infer it from an enum.
+    """
+
+    dealbreaker: str = Field(description="Verbatim from EvaluationSpec.red_flags.")
+    state: DealbreakerState
+    #: Verified against the transcript exactly like every other quote. Empty on
+    #: `not_reached`, and required for anything else: see `_check`.
+    evidence: list[EvidenceQuote] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check(self) -> "DealbreakerFinding":
+        """Neither verdict may stand without a quote.
+
+        A cleared dealbreaker is a claim about a person in a hiring record and
+        carries the same evidence standard as a flag, in the same direction:
+        the repo already drops an unevidenced red flag as an accusation, and an
+        unevidenced clearance is the same error wearing a friendlier face.
+        """
+        if self.state is not DealbreakerState.NOT_REACHED and not self.evidence:
+            raise ValueError(
+                f"Dealbreaker {self.dealbreaker!r} is '{self.state}' with no "
+                "evidence. Only 'not_reached' may be empty."
+            )
+        return self
+
+    @computed_field
+    @property
+    def as_sentence(self) -> str:
+        """Plain language for the report.
+
+        Computed rather than a property for the reason on
+        `ConversationHealth.degraded`: a property is invisible to every consumer
+        reading this over JSON, and the panel and the scripts both do.
+        """
+        if self.state is DealbreakerState.OBSERVED:
+            return "Observed in the interview. The evidence is quoted below."
+        if self.state is DealbreakerState.CLEARED:
+            return (
+                "Addressed. The candidate gave evidence against this, quoted below."
+            )
+        return (
+            "The interview did not put this to the candidate, and did not observe "
+            "it either way. This is a gap in the interview, not a finding about "
+            "the candidate."
+        )
+
+
 class RecommendationSignal(StrEnum):
     """Framing is deliberate: a signal for a human, never a decision.
 
@@ -751,6 +878,12 @@ class FeedbackReport(BaseModel):
     competency_scores: list[CompetencyScore]
     red_flags_observed: list[ObservedRedFlag] = Field(default_factory=list)
     contradictions: list[Contradiction] = Field(default_factory=list)
+
+    #: Every dealbreaker in the spec, and which of three the interview could
+    #: say. Unlike `red_flags_observed` this is complete: a dealbreaker nobody
+    #: put to the candidate appears here as `not_reached` rather than as
+    #: silence. Read it beside `questioning_health`, which explains why.
+    dealbreakers: list[DealbreakerFinding] = Field(default_factory=list)
 
     summary: str = Field(description="What the transcript shows, in plain language.")
     recommendation: RecommendationSignal
