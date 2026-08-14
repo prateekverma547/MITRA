@@ -960,9 +960,26 @@ def test_nothing_feeds_the_video_to_a_model():
         )
 
 
-def test_the_sweep_can_be_switched_off():
+def test_the_sweep_can_be_switched_off(monkeypatch):
     """Only so tests can drive it by hand. It is on by default, which is the
-    behaviour that matters: retention that has to be enabled is not retention."""
+    behaviour that matters: retention that has to be enabled is not retention.
+
+    **This used to assert the implementation back to itself** —
+    `sweep_enabled() is (not os.environ.get(...))` — which passes whatever the
+    function does, and so could not notice that "0" and "false" both switched
+    the sweep off. Asserting values instead: the words an operator would
+    actually type.
+    """
     from app import recordings
 
-    assert recordings.sweep_enabled() is (not os.environ.get("RECORDING_SWEEP_DISABLED"))
+    monkeypatch.delenv("RECORDING_SWEEP_DISABLED", raising=False)
+    assert recordings.sweep_enabled() is True
+
+    for off in ("1", "true", "TRUE", "yes", "on"):
+        monkeypatch.setenv("RECORDING_SWEEP_DISABLED", off)
+        assert recordings.sweep_enabled() is False, off
+
+    # The ones that used to disable retention by accident.
+    for on in ("0", "false", "no", "off", ""):
+        monkeypatch.setenv("RECORDING_SWEEP_DISABLED", on)
+        assert recordings.sweep_enabled() is True, on

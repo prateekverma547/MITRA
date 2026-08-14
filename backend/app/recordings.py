@@ -35,7 +35,7 @@ from sqlalchemy import select
 
 from app.auth import require_admin
 from app.db import Interview, RecordingStatus, get_sessionmaker
-from bot.config import SESSIONS_DIR, Settings
+from bot.config import _TRUTHY, SESSIONS_DIR, Settings
 from bot.services.daily import delete_recording, download_recording, find_recording
 from shared.contracts import RECORDING_RETENTION_DAYS
 
@@ -324,7 +324,21 @@ async def sweep_forever() -> None:
 
 
 def sweep_enabled() -> bool:
-    return not os.environ.get(SWEEP_DISABLED_ENV)
+    """Whether expired recordings get deleted. On unless explicitly switched off.
+
+    **Parsed the way the other three flags are parsed, which it was not.** This
+    read `not os.environ.get(...)`, bare truthiness on the raw string, so
+    `RECORDING_SWEEP_DISABLED=0` and `=false` both switched the sweep OFF: the
+    string "0" is true to Python. An operator writing `false` to keep retention
+    running would have turned it off, and the sweep is the only thing that
+    deletes recordings Daily charges for.
+
+    `_TRUTHY` is the shared vocabulary — "1", "true", "yes", "on" — and this is
+    now the fourth flag reading it rather than the one flag that did not.
+    Absent still means the sweep runs, which is the behaviour that matters:
+    retention that has to be enabled is not retention.
+    """
+    return os.environ.get(SWEEP_DISABLED_ENV, "").strip().lower() not in _TRUTHY
 
 
 # -- routes ------------------------------------------------------------------

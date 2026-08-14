@@ -12,6 +12,125 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-14 — The third banner reaches the panel, the sweep flag reads like the others, and two dead fields stay dead
+
+Three findings from `AUDIT.md`. Two fixed, one deliberately not — and the third
+is the one worth reading.
+
+### S9 — the sweep flag parsed truthiness its own way
+
+```python
+def sweep_enabled() -> bool:
+    return not os.environ.get(SWEEP_DISABLED_ENV)
+```
+
+Bare truthiness on the raw string, so `RECORDING_SWEEP_DISABLED=0` and `=false`
+both switched the sweep **off**: the string "0" is true to Python. An operator
+writing `false` to keep retention running would have stopped it, and the sweep is
+the only thing that deletes recordings Daily charges for.
+
+It now reads `_TRUTHY` — "1", "true", "yes", "on" — like the other three flags.
+Absent still means the sweep runs.
+
+**It is the only one.** Every other boolean read of the environment was checked:
+`term_probing_disabled`, `filler_enabled` and `recording_enabled` already share
+`_TRUTHY`; `MAX_CONCURRENT_INTERVIEWS` parses an int with a warning and a floor;
+and `stt.py` tests whether `DEEPGRAM_API_KEY` is *present*, which is the
+documented switch rather than a flag.
+
+**The test could not have caught it.** It asserted
+`sweep_enabled() is (not os.environ.get(...))` — the implementation restated, so
+it passed whatever the function did. It now asserts values: unset and every
+falsy-looking word keep the sweep on, and only the `_TRUTHY` words turn it off.
+
+### S1 — the third banner
+
+`QuestioningHealth` was derived, attached to the report, fed to the scoring model
+and used to cap the recommendation for a week, while never reaching the panel.
+`admin.js` read two health objects under a comment that said "Two independent
+degradations". There are three, and `banner()` was already generic over any of
+them; only the list was not.
+
+So the one thing it exists to tell a recruiter — that thin answers may be the
+interviewer repeating itself rather than the candidate having nothing — was the
+one thing a recruiter could not read. Three banners now render, in order, none
+hiding another. The comment says three.
+
+`dealbreakers` and `interview_duration_seconds` are also populated and unrendered
+and are **not** included. The dealbreaker findings need a layout decision — three
+states, evidence quotes, and a deliberate distinction between "cleared" and
+"never put" that a list of strings would flatten — and that is a design change,
+not a missing line. The duration is already visible on the interview row.
+
+### S3 and S10 — the term record and the judge's rationale stay unwired
+
+`SectionOutcome.unexplained_terms` holds what the term machinery exists to
+produce: asked twice, never explained. `SectionOutcome.depth_rationale` holds the
+judge's one-sentence reason for its verdict. Both are written every section,
+persisted, and read by nothing.
+
+**Neither is wired up, and the reason is not that they add nothing. It is that
+the term record is not true.**
+
+Across ten runs it recorded 19 terms in 60 sections. Every one was genuinely a
+word the candidate used — that much is sound. But reading each against what the
+candidate actually said:
+
+| recorded as never explained | what they said |
+| --- | --- |
+| `systemd` (x4) | "systemd starts each agent and restarts it if it dies" |
+| `OpenAI Realtime` (x2) | "speech to speech rather than a pipeline. You lose the transcript as the thing you can audit" |
+| `LiveKit Agents` (x2) | "LiveKit Agents holds the audio session" |
+| `VAD` (x1) | "the VAD was cutting the turn while the customer was still mid-sentence" |
+| `prompt-level rules` (x1) | "they leaked, so I moved them into Python: the agent proposes a booking and the code refuses it" |
+| `confusion matrix` (x1) | "the grid of what it predicted against what was actually true" |
+| `routing decision` (x1) | "picks which tool to call, so the output is a routing decision rather than prose" |
+
+Each of those is an actor, an action and a consequence — the judge's own STEP 2
+test for an explanation. Of twelve distinct terms, one (`Mistral jinja template`,
+recorded four times under two different strings) looks like a correctly recorded
+failure. **The record is wrong more often than it is right**, and putting it in
+front of a recruiter would state that a candidate could not explain things they
+explained, in a hiring record.
+
+It would not help the scorer either. The scorer reads the full transcript and can
+see those exchanges; handing it this list would mislead a component that
+currently gets it right.
+
+**`depth_rationale` is rejected for different reasons.** It is the judge's
+justification for its own verdict, and the judge has no equivalent of the
+questioning guard: one stored rationale reads "answers were repetitive and lacked
+specifics", which is precisely the attribution deliberately removed from the
+report when `QuestioningHealth` landed. Surfacing it would reintroduce a defect
+that was fixed one layer up. And the scorer already writes better prose from more
+evidence: the same reports say "Interviewer repeatedly asked about prompt-level
+rule leaks rather than..." in `coverage_gaps`, which is the honest version of the
+same observation, correctly attributed.
+
+**Rejected, and why:** into the scorer's prompt (feeds a wrong list to something
+that currently reads the transcript correctly, and double-counts against a
+coverage downgrade the report already makes); onto the report for a recruiter
+(false statements about a person); both (both objections apply). Nothing was
+wired, so no scoring run was needed.
+
+**This corrects the audit's own framing of S3.** It was filed as "two weeks of
+work terminating in fields nobody reads", implying the fix was to read them. The
+fields being dead is currently doing the product a favour. What would have to
+change first is the judge's precision on whether a term was explained, which is
+its own measurement and is not this change.
+
+**Files**
+
+- `backend/app/recordings.py` — `sweep_enabled` reads `_TRUTHY`.
+- `backend/tests/test_recordings.py` — the tautological test now asserts values.
+- `frontend/admin/admin.js` — the third banner, and the comment.
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 695 passed, 22 skipped
+```
+
 ## 2026-08-13 — The judge is asked which terms the interview NEEDS, not which are undefined
 
 **What**
