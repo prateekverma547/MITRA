@@ -12,6 +12,106 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-14 — The prompt bound is measured against every fixture, and raised to the edge of the evidence
+
+### The test could not see the breach
+
+`test_section_prompt_stays_small_and_bounded` called `load_blueprint()` with no
+argument, so it only ever measured the default fixture. It is parametrised over
+`FIXTURES_DIR` now, discovered rather than listed, so a blueprint added next
+month is measured without anybody remembering — a hardcoded list would reproduce
+the same bug one layer up.
+
+It failed immediately on being rewritten, which is the point of rewriting it:
+
+| fixture | worst case | against the old bound of 2400 |
+| --- | --- | --- |
+| `pm_senior` (the default, the only one ever measured) | under | passed |
+| **`sre_staff`** | **2470** | **over, unnoticed** |
+| **`ml_senior`** | **2781** | **over, unnoticed** |
+
+Two fixtures, not one. `AUDIT.md` put `ml_senior` at 2516; the real figure is
+2781, because the audit measured a lighter prompt than the test builds — twelve
+carried claims clipped to 110 characters, a 400-character rationale and a
+600-character contradiction all present at once.
+
+This is the third test found this week asserting something real against an input
+that could not fail it, after the two that pinned a false consent notice.
+
+### Raised, not cut, and the measurement already existed
+
+The table this bound came from measured four input sizes on streaming
+`gpt-4.1-mini`, eight interleaved rounds each: ~1400 at 778ms, ~1800 at 757ms,
+~2300 at 820ms, ~2800 at 742ms. **2781 sits inside that range**, bracketed by the
+two nearest arms with no penalty, against a within-size spread of up to 358ms.
+
+So the bound was stale rather than the prompt being fat. Holding 2400 would have
+meant cutting material that no measurement says costs anything, which is the
+trade this project has refused before.
+
+**2800, and the nineteen tokens above the worst case are not headroom — they are
+the end of the table.** Anything past 2800 leaves the range where prompt length
+has ever been checked against time to first token. The next addition needs a
+fresh measurement, not a larger constant, and the comment on the constant says
+so.
+
+No runs were needed and none were taken: nothing was cut, so nothing about the
+rendered prompt changed.
+
+### What two blocks both say — the more serious finding
+
+Looking for redundancy turned up a contradiction rather than waste, in the
+section that owns an askable dealbreaker. The prompt now carries the same
+dealbreaker twice, forty lines apart, with opposite instructions:
+
+```
+THINGS WORTH NOTICING
+The employer named these as dealbreakers. If one shows up, probe it gently and
+factually. Ask for the specific example that would settle it.
+- Cannot explain why specific evaluation metrics or methods were chosen
+   …
+The employer also rules out anyone who cannot explain why specific evaluation
+metrics or methods were chosen. … It is a standard, not a question: never read
+it out or say anything is being checked.
+```
+
+One says *probe it and ask for the example*. The other says *never read it out
+and never say anything is being checked*. And "also" is false: it is not a
+further dealbreaker, it is the same one restated.
+
+That block was measured last week as having no effect — `not_reached` rose 42 to
+45 percent, and questions asking for a time or an occasion in the owning section
+did not move — with a revert recommended and not yet taken. This is a second,
+independent reason to take it, and it is a better one: a block that contradicts
+another is worse than a block that costs 40 tokens.
+
+**Attribution is now stated four times**, in four wordings: `VOICE_RULES` ("if
+you did not hear them say it, you may not say they said it"), the seed guard,
+the CV heading added today, and `_render_footing`. The fourth is the odd one:
+"Refer only to things that appear in the messages below **or in the notes
+above**" grants permission over exactly the material the other three withdraw it
+from, and the notes above are the CV block. Recorded twice before as the likely
+residual source of CV-derived attributions; recorded again here as the clause
+that now reads against its own neighbour.
+
+Neither is fixed here. Both are prompt-content changes needing their own
+measurement, and this change deliberately altered no rendered text.
+
+**Files**
+
+- `backend/tests/test_brain.py` — parametrised over the fixture directory; bound
+  raised to 2800 with the reasoning on the constant.
+
+**Left undone**
+
+The duplicated dealbreaker and the four statements of the attribution rule.
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 698 passed, 22 skipped
+```
+
 ## 2026-08-14 — The third banner reaches the panel, the sweep flag reads like the others, and two dead fields stay dead
 
 Three findings from `AUDIT.md`. Two fixed, one deliberately not — and the third

@@ -362,10 +362,39 @@ def test_the_verdict_block_is_bounded_however_wordy_the_judge_is():
 #: because the thing worth guarding is that the prompt does not grow without
 #: anybody noticing. Flatness, asserted separately below, is the property the
 #: sectioned design actually rests on.
-MAX_SECTION_PROMPT_TOKENS = 2400
+#:
+#: **Raised again, from 2400, and this time it is the edge of the evidence
+#: rather than a level with room.** The true worst case is `ml_senior` at 2781
+#: tokens and `sre_staff` at 2470; both had been over 2400 for days while this
+#: test was green, because it only ever measured the default fixture. The four
+#: input sizes above top out at ~2800, so 2781 sits inside what was measured and
+#: the two arms of that table nearest it — 2300 at 820ms and 2800 at 742ms —
+#: bracket it with no penalty. Holding 2400 would have meant cutting material
+#: that no measurement says costs anything.
+#:
+#: **The nineteen tokens between 2781 and this number are not headroom.** They
+#: are the end of the table. Anything that pushes the prompt past 2800 leaves
+#: the range where prompt length has ever been checked against time to first
+#: token, so the next addition needs a fresh measurement rather than a larger
+#: constant. Raising this again without extending that table is the failure this
+#: comment exists to prevent.
+MAX_SECTION_PROMPT_TOKENS = 2800
 
 
-def test_section_prompt_stays_small_and_bounded():
+def _every_fixture() -> list[str]:
+    """Every blueprint on disk, discovered rather than listed.
+
+    The point of the parametrisation is that a fixture added next month is
+    measured without anybody remembering to add it here. A hardcoded list would
+    reproduce the bug this test was fixed for, one layer up.
+    """
+    from bot.blueprint_source import FIXTURES_DIR
+
+    return sorted(p.stem for p in FIXTURES_DIR.glob("*.json"))
+
+
+@pytest.mark.parametrize("fixture", _every_fixture())
+def test_section_prompt_stays_small_and_bounded(fixture):
     """The premise behind running a mini-tier model live: the prompt is small
     and does not grow with the interview.
 
@@ -374,11 +403,23 @@ def test_section_prompt_stays_small_and_bounded():
     block were all empty, and it measured a prompt no live interview ever sees.
     The real worst case was over 2,200 tokens while this asserted under 1,800 and
     went green. Every optional block is now populated.
+
+    **And then it passed on a fixture that was not breaching.** Fixed once for
+    the blocks it rendered, it still called `load_blueprint()` with no argument,
+    so it only ever measured the default. `ml_senior` was 116 tokens over the
+    bound for days with this green, because `pm_senior` has shorter target
+    depths, no dealbreaker the interviewer can ask about, and a shorter candidate
+    summary. Same assertion, an input that could not fail it — the third of that
+    shape found this week.
+
+    Parametrised over the fixture directory now, so the question "which
+    blueprint is worst" is answered by measurement rather than by whichever one
+    happens to be the default.
     """
     from bot.brain.brain import Judgment
     from shared.contracts import Contradiction, CoverageLevel, KeyClaim
 
-    brain = InterviewBrain(load_blueprint())
+    brain = InterviewBrain(load_blueprint(blueprint_id=fixture))
 
     # Carried claims, at the length the judge clips them to.
     opening = brain.current_section
@@ -425,7 +466,7 @@ def test_section_prompt_stays_small_and_bounded():
         )
 
     assert max(sizes) < MAX_SECTION_PROMPT_TOKENS, (
-        f"worst-case system instruction is {max(sizes)} tokens"
+        f"worst-case system instruction for {fixture} is {max(sizes)} tokens"
     )
     # Flatness is the property that matters, not the absolute number: turn
     # twenty must cost no more than turn one.
