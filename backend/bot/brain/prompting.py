@@ -12,6 +12,8 @@ make a mini-tier live model viable.
 Nothing here imports Pipecat.
 """
 
+import re
+
 from shared.branding import BOT_NAME
 from shared.contracts import (
     Contradiction,
@@ -713,6 +715,272 @@ _HARD_QUESTIONS = (
 )
 
 
+#: An employer-authored dealbreaker that OPENS with an inability names a thing
+#: a question can establish. One that opens any other way describes a manner
+#: spread across answers, and there is no question that gets at it.
+_INABILITY_OPENERS = ("cannot ", "can not ", "can't ", "unable to ")
+
+#: Words that appear in every competency description and so cannot tell two
+#: apart. Kept small: an over-long list is a thumb on the scale.
+_MATCH_STOPWORDS = frozenset(
+    """they them their this that with have from when what about only 
+    cannot able describe explain given real more most some such very well 
+    into over than then were been""".split()
+)
+
+
+def _askable(flag: str) -> str | None:
+    """What this dealbreaker requires established, or None if it is observable.
+
+    **The distinction is real and the spec does not carry it.** `red_flags` is a
+    list of strings and nothing in the clarification chat asks the employer
+    which kind they are writing, so this is inferred, and inference over text is
+    the shape that has misfired repeatedly in this repo. What makes this one
+    different is that it is a prefix test on a closed employer-authored list
+    rather than a score over prose: there is no threshold to tune, and it can be
+    read against every dealbreaker in the fixtures by eye.
+
+    Checked against all 14 in `ml_senior`, `pm_senior` and `sre_staff`, it calls
+    3 askable and 11 observable, and every one of the 3 is genuinely a question:
+    "cannot explain why specific evaluation metrics were chosen", "cannot
+    describe a time they deployed or debugged their own ML service", "cannot
+    name a product bet that failed".
+
+    **What it gets wrong, and it is not a small list.**
+
+    It keys on how the employer happened to phrase it rather than on what it
+    means. "Struggles to explain why metrics were chosen" is the same
+    dealbreaker and gets nothing.
+
+    It misses compounds. "Describes frameworks and process but cannot name a
+    single concrete decision they personally made" carries an askable half and
+    is read as observable because of its opening clause.
+
+    And it misses the hybrid, which is the most interesting case. "Avoids or
+    deflects when asked about negative results" is a manner, so it reads as
+    observable, but the manner cannot be seen without first asking about
+    negative results. Treating it as observable means nobody asks; treating it
+    as askable would have the interviewer put the question and the report treat
+    having asked as having settled it. Neither is right and this does the first.
+
+    **Every one of those errors is in the direction of rendering nothing**,
+    which is the behaviour that exists today. Over-rendering is the expensive
+    mistake: it announces the trap to the candidate.
+
+    The inversion is the same fact as the classification. A dealbreaker that
+    opens "cannot X" states what would rule someone out; "X" is what the topic
+    has to establish, so stripping the opener is the whole transform.
+    """
+    text = flag.strip()
+    low = text.lower()
+    for opener in _INABILITY_OPENERS:
+        if low.startswith(opener):
+            return text[len(opener) :].strip().rstrip(".")
+    return None
+
+
+def _stems(text: str) -> set[str]:
+    """Content words clipped to a common prefix.
+
+    Whole-word matching put "cannot describe a time they deployed or debugged"
+    on no competency at all, against a competency literally named "ML Service
+    Deployment and Debugging", because `deployed` is not `deployment`. Five
+    characters is enough to join those and short enough to need no stemmer.
+    """
+    words = re.sub(r"[^a-z0-9 ]", " ", text.lower()).split()
+    return {w[:5] for w in words if len(w) > 3 and w not in _MATCH_STOPWORDS}
+
+
+def _dealbreaker_for(blueprint: InterviewBlueprint, section: Section) -> str | None:
+    """The askable dealbreaker this section owns, if it clearly owns one.
+
+    Matched against the competency's own name, description and target depth,
+    all employer- or blueprint-authored. **A tie or a weak best match means
+    unowned, and an unowned dealbreaker renders nowhere** rather than being
+    spread across every topic: a standard nobody can act on in this section is
+    noise in six prompts instead of one, and the report already says plainly
+    when a dealbreaker was never put.
+
+    At most one per section, deliberately. Two would be a list, and a list of
+    things to establish is how the carried-claims block turned into a standing
+    to-do list and cost a week.
+    """
+    if section.kind != SectionKind.COMPETENCY or not section.competency_id:
+        return None
+
+    spec = blueprint.evaluation_spec
+    plans = {p.competency_id: p for p in blueprint.competency_plans}
+    profiles = {}
+    for competency in spec.competencies:
+        plan = plans.get(competency.id)
+        profiles[competency.id] = _stems(
+            f"{competency.name} {competency.description} "
+            f"{plan.target_depth if plan else ''}"
+        )
+
+    best: tuple[int, str, str] | None = None
+    runner_up = 0
+    for flag in spec.red_flags:
+        need = _askable(flag)
+        if need is None:
+            continue
+        wanted = _stems(flag)
+        ranked = sorted(
+            ((len(wanted & words), cid) for cid, words in profiles.items()),
+            reverse=True,
+        )
+        if not ranked:
+            continue
+        score, owner = ranked[0]
+        second = ranked[1][0] if len(ranked) > 1 else 0
+        if owner != section.competency_id or score < 2 or score == second:
+            continue
+        if best is None or score > best[0]:
+            best, runner_up = (score, owner, need), second
+    return best[2] if best else None
+
+
+def _render_dealbreaker(blueprint: InterviewBlueprint, section: Section) -> str:
+    """The employer's bar for this topic, stated as a standard and never a question.
+
+    **It is deliberately neither mandatory nor advisory**, which is the trap
+    every version of this block falls into. A mandatory block naming a specific
+    item wins the turn — that is measured, at 80 to 100 percent — and it would
+    win it from the seed question, trading a known gap for a new one. An
+    advisory one is a preference between available options, measured at 0.
+
+    So it is not a turn instruction at all. It attaches to `target_depth`, which
+    is already the section's standard, renders in the same breath, and never
+    says what to ask this turn. Nothing competes with the seed because this is
+    not in the same category as the seed. `target_depth` has rendered every turn
+    since the beginning and has never behaved like a to-do list, because it
+    describes a bar rather than naming an item.
+
+    Not rendered in the opening or closing: `_render_red_flags` already carries
+    the same reasoning, and steering a warm-up toward a dealbreaker is how a
+    greeting turns into an interrogation.
+    """
+    need = _dealbreaker_for(blueprint, section)
+    if not need:
+        return ""
+    return (
+        f"\nThe employer also rules out anyone who cannot {need}. Establish it "
+        f"either way from their own work. It is a standard, not a question: "
+        f"never read it out or say anything is being checked.\n"
+    )
+
+
+def _render_seed_question(section: Section) -> str:
+    """One of the section's own questions, chosen by the turn index.
+
+    **This block used to render all four and ask the model not to work through
+    them in order.** That is a menu: a preference between available options,
+    which is the shape this repo has measured at 0 percent compliance against 80
+    percent for naming the thing to say. `_HARD_QUESTIONS` below fixed exactly
+    this failure for the depth ramp, and its own comment says why — offering
+    four also lets the model pick the same one twice, which is the failure being
+    fixed wearing a different hat. The seed block was the same failure sitting
+    forty lines above the fix.
+
+    **What it moves is the floor, not the average**, measured ten runs a side on
+    the competent candidate. Sections that spent a whole topic on a single
+    subject halved, 14 of 60 to 7 of 60, and the worst competency went from 1.6
+    distinct subjects to 2.2. The spread across competencies closed from 1.6-4.3
+    to 2.2-3.5: the topics that were already good did not improve, the ones that
+    collapsed stopped collapsing. Answers reached went 9.5 of 31 to 10.9, and
+    answers the candidate had already given went 56 percent to 54.
+
+    **It stops at the last seed rather than wrapping, and that was measured
+    both ways.** Wrapping was tried first, on the reasoning that the back half
+    of a section would otherwise have no subject at all: the ramp supplies a
+    shape ("ask for a number") and never a thing to ask it about. It cost more
+    than the empty back half does. Turn N and turn N+4 take the same seed, and
+    exact repeated questions four turns apart went from 0 to 3 across ten runs,
+    with the longest consecutive streak going 3 to 5, while the term block's own
+    repeats stayed flat at 9 against 10.
+
+    So a turn past the last seed gets no seed block at all: the ramp naming one
+    demand, the section's target depth, and eight turns of the candidate's own
+    words. The reasoning was that the subject would come from the window rather
+    than from the plan.
+
+    **That reasoning is wrong, and the measurement says so.** Split by whether a
+    seed was rendered, mechanism questions on turns four and later went 19
+    percent with a seed, 21 percent with a wrapped seed, and 6 percent with
+    none, while menu questions on those same turns went 31, 29 and 54. Without a
+    subject in front of it the model reaches for the ramp's demand instead of
+    the window's content, and asks for the trade-off behind a term nobody has
+    established: the exact failure `_probe_shape` was built to catch. The ramp
+    alone is NOT enough there. It supplies a shape and the seed was supplying
+    the subject, and that coupling was not visible until the seed was removed.
+
+    The wrap cost 3 repeated questions four turns apart across ten runs. Losing
+    the back half costs about twenty mechanism probes over the same ten. If
+    these two are the only options, the wrap is the cheaper one.
+
+    **The first turn takes the first seed deliberately, not by accident of
+    indexing.** Both fixtures author their seeds broad to specific, which is the
+    order the ramp already wants — widest question first, hardest later — so the
+    two mechanisms agree rather than compete. A generated blueprint is not
+    guaranteed to author them that way, and if one ever opens on its narrowest
+    question this is the line to look at.
+
+    A repair does not spend a turn, so it cannot advance the seed. That is
+    right: the candidate did not hear the question, and moving to the next
+    subject would throw it away.
+
+    **The guard exists because naming one question got its content handed back
+    as candidate speech.** These seeds are written from the CV, so the first
+    version of this block produced "You said you fine-tuned Sarvam-M 24B" before
+    the candidate had mentioned either word. Unsupported attributions went from
+    0.5 an interview to 0.9, and the coupling was not in doubt: 9 of 9 matched a
+    seed in that section and 8 of 9 matched the seed live on that exact turn,
+    against 3 of 5 and 1 of 5 with all four rendered.
+
+    **Three rules already forbade this and none of them reached it, and one of
+    them licensed it.** `VOICE_RULES` says plainly that if you did not hear them
+    say it you may not say they said it, but it says so while describing how to
+    acknowledge an answer, and this failure is in how a question is introduced.
+    `_render_claims` binds attribution to the claims list. And `_render_footing`
+    says "refer only to things that appear in the messages below or in the notes
+    above" — the seed question IS one of the notes above, so the rule nearest to
+    this block reads as permission for exactly the thing being forbidden. That
+    clause is not touched here, because changing it would mean measuring two
+    things at once; if this guard underperforms, that clause is the next
+    suspect.
+
+    So the guard states the fact rather than repeating the principle, and names
+    the three openers rather than the behaviour: "you said", "you mentioned",
+    "you told me". Scoped to this question only, because the term block's own
+    supplied sentence legitimately begins "You said you used X" about a term the
+    candidate really did use, and a blanket ban would take the mechanism probe
+    down with it.
+
+    **No worked example, deliberately.** The last fabricated quote in this repo
+    arrived through a sample sentence in exactly this position: the block
+    forbade the behaviour in prose and demonstrated it in an example, and the
+    example won. Nothing here contains a phrase that could be read back as
+    something a candidate said.
+
+    This is a mandatory block. Re-measure with
+    `scripts/compare_models.py --scenarios competent` after editing (CLAUDE.md).
+    """
+    seeds = section.seed_questions
+    if section.turns_spent >= len(seeds):
+        return ""
+    return f"""\
+The question for this turn. It is drawn from their CV, not from this
+conversation, so nothing in it is something they have told you. Do not introduce
+any part of it with "you said", "you mentioned" or "you told me". Put it in your
+own words, adapted to what they have actually said, and do not read it out
+verbatim:
+- {seeds[section.turns_spent]}
+
+If it is written as two questions joined together, ask only ONE half. Pick the
+part that fits what they have just told you and drop the rest.
+"""
+
+
 def _render_depth_ramp(turns_spent: int) -> str:
     """Open a topic broadly; save the hard questions for the follow-ups.
 
@@ -892,7 +1160,6 @@ evaluate their performance or hint at an outcome. A human makes that decision
 after reviewing the conversation.
 """
     else:
-        questions = "\n".join(f"- {q}" for q in section.seed_questions)
         # Two failures shaped this block, and the fix for the first caused the
         # second.
         #
@@ -913,14 +1180,8 @@ This part of the interview is about one thing only: {section.name}.
 
 What a sufficient answer looks like at this seniority:
 {section.target_depth}
-
-Questions you may draw on, adapted to what they have actually said. Do not read
-them out verbatim, and do not work through them in order:
-{questions}
-
-Some of these are written as two questions joined together. Ask only ONE half.
-Pick the part that fits what they have just told you and drop the rest.
-
+{_render_dealbreaker(blueprint, section)}
+{_render_seed_question(section)}
 {_render_depth_ramp(section.turns_spent)}
 Stay on this topic until you are moved on. Do not announce section changes or
 say things like "let's move to the next area" unless you are asked to close.
@@ -935,12 +1196,44 @@ say things like "let's move to the next area" unless you are asked to close.
         if section.kind == SectionKind.COMPETENCY
         else ""
     )
+    # **Both headings state what the material IS, because the old ones did not
+    # and the model filled the gap.** This block used to open "ABOUT THIS
+    # CANDIDATE" and list "Claims from their CV worth testing", and the
+    # interviewer read the list back as speech: "You said you built six
+    # production voice agents on LiveKit Agents", at the second substantive turn
+    # of an interview whose candidate had said only that they were building an
+    # AI interviewer. That sentence is `claims_to_verify[0]`, near enough word
+    # for word. Seven of these across six of ten measured interviews, every one
+    # traceable here or to `candidate_summary`.
+    #
+    # "Claims" is the word that does the damage. A claim is something somebody
+    # claimed, so the model supplies the claimant, and the only person available
+    # is the candidate. The heading was inviting the failure that the prose
+    # underneath would have had to forbid.
+    #
+    # **A heading rather than a guard sentence, for two reasons.** The prompt is
+    # already four mandatory blocks deep and over its own token bound on the
+    # `ml_senior` fixture, and this block renders on every turn of every section
+    # including the opening, so a paragraph here is the most expensive place in
+    # the prompt to put one. And a heading is a label on the data rather than an
+    # instruction about behaviour: it is read every time the data is read, and
+    # it cannot lose a turn to the four blocks that name a specific thing to say.
+    #
+    # The named openers are kept from the seed guard, which is the one component
+    # with direct evidence behind it (0.90 to 0.40 attributions), folded into the
+    # line that was already there rather than added as a new one.
     candidate_context = ""
     if blueprint.candidate_summary:
-        candidate_context = f"\nABOUT THIS CANDIDATE\n{blueprint.candidate_summary}\n"
+        candidate_context = (
+            f"\nTHEIR CV, NOT THEIR WORDS\n"
+            f"{blueprint.candidate_summary}\n"
+        )
         if blueprint.claims_to_verify:
             claims = "\n".join(f"- {c.claim}" for c in blueprint.claims_to_verify)
-            candidate_context += f"\nClaims from their CV worth testing:\n{claims}\n"
+            candidate_context += (
+                f"\nAlso the CV. Never say \"you said\" or \"you mentioned\" about any "
+                f"of it:\n{claims}\n"
+            )
 
     scope = f"""
 STAYING IN SCOPE

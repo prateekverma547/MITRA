@@ -12,6 +12,140 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-14 — The interviewer is given the dealbreakers it can ask about, and ignores them
+
+**What**
+
+`EvaluationSpec.red_flags` was never passed to the brain. The interviewer had
+never seen a dealbreaker, and the scorer checked against a list the interview was
+never given. The seeds could not cover the gap because they are generated from
+`target_depth`, which states a different bar: one competency's target depth reads
+"including handling of ambiguous or negative results" while its dealbreaker reads
+"avoids or deflects when asked about negative results".
+
+An askable dealbreaker now renders beside `target_depth` in the section that owns
+it. **It did not work, and the entry is kept because the reason is worth more
+than the change.**
+
+**Askable against observable, and the spec does not carry the distinction.**
+`red_flags` is a list of strings and the clarification chat never asks the
+employer which kind they are writing, so it is inferred: a dealbreaker that OPENS
+with an inability ("cannot", "can't", "unable to") names something a question can
+establish; anything else describes a manner spread across answers. A prefix test
+on a closed employer-authored list, no threshold, readable by eye against all 14
+dealbreakers in the three fixtures. It calls 3 askable and 11 observable and all
+3 are genuinely questions.
+
+It keys on phrasing rather than meaning, so "struggles to explain why metrics
+were chosen" gets nothing. It misses compounds, where an askable half sits behind
+an observable opening clause. And it misses the hybrid: "avoids or deflects when
+asked about negative results" is a manner, but the manner cannot be seen without
+first asking. Every one of those errors renders nothing, which is the behaviour
+that already existed. Over-rendering is the expensive mistake, because it
+announces the trap to the candidate.
+
+**Ownership** is matched on five-character stems against the competency's name,
+description and target depth. Whole words put "cannot describe a time they
+deployed or debugged" on no competency at all, against one named "ML Service
+Deployment and Debugging". A tie or a best score under two means unowned, and an
+unowned dealbreaker renders nowhere rather than in all six topics. Two of the
+fourteen render, both in `ml_senior`.
+
+**Measured**
+
+Ten competent runs and three deflecting, `gpt-4.1-mini`, at 22 seconds, all
+thirteen scored. The comparison arm carries the uncommitted `_advance_reason`
+reorder, so section-level numbers are against that and not a clean baseline.
+
+**The bar was not met. `not_reached` rose.**
+
+| dealbreaker | cleared | observed | not reached |
+| --- | --- | --- | --- |
+| cannot explain why a metric was chosen (**rendered**) | 83% -> 90% | 0% -> 0% | 16% -> 10% |
+| vague or generic terms | 16% -> 10% | 33% -> 10% | 50% -> 80% |
+| cannot describe a time they deployed or debugged (**rendered**) | 16% -> 20% | 0% -> 0% | 83% -> 80% |
+| avoids or deflects on negative results | 83% -> 90% | 0% -> 0% | 16% -> 10% |
+| **all four** | | | **42% -> 45%** |
+
+The two rendered dealbreakers moved by three points and six points, on ten runs
+against six. The one that got worse is an observable one this change does not
+render. The only dealbreaker with room to move was "a time they deployed or
+debugged", at 83 percent not reached, and it went to 80.
+
+**The interviewer's behaviour in the owning section did not change**, which is
+the measurement that settles it. In `ml_service_deployment`, over 60 questions in
+each arm:
+
+| | asking for a time or a specific occasion | mentioning debug, went wrong, root cause |
+| --- | --- | --- |
+| before the seed rotation | 0.1 a run | 0.1 a run |
+| reorder only | 0.0 a run | 0.9 a run |
+| with this block | 0.2 a run | 0.5 a run |
+
+**Why it is ignored, and it was foreseeable from this file.** The block was
+written to be neither mandatory nor advisory: a mandatory block naming a specific
+item wins the turn, measured at 80 to 100 percent, and it would have won it from
+the seed question; an advisory one is a preference between available options,
+measured at 0. So it was fused into `target_depth` as a standard that never says
+what to ask this turn.
+
+That third category does not exist. A block that does not compete for the turn
+does not change the turn. Worse, it is the exact shape recorded forty lines above
+it as measured at no effect: the unexplained-term block this repo already
+replaced said "coverage is insufficient, do not move on", which describes a state
+and leaves the model to work out what to do about it. This block describes a
+standard and leaves the model to work out what to do about it.
+
+**Escalating it is the wrong response** and is not being done. Making it
+mandatory would take the turn from the seed question, which is the one thing
+currently putting the section's own material to the candidate, and would trade a
+known gap for a new one. The right place for this is the blueprint generator,
+where a dealbreaker that needs asking becomes a seed question and inherits the
+rotation that already puts seeds in front of the model one per turn. That is a
+different change, out of scope here, and it is the one worth making.
+
+**Nothing regressed.**
+
+| | reorder only | + this block |
+| --- | --- | --- |
+| **unsupported attributions** | 0.30  [0..1] | **0.10**  [0..1] |
+| distinct authored answers reached, of 31 | 10.7  [7..13] | 11.1  [9..14] |
+| answers already given in that section | 53%  [44-65] | 56%  [45-61] |
+| distinct subjects per section | 2.9  [1..6] | 2.7  [1..5] |
+| mechanism questions per opportunity | 18% | 16% |
+| sections on one subject | 4/60 | 5/60 |
+| deflecting: fires what is true of it | 3/3 | 3/3 |
+
+Attributions fell rather than rose, against a bar of 0.40. The seed rotation
+doubled them because the seeds are written from the CV; **dealbreakers are
+written in the clarification chat from the JD and the CV never touches them**, so
+the coupling that damaged the seeds is absent here. Mechanism fell two points
+inside a per-run spread of 5 to 22.
+
+**A bound that was already broken.** `ml_senior`'s worst-case system instruction
+was **2445 tokens against a bound of 2400 before this change**, and 2490 after.
+`test_section_prompt_stays_small_and_bounded` does not catch it because it runs
+the default fixture, which has shorter target depths and renders no dealbreaker.
+The bound is not raised here. If it has to come down, the candidate is
+`_render_red_flags`, roughly 90 tokens, which lists every dealbreaker including
+the observable ones passively and now overlaps this block on the askable ones.
+
+**Files**
+
+- `backend/bot/brain/prompting.py` — `_askable`, `_stems`, `_dealbreaker_for`,
+  `_render_dealbreaker`, one call site.
+
+**Left undone**
+
+Everything the diagnosis points at: dealbreakers as generated seed questions, the
+token bound, and the guard test running the wrong fixture.
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 695 passed, 22 skipped
+```
+
 ## 2026-08-14 — The prompt bound is measured against every fixture, and raised to the edge of the evidence
 
 ### The test could not see the breach
@@ -452,6 +586,111 @@ topic go nowhere.
 
 ```bash
 cd backend && uv run pytest -q -m "not llm"          # 689 passed, 22 skipped
+```
+
+## 2026-08-13 — The topic offers one of its questions per turn instead of all four
+
+**What**
+
+The competency block rendered all four of the section's seed questions every
+turn, under "adapted to what they have actually said. Do not read them out
+verbatim, and do not work through them in order". That is a menu: a preference
+between options all still on the table, which is the shape this repo has
+measured at 0 percent compliance against 80 percent for naming the one thing to
+say. `_HARD_QUESTIONS` fixed exactly this for the depth ramp and its own comment
+says why, offering four also lets the model pick the same one twice. The seed
+block was the same failure sitting forty lines above the fix.
+
+It now renders one, indexed by `turns_spent`, in `_render_seed_question`. No new
+state, and a repair already does not spend a turn, so a candidate who did not
+hear the question is not moved on to the next subject.
+
+Two things were then changed on the strength of the first measurement, and the
+second of them did not work.
+
+**A guard, because naming one question got its content handed back as candidate
+speech.** These seeds are written from the CV, so the first version produced
+"You said you fine-tuned Sarvam-M 24B" before the candidate had said either
+word. The block now states that the question comes from the CV rather than the
+conversation and names the three openers it must not use.
+
+**Three rules already forbade this and one of them licensed it.** `VOICE_RULES`
+says plainly that if you did not hear them say it you may not say they said it,
+but says it while describing how to acknowledge an answer, and this failure is
+in how a question is introduced. `_render_footing`, the block directly above,
+says "refer only to things that appear in the messages below or in the notes
+above" and the seed IS one of the notes above. That clause was left alone rather
+than fixed in the same measurement.
+
+**The wrap was removed, and that is the part that failed.** Four seeds, six to
+eight turns. Wrapping put turn N and turn N+4 on the same seed, which produced 3
+repeated questions exactly four turns apart. Stopping at the last seed removed
+those and cost far more elsewhere.
+
+**Measured**
+
+Ten runs an arm, competent candidate, `gpt-4.1-mini`, at the measured 22 seconds
+a turn. Deflecting was not run: five replies, returns the fifth forever, cannot
+reach a new subject.
+
+| | before | with wrap | wrap removed + guard |
+| --- | --- | --- | --- |
+| unsupported attributions / interview | 0.50  [0..1] | 0.90  [0..3] | **0.50**  [0..1] |
+| ...overlapping any seed in that section | 3/5 | 9/9 | **3/5** |
+| ...overlapping the seed live on that turn | 1/5 | 8/9 | **2/5** |
+| **sections spending a topic on ONE subject** | 14/60 | 7/60 | **5/60** |
+| distinct authored answers reached, of 31 | 9.5  [6..14] | 10.9  [7..14] | **11.1**  [6..15] |
+| answers already given in that section | 56%  [50-69] | 54%  [45-61] | 54%  [44-62] |
+| exact repeated questions | 10/381 | 16/392 | **1/382** |
+| ...four turns apart | 0 | 3 | **0** |
+| ...longest consecutive streak | 3 | 5 | **2** |
+| worst competency, distinct subjects | 1.6 | 2.2 | **2.3** |
+| **mechanism questions per opportunity** | **24%**  [14-47] | 22%  [8-61] | **13%**  [5-22] |
+
+**The guard worked.** Attributions are back to the pre-rotation rate and the
+coupling to the seed is gone with them: 9 of 9 overlapping a seed became 3 of 5,
+which is what it was before any of this. The rotation's own gains held or
+improved. One-subject sections went from 14 of 60 to 5.
+
+**Removing the wrap broke the back half of every section, and the split says so
+exactly.** Mechanism questions on turns four and later:
+
+| | with a seed | with a wrapped seed | with none |
+| --- | --- | --- | --- |
+| mechanism | 19% | 21% | **6%** |
+| menu | 31% | 29% | **54%** |
+
+Without a subject in front of it the model takes the ramp's demand instead of
+the window's content, and asks for the trade-off behind a term nobody has
+established. That is the precise failure `_probe_shape` exists to catch. **The
+ramp alone is not enough on a turn with no seed**; it supplies a shape and the
+seed was supplying the subject, and the coupling was invisible until the seed
+was taken away. The front half fell too, 33 percent to 22, of which the rotation
+accounts for about 8 points and the guard about 3.
+
+The wrap cost 3 repeated questions across ten runs. Losing the back half costs
+about twenty mechanism probes over the same ten.
+
+**Held.** The let-go still spoken and more often, 2.1 an interview to 2.9. The
+communication branch still asks how they explained rather than how the thing
+works, 27 against 21, with one mechanism question in a communication section as
+there was with the wrap. The worst competency stayed above its 1.6 baseline at
+2.3.
+
+**Files**
+
+- `backend/bot/brain/prompting.py` — `_render_seed_question`, one call site.
+
+**Left undone**
+
+The wrap should go back, with the guard kept. That combination has not been run.
+And `_render_footing`'s "or in the notes above" is still there.
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 689 passed, 22 skipped
+uv run python scripts/compare_models.py --scenarios competent --runs 10
 ```
 
 ## 2026-08-13 — The judge is asked which terms the interview NEEDS, not which are undefined

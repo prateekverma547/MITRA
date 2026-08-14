@@ -131,15 +131,19 @@ async def test_candidate_context_reaches_the_prompt(db):
 
     prompt = brain.plan_turn().system_instruction
 
-    assert "ABOUT THIS CANDIDATE" in prompt
+    assert "THEIR CV, NOT THEIR WORDS" in prompt
     assert "Twelve years leading AI product teams." in prompt
+    # The heading is the guard: it says whose words these are. A live interview
+    # read this block back as speech — "You said you built six production voice
+    # agents" — to a candidate who had said nothing of the kind.
+    assert "you said" not in prompt.lower().split("never say")[0]
 
 
 async def test_fixture_prompt_has_no_candidate_section():
     """Better to say nothing than to invent a background."""
     brain = InterviewBrain(load_blueprint())
 
-    assert "ABOUT THIS CANDIDATE" not in brain.plan_turn().system_instruction
+    assert "THEIR CV, NOT THEIR WORDS" not in brain.plan_turn().system_instruction
 
 
 # -- failing loudly, at startup ---------------------------------------------
