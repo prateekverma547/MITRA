@@ -929,9 +929,19 @@ function reportCard(iv) {
 
   const r = iv.feedback_report;
   const health = r.conversation_health;
-  // Two independent degradations: the recording, and our own analysis of it.
-  // Both render, in that order, and neither hides the other.
+  // Three independent degradations: the recording, our own analysis of it, and
+  // how the interview was conducted. All three render, in that order, and none
+  // hides another — a report can be degraded on every count and a reader has to
+  // see each reason separately.
+  //
+  // The third was derived, attached to the report and used to cap the
+  // recommendation for a week while never reaching this file, so the one thing
+  // it exists to tell a recruiter — that thin answers may be the interviewer
+  // repeating itself rather than the candidate having nothing — was the one
+  // thing they could not read. `banner()` was already generic over any health
+  // object; only this list was not.
   const analysis = r.judgment_health;
+  const questioning = r.questioning_health;
   const scored = r.competency_scores.filter((s) => s.score !== null);
   const average = scored.length
     ? scored.reduce((a, s) => a + s.score, 0) / scored.length
@@ -960,6 +970,7 @@ function reportCard(iv) {
         is backed by quotes you can check against the transcript.</p>
       ${banner(health)}
       ${banner(analysis)}
+      ${banner(questioning)}
       <div class="spread" style="margin-top:16px;align-items:center">
         <span class="small muted">
           ${rebuilding
