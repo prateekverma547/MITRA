@@ -231,6 +231,229 @@ its own measurement and is not this change.
 cd backend && uv run pytest -q -m "not llm"          # 695 passed, 22 skipped
 ```
 
+## 2026-08-14 — A closed section keeps its verdict, and the CV block says whose words it holds
+
+Two fixes from `AUDIT.md`. **One worked. One did not, and should come out.**
+
+### S11 — a closed section keeps the verdict it closed on
+
+`_advance` queues one last `section_end` judgement for the topic it is leaving,
+and that judgement lands after the section is over. `apply_judgment` wrote
+`section.coverage` with no check that the section was still open, so the verdict
+recorded for a section was never the verdict the brain acted on.
+
+Of 8 sections that ended BECAUSE the judge said `sufficient`, only 2 still said
+so afterwards. Five said `partial`, one `insufficient` — including a section that
+ended at the two-turn floor and was written up as a topic the candidate had
+failed rather than one that had enough.
+
+**"Closed" alone was the wrong test and the suite said so.** The first version
+froze any closed section's verdict and
+`test_late_judgment_for_a_finished_section_is_still_recorded` failed, correctly:
+a `depth` judgement requested while a section was live can also land after the
+ceiling moved us on, and that one carries the only reading anybody ever made of
+the topic. Refusing it loses the assessment and leaves the heuristic fallback.
+
+So the rule is narrower. **A closed section keeps a verdict it already has; a
+closed section that never got one still accepts a late reading.** A section can
+only end on `depth_reached` if a verdict exists, so this targets the harm exactly
+and leaves the late-arrival case alone.
+
+Claims and contradictions on a late judgement are still applied. Only the
+verdict, and the sentence explaining it, are decided once.
+
+| | before | after |
+| --- | --- | --- |
+| **sections ending on a verdict that still record it** | **2 of 8** | **6 of 6** |
+
+**Two things this does not fix, stated because they are still there.** The
+`section_end` judgement is now close to inert: its claims arrive after
+`_carry_claims_from` has run, so they are never carried forward and surface only
+in the panel's section view, leaving contradictions as the sole benefit for six
+to eight judge calls an interview. And the judge is still asked the wrong
+question — `_advance` runs `_carry_claims_from` before building the request, so
+the section's own claims reach it labelled "claims from earlier sections".
+Freezing the verdict changes what we do with the answer, not what we asked.
+
+### S2 — the CV block, and why the fix comes out
+
+The interviewer read `claims_to_verify` back as candidate speech: "You said you
+built six production voice agents on LiveKit Agents", at the second substantive
+turn of an interview whose candidate had said only that they were building an AI
+interviewer. Seven of these across six of ten runs.
+
+The headings changed rather than a guard sentence being added: `ABOUT THIS
+CANDIDATE` became `THEIR CV, NOT THEIR WORDS`, and `Claims from their CV worth
+testing:` became `Also the CV. Never say "you said" or "you mentioned" about any
+of it:`. A heading because "claims" is the word that does the damage — a claim is
+something somebody claimed, so the model supplies the claimant — and because this
+block renders on every turn of every section, making it the most expensive place
+in an over-budget prompt to put a paragraph. Cost 26 tokens against roughly 45
+for transplanting the seed guard whole.
+
+**The direct fabrications fell and a worse path opened.**
+
+| | before | after |
+| --- | --- | --- |
+| fabrications traced to `claims_to_verify`, hand-read | 7 across 6/10 runs | **4 across 2/10 runs** |
+| attributions naming something the candidate **never says anywhere** | **0** | **2 runs** |
+
+In one run the candidate never says "LiveKit" at any point. The interviewer
+introduces it at turn 6 as its own question — "What was the bet behind using
+OpenAI Realtime and LiveKit Agents" — the judge then reads the section transcript,
+finds the term in the *interviewer's* words, nominates it as unexplained, and the
+term block supplies "You said LiveKit Agents". Four times.
+
+That is a laundering path: CV → our question → judge → term block → attributed to
+the candidate. Forbidding the attribution pushed the CV content into a question
+instead, and a different block attributed it for us. The heading stops the block
+that was named in the audit and does nothing about the route through the judge,
+which is the same defect recorded when the judge began reporting the
+interviewer's own phrasing as the candidate's.
+
+**Net, it is not an improvement.** Three direct fabrications traded for two runs
+containing a worse kind: a word the candidate never uttered, repeated back to
+them as theirs. Distinct authored answers reached also fell, 11.1 to 9.8.
+
+**Recommendation: revert S2, keep S11.** The next thing to try is not a third
+wording of this block. It is whether `claims_to_verify` belongs in the live
+prompt at all — its job is to shape the blueprint's questions, and the seeds
+already carry that.
+
+**Also measured**
+
+| | before | after |
+| --- | --- | --- |
+| mechanism questions per opportunity | 16% | **20%** |
+| distinct authored answers reached, of 31 | 11.1  [9..14] | 9.8  [6..12] |
+| answers already given in that section | 56%  [45-61] | 58%  [50-67] |
+| distinct subjects per section | 2.7  [1..5] | 2.6  [1..6] |
+| sections on one subject | 5/60 | 6/60 |
+| let-go spoken | 3.1 | 2.1 |
+| coverage: partial / insufficient / sufficient | — | 30 / 24 / 6 of 60 |
+| `coverage_shortfall` set | 0/60 | 0/60 (unchanged, see AUDIT S5) |
+
+Held: the opening still greets by name, both dealbreakers still reach their
+owning sections, and no attribution traced to the indexed seed.
+
+**Files**
+
+- `backend/bot/brain/brain.py` — `apply_judgment` freezes a decided verdict.
+- `backend/bot/brain/prompting.py` — the two headings.
+- `backend/tests/test_blueprint_source.py` — repointed at the new heading, and
+  the negative sibling test with it, which would otherwise have gone vacuous.
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 695 passed, 22 skipped
+```
+
+## 2026-08-13 — A topic can end because the judge says it has enough
+
+**What**
+
+`_advance_reason` checked the ceiling fourth and the judge's verdict fifth. The
+ceiling is derived from the section's own allocation, so a section reached it at
+the moment it had spent everything it was given, and the verdict was consulted
+at a point where the only thing it could do was agree with what had already
+happened. Across roughly 320 stored competency sections the mechanism recorded 8
+firings, and the only shape that could produce one was a short low-weight
+competency whose judge answered before a four-turn ceiling arrived.
+
+Nothing about the judge changes. "Enough" was made explicit when the judge
+prompt was written. The check simply sat below one that always won.
+
+The order is now: hard stop, candidate disengaged, declined topic, **verdict**,
+ceiling, budget. The hard stop stays above because an interview out of time ends
+whatever the judge thinks, and both refusal branches stay above because a
+candidate declining is a fact about the person and must never be recorded as a
+topic that went well.
+
+**The floor moved with it, and that was not optional.** It was a bare
+`turns_spent < floor` guard sitting between the ceiling and the verdict. A
+verdict promoted above the ceiling without it could end a competency on its
+first answer. It is a condition on the verdict branch now. Every other branch
+reads as it did: the ceiling and the budget were already above the old guard, so
+nothing below the floor behaves differently.
+
+**Measured**
+
+Ten runs competent and three deflecting, `gpt-4.1-mini`, at 22 seconds a turn.
+The advance reason is not persisted anywhere, so it was recorded by patching
+`_advance` in a measurement script rather than in this file.
+
+**It fires, and beyond the one shape that could already produce it.**
+
+| | |
+| --- | --- |
+| competency sections ending on the verdict | **8 of 60 (13%)** |
+| ...on the two eight-turn competencies | applied_llm_depth 1/10, evaluation_reasoning 3/10 |
+| ...on the six-turn ones | client_communication 2/10, voice_audio_exposure 2/10 |
+| ...never | ml_service_deployment, python_ml_basics |
+| per interview | [1 0 1 0 0 1 3 0 2 0], mean 0.8 |
+| deflecting | **0 of 18**, every section at the ceiling |
+
+Seven of the eight genuinely shortened a topic; one fired on the turn the
+ceiling would have ended it anyway. 528 seconds were handed back across ten
+interviews, 66 a topic. Interview length did not move, 15.8 minutes against a
+configured 20 both before and after: the reclaimed time is not being spent
+elsewhere, it is simply not spent.
+
+| | rotation | + this |
+| --- | --- | --- |
+| turns with neither a seed nor a term | 109/382 (29%) | **100/380 (26%)** |
+| mechanism questions per opportunity | 15% | **18%** |
+| menu questions per opportunity | 35% | **28%** |
+| sections on one subject | 5/60 | **4/60** |
+| distinct answers reached, of 31 | 11.1  [6..15] | 10.7  [7..13] |
+| worst competency, distinct subjects | 2.3 | **2.5** |
+| unsupported attributions | 0.50  [0..1] | 0.30  [0..1] |
+| let-go spoken | 2.9 | 2.4 |
+| terms reaching the report, deflecting | 3.1 a run | 3.7 a run |
+
+**The result that stops this shipping.** Of the eight sections that ended
+because the judge said sufficient, **only two still say sufficient in the
+record**. Five say partial and one says insufficient.
+
+`_advance` queues a `section_end` judgment for the topic it is closing, and it
+does so *after* `_carry_claims_from` has copied that topic's claims into the
+carried list. The judge is then handed the section's own claims under "claims
+from earlier sections" and re-judges the identical transcript, and
+`apply_judgment` writes `section.coverage` with no check that the section is
+still open. The verdict that ended the topic is overwritten by a second opinion
+of the same words.
+
+The worst single case: run 7, client communication, ended on the verdict at the
+floor of 2 turns, and recorded **insufficient** with no shortfall flag. That
+candidate lost four turns of opportunity on this topic and the report will read
+it as a topic they failed. This defect predates the change and was harmless
+while nothing ended on a verdict.
+
+**What the report says about a topic that ended this way.** `coverage_shortfall`
+is not set, which is correct, because `_finalise` only sets it on `hard_stop` and
+`budget_exhausted`. But nothing marks the topic as complete either, and its
+coverage has been overwritten, so a short topic that had enough is
+indistinguishable from one that ran out of road. The reason belongs on
+`SectionOutcome`, and the overwrite has to be fixed before any of this is true.
+
+**Files**
+
+- `backend/bot/brain/brain.py` — `_advance_reason` reordered, floor folded into
+  the verdict branch.
+
+**Left undone**
+
+The coverage overwrite in `apply_judgment`, which is the blocker. The advance
+reason is still not recorded on the outcome. And the reclaimed 66 seconds a
+topic go nowhere.
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 689 passed, 22 skipped
+```
+
 ## 2026-08-13 — The judge is asked which terms the interview NEEDS, not which are undefined
 
 **What**

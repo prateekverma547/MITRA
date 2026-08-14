@@ -770,15 +770,52 @@ class InterviewBrain:
 
     def apply_judgment(self, judgment: Judgment) -> None:
         """Deliver a verdict. Safe to call late — or never."""
+        had_verdict = judgment.section_id in self._verdicts
         self._verdicts[judgment.section_id] = judgment
 
         section = self._section_by_id(judgment.section_id)
         if section is None:
             return
 
-        if judgment.coverage is not None:
+        # **A closed section keeps the verdict it closed on.**
+        #
+        # `_advance` queues one last `section_end` judgement for the topic it is
+        # leaving, and that judgement lands after the section is over. It used to
+        # overwrite `coverage`, which meant the verdict recorded for a section
+        # was never the verdict the brain acted on. Measured across ten runs: of
+        # 8 sections that ended BECAUSE the judge said `sufficient`, only 2 still
+        # said so afterwards. Five said `partial` and one said `insufficient` —
+        # including a section that ended at the two-turn floor, written up as a
+        # topic the candidate had failed rather than one that had enough.
+        #
+        # It answers differently to the same transcript because it is asked a
+        # different question: `_advance` runs `_carry_claims_from` first, so the
+        # section's own claims arrive labelled "claims from earlier sections".
+        # **Freezing the verdict does not fix that mislabelling** — it only stops
+        # it rewriting history. See `_advance`.
+        #
+        # Harmless until the verdict was promoted above the ceiling in
+        # `_advance_reason`; from that point a section could end on a verdict and
+        # then be recorded as the opposite.
+        #
+        # Everything else on a late judgement is still applied. Claims and
+        # contradictions are additive and a contradiction found at section end is
+        # worth having; only the verdict, and the sentence explaining it, are
+        # decided once.
+        #
+        # **"Closed" is not enough on its own, and the suite said so.** A `depth`
+        # judgement requested while a section was live can also land after the
+        # ceiling has moved us on, and that one carries the only reading anybody
+        # ever made of the topic — refusing it would lose the assessment
+        # entirely and leave the heuristic fallback in its place. So the rule is
+        # narrower: a closed section keeps a verdict it ALREADY HAS. A closed
+        # section that never got one still accepts a late reading, which is
+        # information rather than a rewrite, and is exactly what
+        # `test_late_judgment_for_a_finished_section_is_still_recorded` pins.
+        decided = section.ended_at is not None and had_verdict
+        if not decided and judgment.coverage is not None:
             section.coverage = judgment.coverage
-        if judgment.rationale:
+        if not decided and judgment.rationale:
             section.depth_rationale = judgment.rationale
 
         for claim in judgment.claims:
@@ -1174,20 +1211,48 @@ class InterviewBrain:
         ):
             return "declined_topic"
 
+        # **The verdict is checked BEFORE the ceiling, and that ordering is the
+        # whole of this rule.**
+        #
+        # It used to sit fifth, below the ceiling and the budget. The ceiling is
+        # derived from the section's own allocation, so a section reached it at
+        # the moment it had spent everything it was given, and the verdict was
+        # then consulted at a point where the only thing it could do was agree
+        # with what had already happened. Measured across roughly 320 stored
+        # competency sections, "sufficient" was recorded 8 times, and the only
+        # shape that could produce an early end was a short low-weight
+        # competency whose judge answered before a four-turn ceiling arrived.
+        #
+        # Nothing about the judge changes here. "Enough" was made explicit when
+        # the judge prompt was written; the check was simply below one that
+        # always won.
+        #
+        # **The floor moves with it, and that is not optional.** It used to be a
+        # bare `turns_spent < floor -> None` guard sitting above this check, and
+        # a verdict promoted above the ceiling without it could end a competency
+        # on its first answer. It is a condition on this branch now rather than
+        # a separate gate, which leaves every other branch reading exactly as it
+        # did: the ceiling and the budget were already above the old guard, so
+        # nothing below floor behaves differently.
+        #
+        # Above this, and staying above it: the hard stop, because an interview
+        # that is out of time ends whatever the judge thinks; and both refusal
+        # branches, because a candidate declining is a fact about the person and
+        # must not be read as a section that went well.
+        verdict = self._verdicts.get(section.id)
+        if (
+            section.turns_spent >= floor
+            and verdict
+            and verdict.coverage in (CoverageLevel.SUFFICIENT,)
+        ):
+            return "depth_reached"
+
         if section.turns_spent >= ceiling:
             return "ceiling"
 
         if section.elapsed(self._now) >= section.budget_seconds:
             return "budget_exhausted"
 
-        if section.turns_spent < floor:
-            return None
-
-        # Inside the band: a verdict rules if one has arrived, otherwise
-        # heuristics keep the section open. Never wait on the judge.
-        verdict = self._verdicts.get(section.id)
-        if verdict and verdict.coverage in (CoverageLevel.SUFFICIENT,):
-            return "depth_reached"
         return None
 
     def _advance(self, reason: str) -> None:
