@@ -15,7 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 from datetime import UTC, datetime
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response as FastAPIResponse, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response as FastAPIResponse, UploadFile, status
 from fastapi.responses import HTMLResponse, Response
 from loguru import logger
 from pydantic import BaseModel
@@ -862,6 +862,6 @@ async def refine_blueprint(candidate_id: str, request: RefineRequest) -> dict:
     }
 
 
-@app.get("/health")
+@app.get("/health", status_code=status.HTTP_200_OK)
 async def health() -> dict:
     return {"status": "ok"}
