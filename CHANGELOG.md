@@ -146,6 +146,119 @@ token bound, and the guard test running the wrong fixture.
 cd backend && uv run pytest -q -m "not llm"          # 695 passed, 22 skipped
 ```
 
+## 2026-08-14 — Five small things: a crash on "yes", a silent .env, lost section labels, a stale pill, and two unread fields
+
+### The clarification chat crashed when the employer agreed
+
+An employer replying "yes" to the summary got `Clarification model returned no
+reply text (got None).` in a 502, raw exception text with nothing to click.
+
+**Reproduced before fixing, and the cause is broader than the report.** Put at
+the point where the summary is confirmed, the blueprint model returned an empty
+`reply` with `done` true and a complete spec in **three of four** confirmations:
+"yes prepare it", "Yes." and "looks right" all did it, and only "yes" happened to
+produce prose. The wording is not what decides. The shape in the prompt shows
+`"done": false` and never says what to say once the conversation is over, so the
+model reasonably stops talking. The key is present and holds `""`.
+
+`reply` was checked before `done` and `spec` were looked at, so a completing turn
+with nothing to say threw away the spec that the whole conversation existed to
+produce.
+
+The check moved after the verdict. A completing turn with no reply now hands over
+the spec and says so in a sentence written here rather than asked for, because at
+that point the system is reporting its own state and a generated sentence could
+claim something about what the employer said. A turn mid-conversation with no
+reply is a dead turn rather than a dead end, and gets the same treatment a
+rejected spec already gets: an ordinary assistant message, the conversation
+continues, and the next attempt has it in its own history.
+
+The two tests that pinned the old behaviour asserted that it raised. The
+requirement was never that it raise, it was that the employer not see "None", and
+they now assert that.
+
+### A .env in the wrong folder failed silently
+
+`bot/config.py` loads dotenv from a path derived from its own location, so a
+`.env` in `backend/` is read by nothing. No warning, no log line, a 500 on first
+login, and twenty minutes to find.
+
+Three places are checked and only three: the repo root, because it is the one
+that works and its absence is worth saying out loud; `backend/`, because it is
+the working directory for `uv run` and every script here, so it is where a
+shell-completed path lands; and `backend/bot/`, because it is next to this file
+and is where somebody debugging this reaches next. Anywhere further is a guess,
+and a warning that fires on guesses trains people to ignore warnings.
+
+**Which file is loaded does not change.** Changing the path silently would break
+whatever is currently working on somebody else's machine.
+
+### Section labels were dropped when a transcript was saved
+
+The persisted transcript is built from the observer's STT frames, and
+`TranscriptObserver._append` wrote `speaker`, `text` and `at_seconds` and nothing
+else. `build_transcript` was already carrying `section_id` through; there was
+never one to carry. Every stored turn had it empty, so grouping stored turns by
+section returned one empty group.
+
+The observer now takes a zero-argument callable and asks it at append time. A
+callable rather than the brain itself, because the observer would otherwise
+import the brain to read one attribute and this file is full of Pipecat frames,
+which `bot/brain/` is not allowed to know about in either direction. None means
+no labelling, which is what the scripts still pass.
+
+**It does not change the stored shape.** `TranscriptTurn.section_id` already
+existed and is optional, so old records still load and the panel, the scorer and
+the comparison scripts read the same fields they did. What changes is that one
+of them stops being blind: `assess_questioning` skips turns with no section, so
+on the one real interview on the box it was computing over **0 interviewer turns
+instead of 22**. It reported `degraded: False` because it had nothing to look at,
+not because the interviewing was fine. The verdict on that particular interview
+does not change, but a real interview where the interviewer did repeat itself
+would have reported the same way.
+
+### The status pill said "plan generating" when the plan was ready
+
+Not a cache and not a stale poll. Blueprint generation is a BackgroundTask kicked
+off at CV upload, and the profile screen is rendered once and never again, so the
+pill stayed wrong until the row was clicked. The candidate detail view was the
+only screen that polled.
+
+The profile view polls while any candidate's plan is pending or generating, using
+the same ticket mechanism, so navigating away cancels it rather than redrawing
+over whatever was opened next.
+
+### Two report fields were populated and rendered nowhere
+
+`dealbreakers` now renders as a card covering every dealbreaker the employer
+named, with the three states given different weight because they are different
+kinds of fact: **observed** is a finding about the candidate, quoted and marked
+like a failure; **cleared** is reassurance, quoted and held to the same evidence
+standard, marked as settled rather than merely absent; **not reached** is a
+limitation of the interview, muted, unquoted, and it says in words that it is not
+a mark against the candidate. The wording comes from `as_sentence` on the
+contract so it lives in one place, the way the health banners do.
+
+Reports scored before the field existed fall back to the old observed-only card,
+because they are still in the database and still readable.
+
+`interview_duration_seconds` sits beside the generated-at line as "interview ran
+N min". A thin report reads differently when the interview was eleven minutes of
+a planned twenty, and that is the only question this number answers.
+
+**Files**
+
+- `backend/blueprint/clarify.py`, `backend/tests/test_clarify.py`
+- `backend/bot/config.py`
+- `backend/bot/observers.py`, `backend/bot/run_bot.py`
+- `frontend/admin/admin.js`
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 699 passed, 22 skipped
+```
+
 ## 2026-08-14 — The prompt bound is measured against every fixture, and raised to the edge of the evidence
 
 ### The test could not see the breach

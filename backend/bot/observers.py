@@ -406,8 +406,21 @@ class TranscriptObserver(_DedupObserver):
     Postgres; the capture points stay the same.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, section_id_now=None, **kwargs):
+        """`section_id_now` is asked which section is live, at append time.
+
+        **A callable rather than the brain itself.** The observer would
+        otherwise have to import the brain to read one attribute, and the two
+        have no other business with each other: this file is full of Pipecat
+        frames, which `bot/brain/` is not allowed to know about in either
+        direction. A zero-argument function is the whole of the contract, so a
+        test can pass `lambda: "alpha"` and a script can pass nothing.
+
+        None means no labelling, which is what every caller did before and what
+        the scripts still do.
+        """
         super().__init__(**kwargs)
+        self._section_id_now = section_id_now
         self._turns: list[dict] = []
         self._started_at = time.time()
         self._bot_buffer: list[str] = []
@@ -442,11 +455,27 @@ class TranscriptObserver(_DedupObserver):
             self._interviewer_has_spoken = True
 
     def _append(self, speaker: str, text: str):
+        # **Asked now, not reconstructed later.** The stored transcript is built
+        # from these frames rather than from the brain's own turn list, so
+        # `section_id` was absent on every persisted turn and a query grouping
+        # stored turns by section returned one empty group. The brain knows
+        # which section is live at the moment a frame arrives; nothing else can
+        # work it out afterwards, because the timestamps here and the section
+        # boundaries there are recorded against different clocks.
+        section_id = None
+        if self._section_id_now is not None:
+            try:
+                section_id = self._section_id_now()
+            except Exception as exc:  # noqa: BLE001
+                # A label is worth less than a transcript. This runs inside a
+                # frame handler on the live pipeline.
+                logger.warning(f"could not label a transcript turn with its section: {exc}")
         self._turns.append(
             {
                 "speaker": speaker,
                 "text": text,
                 "at_seconds": round(time.time() - self._started_at, 2),
+                "section_id": section_id,
             }
         )
 

@@ -389,6 +389,19 @@ async function viewProfile(jobId) {
     ${ready ? cvsCard(candidates) : ""}
   `;
 
+  // **A plan finishing does not redraw the list it is listed in.** Blueprint
+  // generation is a BackgroundTask kicked off at CV upload, so this screen is
+  // rendered once with "plan generating" and then never again: the pill stayed
+  // wrong until the row was clicked, because the candidate detail view is the
+  // only one that polls. Not a cache and not a stale poll — a state nobody
+  // refreshed.
+  //
+  // Same ticket mechanism the detail view uses, so navigating away cancels it
+  // rather than redrawing over whatever was opened next.
+  if (candidates.some((c) => ["pending", "generating"].includes(c.blueprint_status))) {
+    poll(2500);
+  }
+
   if (!ready) {
     document.getElementById("send").onclick = async () => {
       const text = document.getElementById("reply").value.trim();
@@ -978,6 +991,13 @@ function reportCard(iv) {
             : iv.feedback_generated_at
               ? `Generated ${when(iv.feedback_generated_at)}`
               : "Generated from the saved transcript"}
+          ${/* How long the interview actually ran, next to what the report cannot
+                tell you rather than on its own. A thin report reads differently
+                when the interview was eleven minutes of a planned twenty, and
+                that is the only question this number answers. */ ""}
+          ${!rebuilding && r.interview_duration_seconds
+            ? ` · interview ran ${Math.round(r.interview_duration_seconds / 60)} min`
+            : ""}
         </span>
         <button id="rescore" ${rebuilding ? "disabled" : ""}>Regenerate</button>
       </div>
@@ -985,14 +1005,7 @@ function reportCard(iv) {
 
     ${r.competency_scores.map(competencyCard).join("")}
 
-    ${r.red_flags_observed?.length ? `<div class="card">
-      <h3 style="margin-top:0">Dealbreakers observed</h3>
-      ${r.red_flags_observed.map((f) => `
-        <div class="turn">
-          <strong>${esc(f.description)}</strong>
-          ${f.evidence.map(quoteBlock).join("")}
-        </div>`).join("")}
-    </div>` : ""}
+    ${dealbreakerCard(r)}
 
     ${r.contradictions?.length ? `<div class="card">
       <h3 style="margin-top:0">Inconsistencies noted</h3>
@@ -1029,6 +1042,66 @@ function banner(health) {
   if (!health || !health.degraded || !health.as_sentence) return "";
   return `<div class="note" style="margin:14px 0 0">
     <strong>Read this first.</strong> ${esc(health.as_sentence)}</div>`;
+}
+
+/**
+ *  Every dealbreaker the employer named, and which of three the interview could
+ *  say about it.
+ *
+ *  `red_flags_observed` only ever held what fired, so silence meant "we asked
+ *  and they were fine" or "nobody looked" and a reader could not tell which.
+ *  Across 24 stored reports one dealbreaker fired in 10 and the other three
+ *  fired zero times, with nothing recording whether they were cleared or never
+ *  put.
+ *
+ *  The three states are given different weight on purpose, because they are
+ *  different kinds of fact:
+ *
+ *    observed     a finding about the candidate. Quoted, and marked like a
+ *                 failure, because that is what the employer said it was.
+ *    cleared      reassurance. Quoted too, held to the same evidence standard,
+ *                 and marked as settled rather than merely absent.
+ *    not reached  a limitation of the INTERVIEW. Muted, unquoted, and it says
+ *                 in words that it is not a mark against the candidate. The
+ *                 same distinction `questioning_health` exists for.
+ *
+ *  `as_sentence` comes from the contract so the wording lives in one place; the
+ *  panel used to compose its own copy of the recording-quality sentence and it
+ *  drifted three ways.
+ *
+ *  Falls back to the old card for reports scored before the field existed,
+ *  which are still in the database and still readable.
+ */
+function dealbreakerCard(r) {
+  if (!r.dealbreakers?.length) {
+    if (!r.red_flags_observed?.length) return "";
+    return `<div class="card">
+      <h3 style="margin-top:0">Dealbreakers observed</h3>
+      ${r.red_flags_observed.map((f) => `
+        <div class="turn">
+          <strong>${esc(f.description)}</strong>
+          ${f.evidence.map(quoteBlock).join("")}
+        </div>`).join("")}
+    </div>`;
+  }
+
+  const mark = { observed: "bad", cleared: "ok", not_reached: "warn" };
+  const label = { observed: "observed", cleared: "addressed", not_reached: "not reached" };
+
+  return `<div class="card">
+    <h3 style="margin-top:0">Dealbreakers</h3>
+    <p class="small muted" style="margin-top:0">Everything the employer said
+      would rule someone out, and what this interview could establish.</p>
+    ${r.dealbreakers.map((d) => `
+      <div class="turn">
+        <div class="spread" style="align-items:flex-start;gap:10px">
+          <strong ${d.state === "not_reached" ? `class="muted"` : ""}>${esc(d.dealbreaker)}</strong>
+          <span class="pill ${mark[d.state] || "warn"}">${esc(label[d.state] || d.state)}</span>
+        </div>
+        <div class="small muted" style="margin-top:4px">${esc(d.as_sentence)}</div>
+        ${(d.evidence || []).map(quoteBlock).join("")}
+      </div>`).join("")}
+  </div>`;
 }
 
 function competencyCard(s) {

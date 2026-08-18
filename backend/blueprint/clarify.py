@@ -182,6 +182,19 @@ class SpecRejected(ClarificationError):
     """
 
 
+#: Said when the model finishes the conversation without saying anything.
+#:
+#: Two stock sentences rather than a generated one: both are the system
+#: describing what it is doing, and neither can attribute a position to the
+#: employer. Kept short because they appear in a chat the employer is reading.
+_READY_TO_BUILD = (
+    "Thanks. I have everything I need, and I am preparing the interview plan now."
+)
+_LOST_THE_THREAD = (
+    "Sorry, I lost my thread there. Could you say that again?"
+)
+
+
 @dataclass
 class ClarificationChat:
     """Multi-turn Q&A that fills an EvaluationSpec."""
@@ -232,10 +245,6 @@ class ClarificationChat:
         # earlier emptiness check and printed "AI : None" to the employer.
         raw_reply = payload.get("reply")
         reply = raw_reply.strip() if isinstance(raw_reply, str) else ""
-        if not reply:
-            raise ClarificationError(
-                f"Clarification model returned no reply text (got {raw_reply!r})."
-            )
 
         done = bool(payload.get("done"))
         raw_spec = payload.get("spec")
@@ -246,7 +255,16 @@ class ClarificationChat:
         ]
 
         if not done or not raw_spec:
-            return ClarificationReply(reply=reply, done=False, inferred=inferred)
+            # **An empty reply mid-conversation is a dead turn, not a dead end.**
+            # It used to raise, and `main.py` turns a ClarificationError into a
+            # 502 carrying the exception text, so an employer saw
+            # "Clarification model returned no reply text (got None)." with
+            # nothing to click. Same treatment as a rejected spec: the
+            # conversation continues, and because this turn is stored like any
+            # other the next attempt has it in its own history.
+            return ClarificationReply(
+                reply=reply or _LOST_THE_THREAD, done=False, inferred=inferred
+            )
 
         try:
             spec = _build_spec(raw_spec)
@@ -260,7 +278,22 @@ class ClarificationChat:
             logger.info(f"clarification spec rejected, conversation continues: {rejected}")
             return ClarificationReply(reply=str(rejected), done=False, inferred=inferred)
 
-        return ClarificationReply(reply=reply, done=True, spec=spec, inferred=inferred)
+        # **The completing turn usually has nothing to say, and that is not an
+        # error.** Reproduced against the blueprint model: at the point the
+        # employer confirms the summary, three of four confirmations came back
+        # with `reply` as an empty string while `done` was true and the spec was
+        # complete. "yes", "Yes.", "looks right" and "yes prepare it" all do it;
+        # the wording is not what decides. The shape in the prompt shows
+        # `"done": false` and says nothing about what to say once the
+        # conversation is over, so the model reasonably stops talking.
+        #
+        # Written here rather than asked for, because it is the system reporting
+        # its own state. A sentence generated at this point could claim
+        # something about what the employer said, and the whole block above
+        # exists to stop exactly that.
+        return ClarificationReply(
+            reply=reply or _READY_TO_BUILD, done=True, spec=spec, inferred=inferred
+        )
 
 
 def _build_spec(raw: dict) -> EvaluationSpec:

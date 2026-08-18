@@ -9,11 +9,56 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
+from loguru import logger
 
 # Repo root: backend/bot/config.py -> backend/bot -> backend -> repo root
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-load_dotenv(REPO_ROOT / ".env", override=False)
+ENV_FILE = REPO_ROOT / ".env"
+
+load_dotenv(ENV_FILE, override=False)
+
+
+def _warn_about_ignored_env_files() -> None:
+    """Say so when a .env exists somewhere plausible and is not the one loaded.
+
+    **The failure it replaces was silence.** The path above is derived from this
+    file's own location, so a `.env` in `backend/` — which is where you would
+    naturally put it, and where the server is actually run from — is read by
+    nothing. No warning, no log line, just a 500 on first login and twenty
+    minutes finding out why.
+
+    Three places are checked, and only three. The repo root, because that is the
+    one that works and its absence is worth saying out loud. `backend/`, because
+    it is the working directory for `uv run` and for every script in this repo,
+    so it is where a shell-completed path lands. And `backend/bot/`, because it
+    is next to this file and next to `.env.example`'s nearest relative, which is
+    where somebody debugging this reaches next. Anywhere further afield is a
+    guess, and a warning that fires on guesses trains people to ignore warnings.
+
+    **Which file is loaded does not change here.** Changing the path silently
+    would break whatever is currently working on somebody else's machine, and
+    this is a diagnostic, not a migration.
+    """
+    ignored = [
+        candidate
+        for candidate in (REPO_ROOT / "backend" / ".env", Path(__file__).with_name(".env"))
+        if candidate.is_file()
+    ]
+    if ignored:
+        for path in ignored:
+            logger.warning(
+                f"Ignoring {path}: configuration is only read from {ENV_FILE}. "
+                f"Move it, or copy the keys across."
+            )
+    elif not ENV_FILE.is_file():
+        logger.warning(
+            f"No .env at {ENV_FILE}. Copy .env.example there and fill it in; "
+            f"nothing else on this machine is read."
+        )
+
+
+_warn_about_ignored_env_files()
 
 
 class MissingConfig(RuntimeError):

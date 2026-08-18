@@ -32,20 +32,66 @@ def chat_returning(payload: str) -> ClarificationChat:
     return chat
 
 
-async def test_null_reply_is_rejected_rather_than_printed_as_None():
+#: The smallest spec that satisfies the contract, for turns that complete.
+VALID_SPEC = {
+    "role_title": "Senior PM",
+    "seniority": "Senior",
+    "experience_expectation": "10+ years",
+    "duration_minutes": 40,
+    "competencies": [
+        {"id": "a", "name": "A", "description": "a", "weight": 0.6},
+        {"id": "b", "name": "B", "description": "b", "weight": 0.4},
+    ],
+}
+
+
+async def test_null_reply_becomes_a_turn_the_employer_can_answer():
     """`str(None)` is the truthy string "None", which once reached the employer
-    as a message reading literally "AI : None"."""
+    as a message reading literally "AI : None".
+
+    **It used to raise, and that was the other half of the same problem.**
+    `main.py` turns a ClarificationError into a 502 carrying the exception text,
+    so the employer traded "AI : None" for "Clarification model returned no
+    reply text (got None)." and a dead conversation. The requirement was never
+    that this raise; it was that the employer see something they can act on.
+    """
     chat = chat_returning('{"reply": null, "done": false}')
 
-    with pytest.raises(ClarificationError, match="no reply text"):
-        await chat.next_turn(jd_text="a job", history=[])
+    turn = await chat.next_turn(jd_text="a job", history=[])
+
+    assert turn.done is False
+    assert "None" not in turn.reply
+    assert turn.reply.strip()
 
 
-async def test_missing_reply_is_rejected():
+async def test_missing_reply_mid_conversation_does_not_end_the_conversation():
     chat = chat_returning('{"done": false}')
 
-    with pytest.raises(ClarificationError, match="no reply text"):
-        await chat.next_turn(jd_text="a job", history=[])
+    turn = await chat.next_turn(jd_text="a job", history=[])
+
+    assert turn.done is False
+    assert turn.reply.strip()
+
+
+async def test_a_completing_turn_with_no_reply_still_hands_over_the_spec():
+    """The failure an employer actually hit, from a one-word confirmation.
+
+    Reproduced against the blueprint model at the point the summary is
+    confirmed: "yes", "Yes.", "looks right" and "yes prepare it" returned an
+    empty `reply` with `done` true and a complete spec in three cases of four.
+    The prompt's shape shows `"done": false` and never says what to say once the
+    conversation is over, so the model stops talking — and the spec, which is
+    the whole point of the conversation, was thrown away with the error.
+    """
+    chat = chat_returning(
+        '{"reply": "", "done": true, "spec": ' + json.dumps(VALID_SPEC) + "}"
+    )
+
+    turn = await chat.next_turn(jd_text="a job", history=[])
+
+    assert turn.done is True
+    assert turn.spec is not None
+    assert turn.reply.strip()
 
 
 async def test_inferred_items_are_carried_through():

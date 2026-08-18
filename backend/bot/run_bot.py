@@ -327,7 +327,8 @@ async def run_bot(
     # processor: it has to see BotStoppedSpeakingFrame, which comes from the
     # output transport, and a processor upstream of that never does.
     ender = SessionEnder(brain=brain if use_brain else None, session_id=session_id)
-    transcript_observer = TranscriptObserver()
+    # The brain is the only thing that knows which section a turn belongs to.
+    transcript_observer = TranscriptObserver(section_id_now=lambda: brain.current_section.id)
     # Transcript turns are stamped from the moment the observer above was built,
     # and the recording starts a little later, once the bot is in the room. The
     # difference between the two is what lets a click on a transcript line seek
