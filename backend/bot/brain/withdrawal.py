@@ -177,3 +177,84 @@ def declines_stopping(text: str) -> bool:
     """True when they would rather carry on."""
     normalised = _normalise(text)
     return any(form in _DECLINED_TO_STOP for form in _stripped(normalised))
+
+
+
+#: A verb meaning "leave this one and carry on", and the small objects it may
+#: take. The object list is deliberately short: it, this, that, one, question.
+#: Anything bigger is not a question, it is the interview.
+_SKIP_VERB = r"(?:skip|pass\s+on|come\s+back\s+to)"
+_SKIP_OBJECT = r"(?:it|this|that|these|those|one|ones|question|questions|topic|part|ahead)"
+
+#: Asking to leave the *question*, not the interview.
+#:
+#: Searched inside the utterance, like the explicit stop patterns and for the
+#: same measured reason: nobody says it as the whole of a sentence. The live one
+#: was "right now, I don't know the answer of this question. Can we skip it?".
+#:
+#: Every pattern requires a **frame that addresses the person asking** — a
+#: request ("can we skip"), a preference ("I'd rather skip"), a suggestion
+#: ("let's move on"), or a bare imperative at the start of the sentence. Without
+#: that frame, "we had to skip that release because of budget" is a skip
+#: request, which is the same false positive the tool description already warns
+#: the model about with "we had to end that project early".
+_SKIP_PATTERNS = [
+    rf"\b(?:can|could|shall|should|may)\s+(?:we|i)\s+(?:just\s+|please\s+)*{_SKIP_VERB}\b",
+    r"\b(?:can|could|shall|should)\s+(?:we|i)\s+(?:just\s+|please\s+)*move\s+on\b",
+    rf"\b(?:lets|let\s+us)\s+(?:just\s+)*(?:{_SKIP_VERB}\b|move\s+on\b)",
+    rf"\bi(?:d|\s+would)\s+(?:rather|like\s+to)\s+(?:just\s+)*{_SKIP_VERB}\b",
+    rf"\bi\s+want\s+to\s+(?:just\s+)*{_SKIP_VERB}\b",
+    r"\b(?:next|another)\s+question\b",
+]
+
+#: The same, said as an instruction with nothing in front of it. Anchored,
+#: because "skip it" is a skip and "I skipped it and it broke" is an answer.
+_SKIP_IMPERATIVE = rf"^(?:just\s+|please\s+)*{_SKIP_VERB}\s+{_SKIP_OBJECT}\b"
+
+
+def asked_to_skip_question(text: str) -> bool:
+    """True when they want to leave this question and carry on with the rest.
+
+    **This is a negative guard on the stop path, which is why it lives here.**
+    A skip and a withdrawal share a shape — "can we skip it" against "can we end
+    it" — and the live interview `int_7e31aaff4ab2` shows what that costs. The
+    candidate said "right now, I don't know the answer of this question. Can we
+    skip it?" and was asked whether they would like to end the interview.
+
+    None of the detectors in this repo fired. `classify` returned NONE: no end
+    verb, and the soft phrases have to be the whole utterance. `looks_like_refusal`
+    holds "skip it" but matches only whole utterances too. `classify_repair`
+    returned NONE. What fired was the interviewer model's own `end_interview`
+    tool, reading a request to move on as a request to leave.
+
+    **Everything here fails towards still hearing a withdrawal.** Four guards,
+    and any one of them is enough to refuse to call something a skip:
+
+    - naming the interview, call, session, conversation or meeting at all;
+    - any end verb anywhere in the utterance;
+    - any soft stop phrase anywhere in it, searched rather than matched whole,
+      which is stricter here than `classify` is deliberately;
+    - any stop intent `classify` itself can see.
+
+    So "I'd like to skip the rest of this interview", "skip this and let's stop"
+    and "I'm done, next question" all return False and take the ordinary stop
+    path. The cost of that is a candidate being asked one question they would
+    rather have skipped. The cost of the opposite is a candidate who wanted to
+    leave being kept in the room, and those are not the same size of mistake.
+    """
+    normalised = _normalise(text)
+    if not normalised:
+        return False
+    if re.search(_THIS_THING, normalised):
+        return False
+    if re.search(rf"\b{_END_VERB}\b", normalised):
+        return False
+    if any(phrase in normalised for phrase in _SOFT_PHRASES):
+        return False
+    if classify(text) is not StopIntent.NONE:
+        return False
+
+    forms = _stripped(normalised)
+    if any(re.search(_SKIP_IMPERATIVE, form) for form in forms):
+        return True
+    return any(re.search(pattern, normalised) for pattern in _SKIP_PATTERNS)

@@ -33,7 +33,7 @@ from loguru import logger
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 
-from bot.brain.withdrawal import asked_explicitly
+from bot.brain.withdrawal import asked_explicitly, asked_to_skip_question
 
 END_INTERVIEW = "end_interview"
 
@@ -54,6 +54,11 @@ _END_INTERVIEW_SCHEMA = FunctionSchema(
         "interview: 'we had to end that project early', 'I want to stop doing "
         "manual QA', 'I'd rather not answer that one', 'I don't want to talk "
         "about my last employer'. Declining a question is not leaving.\n\n"
+        "Do NOT call it when they want to leave THIS QUESTION and carry on: "
+        "'can we skip it', 'I don't know this one, can we skip it', 'can we "
+        "move on', 'next question', 'can we come back to that'. Asking to skip "
+        "a question is asking for a different question, not for the interview "
+        "to end. Acknowledge it and ask something else.\n\n"
         "If you are unsure whether they mean this interview or something they "
         "are describing, do not call it. Ask them."
     ),
@@ -113,10 +118,50 @@ def register(llm, brain, on_called=None) -> None:
         # agree the interview ends at once. When only the model does, they are
         # asked once, which costs a sentence if it was wrong and an interview
         # if it was not.
-        corroborated = asked_explicitly(said) or asked_explicitly(
-            brain.last_candidate_text()
-        )
+        heard = brain.last_candidate_text()
+        corroborated = asked_explicitly(said) or asked_explicitly(heard)
         act_now = explicit and corroborated
+
+        # **A third outcome, because the offer itself was the bug.** Live in
+        # `int_7e31aaff4ab2` the candidate said "right now, I don't know the
+        # answer of this question. Can we skip it?" and was asked whether they
+        # would like to end the interview. The corroboration above worked — the
+        # patterns disagreed, so nothing ended — but being asked to confirm
+        # leaving is not a free sentence when all they wanted was a different
+        # question.
+        #
+        # Only ever consulted when the patterns did NOT corroborate, so the
+        # explicit path above is untouched: a candidate who plainly asks to stop
+        # still stops here, immediately, exactly as before. And
+        # `asked_to_skip_question` refuses to call anything a skip if it names
+        # the interview, carries an end verb, or holds any stop phrasing at all.
+        skipping = not corroborated and (
+            asked_to_skip_question(said) or asked_to_skip_question(heard)
+        )
+
+        if skipping:
+            # The declined turn is recorded by `observe`, which sees the same
+            # utterance through `asked_to_skip_question` and routes it to the
+            # refusal machinery: acknowledge, and ask something else on the same
+            # topic. Nothing to do here but decline to offer to stop.
+            logger.info(
+                f"interviewer called {END_INTERVIEW} on a request to skip a "
+                f"question -> treating as a declined question | said={said!r}"
+            )
+            if on_called is not None:
+                on_called(said=said, explicit=explicit)
+            await params.result_callback(
+                {
+                    "ended": False,
+                    "next": (
+                        "They asked to skip that question, not to end the "
+                        "interview. Say that is fine in one short sentence, then "
+                        "ask a different question. Do not ask why, and do not "
+                        "ask whether they want to stop."
+                    ),
+                }
+            )
+            return
 
         logger.info(
             f"interviewer called {END_INTERVIEW}: model_explicit={explicit} "

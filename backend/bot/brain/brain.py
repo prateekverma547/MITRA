@@ -35,6 +35,7 @@ from bot.brain.refusal import is_substantive, looks_like_refusal
 from bot.brain.repair import RepairKind, classify as classify_repair
 from bot.brain.withdrawal import (
     StopIntent,
+    asked_to_skip_question,
     classify as classify_stop,
     confirms_stopping,
     declines_stopping,
@@ -549,7 +550,18 @@ class InterviewBrain:
             continuation = not self._awaiting_answer
             self._awaiting_answer = False
 
-            refused = looks_like_refusal(candidate_text)
+            # **A skip is a declined question, and that machinery already
+            # exists.** `looks_like_refusal` holds "skip it" but matches whole
+            # utterances only, so the live one — "right now, I don't know the
+            # answer of this question. Can we skip it?" — was read as an answer
+            # here and as a withdrawal by the interviewer model's tool. Routing
+            # it here costs nothing new: one declined turn, and the refusal
+            # block already says acknowledge briefly and ask a different, easier
+            # question on the same topic, never re-ask the declined one. That is
+            # what a skip should get.
+            refused = looks_like_refusal(candidate_text) or asked_to_skip_question(
+                candidate_text
+            )
 
             if not continuation:
                 section.turns_spent += 1

@@ -249,6 +249,17 @@ def _question_words(text: str) -> set[str]:
     return {w for w in _words(text) if len(w) > 3 and w not in _WEAK}
 
 
+def _verbatim(text: str) -> str:
+    """The question as spoken, for comparing one against another exactly.
+
+    Every word kept, unlike `_question_words`. That function exists to decide
+    whether two differently-worded questions are asking the same thing, and it
+    throws away the words that would tell them apart. Here the whole point is
+    that nothing was thrown away and the sentences are identical.
+    """
+    return " ".join(_words(text))
+
+
 def assess_questioning(transcript: Transcript) -> QuestioningHealth:
     """Did the interviewer ask the same thing more than once?
 
@@ -273,13 +284,20 @@ def assess_questioning(transcript: Transcript) -> QuestioningHealth:
         by_section.setdefault(turn.section_id, []).append(turn.text)
 
     repeated = 0
+    verbatim = 0
     narrow: list[str] = []
     total = sum(len(qs) for qs in by_section.values())
 
     for section_id, questions in by_section.items():
         asked: list[set[str]] = []
+        said: set[str] = set()
         here = 0
         for text in questions:
+            exact = _verbatim(text)
+            if exact and exact in said:
+                verbatim += 1
+            said.add(exact)
+
             words = _question_words(text)
             if words and any(
                 len(words & earlier) / len(words | earlier) >= REPEAT_OVERLAP
@@ -295,5 +313,6 @@ def assess_questioning(transcript: Transcript) -> QuestioningHealth:
     return QuestioningHealth(
         interviewer_turns=total,
         repeated_questions=repeated,
+        verbatim_repeats=verbatim,
         narrow_sections=sorted(narrow),
     )

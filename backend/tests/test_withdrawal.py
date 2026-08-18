@@ -17,6 +17,7 @@ from bot.brain.brain import InterviewBrain
 from bot.brain.withdrawal import (
     StopIntent,
     asked_explicitly,
+    asked_to_skip_question,
     classify,
     confirms_stopping,
     declines_stopping,
@@ -317,3 +318,79 @@ def test_searching_inside_the_utterance_still_does_not_eat_answers(said):
     """Every pattern names the interview, the call or the session. Ending a
     project is not ending an interview."""
     assert classify(said) is StopIntent.NONE
+
+
+# -- a skip is not a withdrawal ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        # The live one, from `int_7e31aaff4ab2` at 234s.
+        "right now, I don't know the answer of this question. Can we skip it?",
+        "can we skip this one",
+        "Skip this question, please.",
+        "skip it",
+        "I do not know this one, next question",
+        "can we move on",
+        "let's move on",
+        "let's skip this",
+        "pass on this one",
+        "can we come back to this?",
+        "I would rather skip this one",
+        "I want to skip this",
+    ],
+)
+def test_asking_to_skip_a_question_is_recognised(said):
+    assert asked_to_skip_question(said) is True
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        # Every one of these must reach the stop path instead. This is the
+        # direction the whole function is biased in.
+        "can we skip the rest of this interview",
+        "skip this and let's stop",
+        "I'm done, next question",
+        "that's enough, next question",
+        "just end the interview",
+        "I want to stop",
+        "can we wrap this up",
+        "I need to jump off",
+    ],
+)
+def test_anything_that_could_be_leaving_is_not_a_skip(said):
+    """Four guards, any one of which is enough: naming the interview, an end
+    verb, a soft stop phrase anywhere in the utterance, or any intent `classify`
+    itself can see.
+
+    Being wrong here costs a candidate one question they wanted to skip. Being
+    wrong the other way keeps somebody in a room they asked to leave.
+    """
+    assert asked_to_skip_question(said) is False
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        # The same false positive the tool description warns the model about,
+        # in the skip vocabulary: describing work, not asking for anything.
+        "we had to skip that release because of budget",
+        "I skipped the migration step and it broke",
+        "we moved on to a different vendor after that",
+        "no",
+        "I don't know",
+    ],
+)
+def test_describing_skipping_something_is_an_answer(said):
+    assert asked_to_skip_question(said) is False
+
+
+def test_a_skip_and_a_withdrawal_are_told_apart_by_the_object():
+    """"Can we skip it" and "can we end it" share a shape. What separates them
+    is what "it" is, and only one of them is allowed to be the interview."""
+    assert asked_to_skip_question("can we skip it") is True
+    assert wants_to_stop("can we skip it") is False
+    assert asked_to_skip_question("can we end this interview") is False
+    assert wants_to_stop("can we end this interview") is True

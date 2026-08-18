@@ -12,6 +12,178 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-18 — Asking to skip a question was read as asking to leave, and a word-for-word repeat read as healthy
+
+**What**
+
+Two bugs from the live interview `int_7e31aaff4ab2`, both seen with a person
+talking.
+
+A candidate said "right now, I don't know the answer of this question. Can we
+skip it?" and was asked "Okay. Would you like to end the interview here or
+continue?". They said they would like to continue and the interview carried on,
+so nothing was lost, but somebody who wanted a different question was asked
+whether they wanted to leave.
+
+Separately, the interviewer asked "You said session management. Walk me through
+how that actually works." at 511 seconds, got a real answer, and asked the same
+sentence again at 542 seconds. The candidate began their reply "So as I said".
+The report on that interview said the questioning was healthy.
+
+**Why the withdrawal check fired, and it was not the withdrawal check**
+
+Nothing in this repo matched that sentence. `classify` returns NONE: there is no
+end verb in it, "skip" is not one, and the soft phrases have to be the whole
+utterance. `looks_like_refusal` holds "skip it" but is whole-utterance too.
+`classify_repair` returns NONE. All four were checked against the exact stored
+text before anything was changed.
+
+What fired was the interviewer model's own `end_interview` tool. The corroboration
+gate then did its job — the patterns disagreed, so `act_now` was False and the
+interview did not end — and what the candidate heard was the one offer that the
+two-tier design permits, `OFFER_TO_STOP`, word for word.
+
+So the bug is that the design has two outcomes where it needs three. End, and ask
+whether to end. There was nowhere for "they want a different question" to go.
+
+**A skip now goes where declining a question already goes.** `asked_to_skip_question`
+in `bot/brain/withdrawal.py` recognises a request to leave this question, and it
+is used in two places: `bot/tools.py` declines to offer to stop, and `observe`
+counts a declined turn. The refusal block already says acknowledge briefly, ask a
+different and easier question on the same topic, and never re-ask the declined
+one, which is exactly what a skip should get. No new machinery.
+
+**Everything in it fails towards still hearing a withdrawal**, which is the thing
+it must not trade away. Four guards, any one of which is enough to refuse to call
+something a skip: naming the interview, call, session, conversation or meeting;
+any end verb anywhere in the utterance; any soft stop phrase anywhere in it,
+searched rather than matched whole, which is stricter here than `classify` is;
+and any intent `classify` itself can see. So "can we skip the rest of this
+interview", "skip this and let's stop" and "I'm done, next question" all return
+False and take the ordinary stop path. And the veto is only ever consulted when
+the patterns did **not** corroborate, so the explicit path is untouched: a
+candidate who plainly asks to stop still stops at once. Being wrong here costs
+one unwanted question; being wrong the other way keeps somebody in a room they
+asked to leave.
+
+Every pattern also requires a frame that addresses the interviewer — a request, a
+preference, a suggestion, or a bare imperative at the start of the sentence — so
+"we had to skip that release because of budget" is an answer. That is the same
+false positive the tool description already warns the model about with "we had to
+end that project early", in the skip vocabulary.
+
+**Why `degraded` did not fire, and it is the design rather than the threshold**
+
+`repeated_questions` counted 2 against a floor of `max(3, 10% of 34)` = 3. One
+short. Lowering the floor is the wrong fix and would break the signal: the other
+repeat in that interview is a 0.70-overlap re-ask after a let-go, a legitimately
+tightened version of an earlier question, and a signal that fires on those fires
+on every competent interview.
+
+The rate test measures a *similarity*, and a threshold is exactly right for that.
+A word-for-word repeat is a different claim. It is not a rephrase, not a
+narrowing and not a follow-up, because there is nothing left for it to be — the
+candidate has already answered these exact words. So `verbatim_repeats` is
+counted separately and **one is enough on its own**, with no rate applied. It
+stays rare by construction rather than by threshold.
+
+**Nothing at interview time saw the second ask, and the counter cannot.**
+`assess_questioning` runs after the fact, from the stored transcript, and reports.
+The counter saw both turns and correctly scored one repeat event; the first ask is
+the original. What allowed the second is `MAX_TERM_ATTEMPTS = 2`, which lets a
+term be probed twice on purpose — the comment on it describes the second as an
+escalation before the let-go. Nothing enforces that the escalation is *worded*
+differently, and the model was handed the same term with the same framing and
+produced the same sentence. That cap is deliberately not touched here.
+
+**Measured**
+
+`questioning_health` recomputed across all 18 stored runs, before and after:
+
+| | degraded |
+| --- | --- |
+| before | 0 of 18 |
+| after | 1 of 18 |
+
+**The honest sample is 1, not 18.** 17 of the 18 stored runs have no `section_id`
+on any interviewer turn, so `assess_questioning` skips every turn in them and
+`interviewer_turns` is 0. The observer seam that carries the section onto a turn
+is recent. A "before" of zero is not evidence the signal is quiet; on 17 of these
+runs it is blind, and that is worth knowing separately from this change.
+
+So the same exact-match test was also run interview-wide, ignoring section scope,
+which is strictly wider than what shipped:
+
+| | runs with an identical interviewer question |
+| --- | --- |
+| interview-wide, all 18 runs | 2 |
+
+`int_c9e7d27bd702` said "Okay, so you used session management, concurrency." three
+times, at 84s, 120s and 174s. It is the same defect and the same term. Both
+firings are true positives, and the section-scoped test that shipped can only fire
+on a subset of these two. It does not fire on every interview.
+
+**The tool description moved a little, and did not reproduce the live failure.**
+`scripts/tool_call_check.py` gained the five skip phrasings, and the description
+was run with and without the new block, `gpt-4.1-mini`, temperature 0.2:
+
+| | should end | skip requests wrongly ended | other false positives |
+| --- | --- | --- | --- |
+| without the skip block | 10/10 | 1 of 5 | 2 of 6 |
+| with it | 10/10 | 0 of 5 | 2 of 6 |
+
+The one it fixed was "Can we move on?". **It did not fix the live sentence,
+because the harness never broke on it**: one turn of context is not eleven minutes
+of context, and the model left "right now, I don't know the answer of this
+question. Can we skip it?" alone in both arms. The prose is therefore not what
+this fix rests on. The veto in `handle_end_interview` is, and it fires on what the
+candidate said regardless of why the model reached for the tool. Same lesson as
+everywhere else in this file: structural beats prose.
+
+**Nothing regressed.** Recall on the ten phrasings a pattern list will never
+contain stayed at 10/10 in both arms. The two pre-existing false positives are
+unchanged and untouched.
+
+**Files**
+
+- `backend/bot/brain/withdrawal.py` — `asked_to_skip_question`, its patterns and
+  its four guards.
+- `backend/bot/tools.py` — the third outcome in `handle_end_interview`; the skip
+  case added to the tool description.
+- `backend/bot/brain/brain.py` — a skip counts as a declined turn in `observe`.
+- `backend/feedback/health.py` — `_verbatim`, and `verbatim_repeats` counted per
+  section.
+- `backend/shared/contracts.py` — `QuestioningHealth.verbatim_repeats`, the second
+  test in `degraded`, and the sentence saying so.
+- `backend/scripts/tool_call_check.py` — five skip phrasings in `SHOULD_NOT_END`.
+- Tests in `test_withdrawal.py`, `test_tools.py`, `test_brain.py`, `test_health.py`.
+
+**Left undone**
+
+**The identical second probe is not prevented, only reported.** Preventing it
+means either lowering `MAX_TERM_ATTEMPTS` or making the second probe read as an
+escalation rather than a repeat, and both are changes to the term caps and the
+ramp. Worth doing, and not done here.
+
+**`narrow_sections` still needs three asks of the same thing in one topic** to
+list a section, because `here > 1` counts repeat events rather than questions.
+That is consistent with its own docstring, it is why the field was empty on this
+interview, and it is left alone: widening it would make the signal fire more often
+for no new information, and `degraded` no longer depends on it.
+
+**No scripted candidate was added.** The stored transcript covers the trigger and
+is quoted directly in the tests; the model-facing question is whether the tool is
+called, which `scripts/tool_call_check.py` already exists to answer and now does.
+
+**Confirm**
+
+```
+cd backend && uv run pytest -q                       # 741 passed
+PYTHONPATH=. uv run python scripts/tool_call_check.py # 10/10, skips all ok
+```
+
+---
+
 ## 2026-08-14 — The interviewer is given the dealbreakers it can ask about, and ignores them
 
 **What**

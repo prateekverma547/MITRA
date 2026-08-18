@@ -525,3 +525,91 @@ def test_repeated_questioning_caps_the_recommendation():
     assert _recommendation("strong_evidence_for", scores, spec, questioning=narrow) == (
         RecommendationSignal.LIMITED_EVIDENCE
     )
+
+
+def test_one_word_for_word_repeat_is_enough_on_its_own():
+    """From `int_7e31aaff4ab2`, and the reason `verbatim_repeats` exists.
+
+    The interviewer asked "You said session management. Walk me through how that
+    actually works." at 511s, got a real answer, and asked the same sentence
+    again at 542s. The candidate began their reply "So as I said". The rate test
+    scored the interview 2 repeats against a floor of 3, read healthy, and the
+    report was free to describe the answers as repetitive.
+
+    A rate is right for a similarity and wrong for an identity. There is nothing
+    a word-for-word repeat can be except the interview going nowhere.
+    """
+    from feedback.health import assess_questioning
+
+    same = "You said session management. Walk me through how that actually works."
+    health = assess_questioning(_iv([
+        "Tell me about deploying that service.",
+        "What did the rollout look like?",
+        same,
+        "How did you monitor it?",
+        same,
+        "What broke first?",
+        "Who else was on that?",
+        "What would you do differently?",
+    ]))
+
+    assert health.verbatim_repeats == 1
+    # Below the rate test's floor of 3, which is the whole point.
+    assert health.repeated_questions < 3
+    assert health.degraded
+    assert "word for word" in health.as_sentence
+
+
+def test_a_tightened_re_ask_is_not_a_verbatim_repeat():
+    """Also from `int_7e31aaff4ab2`, at 0.70 overlap, and legitimate.
+
+    The interviewer let a term go and asked a narrower version of the same
+    question. That is what the rate test is for and what a threshold is for. If
+    the exact test caught this it would fire on every competent interview.
+    """
+    from feedback.health import assess_questioning
+
+    health = assess_questioning(_iv([
+        "That's alright, let's leave that one there for now. Tell me about a "
+        "time when your evaluation metrics showed your model underperformed. "
+        "What did you do?",
+        "Tell me about a time your evaluation metrics showed your model "
+        "underperformed and what you did next.",
+    ]))
+
+    assert health.verbatim_repeats == 0
+    assert health.repeated_questions == 1
+    assert not health.degraded
+
+
+def test_punctuation_alone_does_not_make_two_questions_different():
+    from feedback.health import assess_questioning
+
+    health = assess_questioning(_iv([
+        "Walk me through how that actually works.",
+        "Walk me through how that actually works?",
+    ]))
+
+    assert health.verbatim_repeats == 1
+    assert health.degraded
+
+
+def test_the_same_sentence_in_two_topics_is_not_a_verbatim_repeat():
+    """The same scoping the rate test already has, for the same reason: a
+    technical topic asking what a term means and a communication topic asking
+    how they explained it are two questions."""
+    from feedback.health import assess_questioning
+    from shared.contracts import Speaker, Transcript, TranscriptTurn
+
+    same = "You said session management. Walk me through how that actually works."
+    transcript = Transcript(
+        interview_id="q",
+        turns=[
+            TranscriptTurn(index=0, speaker=Speaker.INTERVIEWER, text=same,
+                           at_seconds=1.0, section_id="ml_service_deployment"),
+            TranscriptTurn(index=1, speaker=Speaker.INTERVIEWER, text=same,
+                           at_seconds=2.0, section_id="client_communication"),
+        ],
+    )
+
+    assert assess_questioning(transcript).verbatim_repeats == 0

@@ -816,6 +816,10 @@ class QuestioningHealth(BaseModel):
     #: Questions that ask again what an earlier question in the same topic
     #: already asked.
     repeated_questions: int = 0
+    #: Questions repeated word for word inside one topic. A subset of the above,
+    #: counted separately because it is a different kind of evidence: see
+    #: `degraded`.
+    verbatim_repeats: int = 0
     #: Topics where that happened more than once.
     narrow_sections: list[str] = Field(default_factory=list)
 
@@ -834,9 +838,33 @@ class QuestioningHealth(BaseModel):
         reports called the candidate repetitive, and 5.6% where they did not.
         One repeat is a follow-up circling back. A tenth of the interview is the
         interview going nowhere.
+
+        **Two tests, because a word-for-word repeat is not a matter of degree.**
+        The rate test above measures a *similarity*, and similarity is exactly
+        the thing a threshold is for: at 0.6 overlap "tell me about a time your
+        metrics showed the model underperformed, what did you do" following "tell
+        me about a time when your evaluation metrics showed your model
+        underperformed" is a legitimate tightening after a let-go, and counting
+        one of those as a fault would fire on every interview.
+
+        An identical sentence is a different claim entirely. It is not a
+        rephrase, not a narrowing and not a follow-up, because there is nothing
+        for it to be: the candidate has already answered these exact words. Live
+        in `int_7e31aaff4ab2` the interviewer asked "You said session management.
+        Walk me through how that actually works." at 511s, got a real answer, and
+        asked the same sentence again at 542s; the candidate began their reply
+        "So as I said". The rate test scored that interview 2 repeats against a
+        floor of 3 and read healthy, so the report was free to call the answers
+        repetitive.
+
+        So one verbatim repeat is enough on its own, and no rate is applied to
+        it. It stays rare by construction rather than by threshold: across the
+        18 stored runs it occurs once, in that interview.
         """
         if self.interviewer_turns == 0:
             return False
+        if self.verbatim_repeats >= 1:
+            return True
         return self.repeated_questions >= max(3, round(0.10 * self.interviewer_turns))
 
     @computed_field
@@ -853,6 +881,11 @@ class QuestioningHealth(BaseModel):
         where = ""
         if self.narrow_sections:
             where = f" It happened most in: {', '.join(self.narrow_sections)}."
+        if self.verbatim_repeats:
+            where = (
+                f" {self.verbatim_repeats} of them repeated an earlier question "
+                f"word for word.{where}"
+            )
         return (
             f"The interviewer repeated itself: {self.repeated_questions} of "
             f"{self.interviewer_turns} questions asked again what an earlier "

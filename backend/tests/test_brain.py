@@ -1363,6 +1363,61 @@ def _offer(brain, term="session management"):
     return brain.plan_turn().system_instruction
 
 
+def test_a_probe_about_a_different_open_term_is_still_counted():
+    """The count used to stop at the term the prompt named.
+
+    The judge returns a list of open terms and only one is offered. A question
+    naming any of the others is a probe that happened: measured across ten runs,
+    89 probe-shaped questions against 67 counted, and ten of sixty sections
+    holding more probes than the allowance permits. The allowance was bounding
+    one term's appearances rather than term probing.
+    """
+    from shared.contracts import UnexplainedTerm
+
+    brain = InterviewBrain(tiny_blueprint(), config=BrainConfig(floor_turns=1, ceiling_turns=8))
+    finish_opening(brain)
+    section = brain.current_section
+    brain.apply_judgment(
+        Judgment(
+            section_id=section.id,
+            coverage=CoverageLevel.PARTIAL,
+            unexplained_terms=[
+                UnexplainedTerm(term="session management", said="we used session management",
+                                section_id=section.id, turn_index=1),
+                UnexplainedTerm(term="idempotency keys", said="and idempotency keys",
+                                section_id=section.id, turn_index=1),
+            ],
+        )
+    )
+    brain.plan_turn()  # offers the first term
+
+    brain.observe(
+        bot_text="You said idempotency keys. Walk me through how that actually works?",
+        candidate_text="They stop a repeat going through twice.",
+    )
+
+    assert section.term_raises.get("idempotency keys") == 1
+    assert section.term_probes_spent == 1
+
+
+def test_a_deictic_question_is_never_charged_to_a_term_that_was_not_offered():
+    """Naming carries across terms; pointing does not.
+
+    "How does that actually work" refers to whatever was just offered. Charging
+    it to some other open term would be a guess, in a mechanism whose whole
+    design is to fail towards not counting.
+    """
+    from bot.brain.terms import asked_about
+
+    assert asked_about("session management", "How does that actually work?")
+    assert not asked_about(
+        "session management", "How does that actually work?", allow_deictic=False
+    )
+    assert asked_about(
+        "session management", "What does session management do?", allow_deictic=False
+    )
+
+
 def test_a_term_offered_but_not_asked_about_is_not_counted():
     """The bug. The model is handed a term and may ask something else."""
     brain = InterviewBrain(load_blueprint())
@@ -1945,11 +2000,24 @@ def test_a_sections_first_ask_never_claims_it_asked_before():
     assert brain.current_section.id != first, "never reached a second competency"
 
     # A new section, and nobody has asked here. No judgement has arrived for it
-    # either, so `_open_terms` still holds the previous section's objects: the
-    # exact state that produced the falsehood.
+    # either.
+    #
+    # **This used to assert that the term block still rendered here**, with the
+    # first-ask wording, about the previous section's term. That was the carry
+    # itself written down as desired behaviour: `_open_terms` held the last
+    # section's list, so the interviewer opened a new topic by asking about the
+    # old one's word. Measured before it was cleared, all 13 first-turn probes in
+    # a ten-run arm named a term the candidate had not said in that section.
+    #
+    # The falsehood this test was written for is unchanged and asserted first. It
+    # now cannot occur at all here, because there is no term to escalate about.
     prompt = brain.plan_turn().system_instruction
     assert "twice now" not in prompt, "claimed a history this section does not have"
-    assert "Walk me through how that actually works" in prompt
+    assert "MANDATORY: THIS TURN'S QUESTION IS ALREADY DECIDED" not in prompt, (
+        "asked about a term carried from the previous section"
+    )
+    # The section's own opener has the turn instead.
+    assert "START THIS TOPIC BROADLY" in prompt
 
 
 def test_the_interview_has_a_total_term_budget_under_the_per_section_one():
@@ -2019,3 +2087,64 @@ def test_the_interview_has_a_total_term_budget_under_the_per_section_one():
     )
     assert brain.unexplained_terms() == [], "kept probing past the interview budget"
     assert "MANDATORY: THIS TURN" not in brain.plan_turn().system_instruction
+
+
+# -- asking to skip a question -----------------------------------------------
+
+
+def test_asking_to_skip_a_question_is_a_declined_turn():
+    """From `int_7e31aaff4ab2` at 234s, and the machinery already existed.
+
+    `looks_like_refusal` holds "skip it" but matches whole utterances only, so
+    "right now, I don't know the answer of this question. Can we skip it?" was
+    read here as an ordinary answer — while the interviewer model's own
+    `end_interview` tool read it as somebody leaving. Routing it to the refusal
+    path costs nothing new: the block already says acknowledge briefly, ask a
+    different and easier question on the same topic, and never re-ask the
+    declined one. That is what a skip should get.
+    """
+    brain = InterviewBrain(load_blueprint())
+    brain.observe(bot_text="How did you size that model for the GPU budget?")
+    section = brain.current_section
+
+    brain.observe(
+        candidate_text=(
+            "right now, I don't know the answer of this question. Can we skip it?"
+        )
+    )
+
+    assert section.declined_turns == 1
+    assert brain.withdrew is False
+    assert brain.current_section is section
+
+
+def test_a_skip_does_not_end_the_interview():
+    """Four consecutive declines still close it gracefully, which is the
+    existing rule and the right one. One does not."""
+    brain = InterviewBrain(load_blueprint())
+    brain.observe(bot_text="How did you size that model for the GPU budget?")
+
+    brain.observe(candidate_text="can we skip this one")
+
+    assert brain.withdrew is False
+    assert brain.is_finished is False
+    assert "THEY HAVE ASKED TO STOP" not in brain.plan_turn().system_instruction
+
+
+def test_answering_after_a_skip_still_counts_as_an_answer():
+    """The fragment rule that keeps "No." followed by a real answer from being
+    read as a refusal has to hold for a skip too."""
+    brain = InterviewBrain(load_blueprint())
+    brain.observe(bot_text="How did you size that model for the GPU budget?")
+    section = brain.current_section
+
+    brain.observe(candidate_text="can we skip this one")
+    brain.observe(
+        candidate_text=(
+            "Actually, we sized it against the 80GB card, so the 24B in bf16 "
+            "left about twelve gigabytes of headroom for the KV cache."
+        )
+    )
+
+    assert section.declined_turns == 0
+    assert section.substantive_turns == 1
