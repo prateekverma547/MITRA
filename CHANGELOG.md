@@ -12,6 +12,154 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-18 — The term counter could not see the term block's own probe
+
+**What**
+
+From the live interview `int_7e31aaff4ab2`:
+
+```
+[511s] You said session management. Walk me through how that actually works.
+[542s] You said session management. Walk me through how that actually works.
+```
+
+Word for word, 31 seconds apart, with a real answer in between. The candidate
+began their second reply "So as I said".
+
+A second probe about a term is supposed to escalate. The wording for that exists
+and already differs — "You have said X twice now. What does it actually do?" —
+and it fired correctly on `KL divergence` in this same interview. It did not fire
+here, and the reason turned out to be one line.
+
+**Why the escalation did not fire**
+
+`asked_about` rejected anything without a question mark. That test was added to
+stop the spoken acknowledgement ("Okay. So you used session management.") from
+burning an attempt, and its comment reasoned that `VOICE_RULES` guarantees a
+question mark in every real reply.
+
+**The term block itself breaks that guarantee.** Its first rung supplies "You
+said X. Walk me through how that actually works." — an imperative, ending in a
+full stop, because that is how somebody says it out loud. So the brain's own
+supplied probe failed the brain's own counter. Measured across ten runs before
+the fix: 62 first-rung probes, 60 of them with no question mark anywhere.
+
+With the count stuck at zero, `times_raised` stayed at zero, and
+`_render_unexplained_term` rendered the first rung again. The second probe was
+the first probe.
+
+**`KL divergence` reached the escalation by accident**, which is what made the
+two look like different mechanisms in the same interview:
+
+```
+[292s] You said KL divergence. Walk me through how that actually works.   not counted
+[326s] How do you actually calculate that distance mathematically in KL     counted
+       divergence?
+[358s] You have said KL divergence twice now. What does it actually do?     counted
+```
+
+The rung-one probe was invisible there too. What counted was an intervening
+question the model composed itself, which happened to name the term and happened
+to carry a question mark. Same mechanism, different luck.
+
+**The whole test suite wrote around it.** Every existing test phrases the probe
+"Walk me through how that works**?**" with a question mark production never
+emits. That is why nine attempts at this subsystem never found it: the fixture
+disagreed with the prompt, and the fixture is what was being read.
+
+**What changed**
+
+`_asks_for_something` in `bot/brain/terms.py`. A question mark still counts; so
+does a sentence opening with an imperative that requests an explanation — walk me
+through, talk me through, tell me, explain, describe, help me understand.
+Sentence-initial only, so "he asked me to explain the retry logic" is still a
+report rather than a request, and the acknowledgement is still not an ask.
+
+**The counter was fixed rather than the rung, and that ordering matters.** The
+alternative was to render the escalated wording on the second *offer* instead of
+the second ask. That reintroduces the exact falsehood this module exists to
+prevent — telling somebody "you have said X twice now" when they were asked once,
+which happened 29 times across six runs and is written up two entries above. The
+count has to stay the authority for the sentence to be true. Fixing the count
+fixes the rung; loosening the rung would not have fixed the count.
+
+**Measured**
+
+Ten competent runs a side, `gpt-4.1-mini`, 22 seconds a turn.
+
+| | before | after | instrument |
+| --- | --- | --- | --- |
+| verbatim repeated questions | **8**  [1 0 0 1 0 1 0 0 2 3] | **0**  [0 0 0 0 0 0 0 0 0 0] | `feedback.health._verbatim`, production |
+| probes actually asked | 86  [10 7 9 5 9 11 8 8 7 12] | 69  [8 7 7 6 6 6 8 8 6 7] | the block's four supplied sentences, scratchpad |
+| — first rung / escalated | 67 / 19 | 43 / 26 | as above |
+| probes counted | 53  [4 5 4 5 8 6 7 3 5 6] | 76  [8 8 6 8 8 8 8 6 8 8] | `Section.term_probes_spent`, production state |
+| sections over the allowance | 0 | 0 | as above |
+| mechanism questions | 70/382 = 18% | 47/378 = **12%** | `compare_models._probe_shape`, 19 cues |
+| let-gos spoken | 21  [2 3 2 2 2 3 3 2 1 1] | 30  [3 2 3 2 3 3 3 4 3 4] | the let-go block's phrasing, scratchpad |
+| `questioning_health` degraded | 5 of 10 | 0 of 10 | `assess_questioning`, production |
+| unsupported attributions | 7  [2 2 0 0 0 0 0 0 0 3] | 4  [0 0 0 1 1 1 0 1 0 0] | "you said X" against prior candidate words, scratchpad |
+| distinct subjects per section | 5.05 | 5.11 | 0.4 word-overlap grouping, scratchpad proxy |
+
+**Verbatim repeats went to zero and stayed there on every run.** Six of the
+eight before were first-rung term probes, which is what this fixes. The other two
+were an echo turn and a seed question repeated in one section; neither is a term
+probe and neither recurred, but nothing here would have stopped them.
+
+**The probe count moved, and it was told not to. Read what moved.** Probes
+*counted* rose 53 to 76 because the counter can now see them. Probes *asked* fell
+86 to 69, because `MAX_TERM_PROBES_PER_INTERVIEW` is 8 and it now actually binds:
+after the fix nine of ten runs spend the full 8, where before they recorded 3 to
+8 while asking 5 to 12. The budget was being under-charged by roughly a third,
+so probing ran past its allowance without any counter showing it.
+
+**Mechanism questions fell from 18% to 12%, and that is on the must-not-regress
+list.** It is downstream of the same thing: 17 fewer probes are asked, so fewer
+mechanism questions are asked. It is still well clear of the 5% this feature was
+built against, but it moved in the wrong direction and it should not be read as
+noise — the per-run counts went from 4-11 to 2-8.
+
+**Deflection still holds**, checked separately because the competent candidate
+does not exercise it. Three deflecting runs on the fixed code: 4 terms reach the
+report in each, 4 let-gos spoken in each, no verbatim repeats, and 12 of 24 term
+renders were the escalated rung — against 21 of 155 on the competent arm before
+the fix. A candidate who dodges now reliably gets the second question rather than
+the first one twice, which is what the escalation was written for.
+
+**The remedy is a cap, and the cap was not in scope.** `MAX_TERM_PROBES_PER_INTERVIEW`
+was set to 8 against a counter that was undercounting by about a third, so 8 buys
+materially fewer real probes now than it did when the number was chosen. Restoring
+the previous volume means raising it. That is a change to a cap's value and was
+explicitly out of scope for this change, so it is flagged and not done.
+
+**Files**
+
+- `backend/bot/brain/terms.py` — `_ASK_IMPERATIVES`, `_asks_for_something`, and the
+  guard in `asked_about` that used to test for a question mark alone.
+- `backend/tests/test_brain.py` — four tests, written with the wording production
+  actually emits.
+
+**Left undone**
+
+**The first rung still contradicts `VOICE_RULES`**, which tells the model its
+whole reply contains exactly one question mark while the block hands it a sentence
+with none. The model follows the block, which is why 60 of 62 probes had no
+question mark. Harmless now that the counter reads both forms, and not changed
+here because altering the supplied wording changes what the interviewer says and
+would confound the next measurement of this subsystem.
+
+**Nothing was done about the second probe's content beyond the rung that already
+exists.** Naming what the first answer left out would need the judge to say which
+of "restated it" or "explained part of it" happened, and the judge was out of
+scope.
+
+**Confirm**
+
+```
+cd backend && uv run pytest -q
+```
+
+---
+
 ## 2026-08-18 — Asking to skip a question was read as asking to leave, and a word-for-word repeat read as healthy
 
 **What**

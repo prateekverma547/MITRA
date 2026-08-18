@@ -2148,3 +2148,85 @@ def test_answering_after_a_skip_still_counts_as_an_answer():
 
     assert section.declined_turns == 0
     assert section.substantive_turns == 1
+
+
+# -- the block's own probe has to count --------------------------------------
+
+#: Exactly what `_render_unexplained_term` supplies on the first rung, and what
+#: the model says back. No question mark, because it is an imperative.
+FIRST_RUNG = "You said session management. Walk me through how that actually works."
+
+
+def test_the_blocks_own_first_ask_is_counted():
+    """**The bug, and every test above wrote around it.**
+
+    Each of them phrased the probe "Walk me through how that works?" with a
+    question mark. Production never emits one there: the block supplies an
+    imperative ending in a full stop, and `asked_about` required a question
+    mark, so the brain could not see its own probe.
+
+    Live in `int_7e31aaff4ab2` that sentence was asked at 511s and again word
+    for word at 542s. Neither counted, the raise count stayed at zero, and the
+    escalated wording could never render.
+    """
+    from bot.brain.terms import asked_about
+
+    assert asked_about("session management", FIRST_RUNG)
+    assert asked_about("session management", FIRST_RUNG, allow_deictic=False)
+
+
+def test_a_statement_is_still_not_an_ask():
+    """The case the question-mark test was added for, which still holds."""
+    from bot.brain.terms import asked_about
+
+    assert not asked_about("session management", "Okay. So you used session management.")
+    assert not asked_about("session management", "Okay, session management. Right.")
+    # Reporting that somebody else asked is not asking.
+    assert not asked_about(
+        "session management", "He asked me to explain session management to the client."
+    )
+
+
+def test_the_second_probe_of_a_term_asks_something_else():
+    """The failure this fixes, end to end.
+
+    First rung asks how it works. Second rung says it has been asked once and
+    asks what it does. Before the count was fixed the second rung could not
+    render, so the second probe was the first probe again.
+    """
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    first = _offer(brain)
+    assert "Walk me through how that actually works" in first
+    assert "twice now" not in first
+
+    brain.observe(
+        bot_text=FIRST_RUNG,
+        candidate_text="The session management manages those people per sessions.",
+    )
+
+    second = _offer(brain)
+    assert "twice now" in second
+    assert "What does it actually do" in second
+
+
+def test_the_escalation_still_needs_a_real_ask_behind_it():
+    """Unchanged, and the reason the count stays the authority.
+
+    Rendering the second rung on the second *offer* instead would say "you have
+    said X twice now" to somebody asked once, which is the falsehood this whole
+    file exists to prevent. Fixing the counter fixes the rung; loosening the
+    rung would not have fixed the counter.
+    """
+    brain = InterviewBrain(load_blueprint())
+    finish_opening(brain)
+
+    for _ in range(2):
+        _offer(brain)
+        brain.observe(
+            bot_text="What did you decide not to build that year?",
+            candidate_text="The session management manages those people per sessions.",
+        )
+
+    assert "twice now" not in _offer(brain)

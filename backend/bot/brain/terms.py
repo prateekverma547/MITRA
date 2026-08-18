@@ -29,6 +29,14 @@ about something without naming it:
 The second is only read as an ask because it is only ever checked when a term
 was put in front of the model on that turn, and the block it was given supplies
 almost exactly that sentence. Out of that context it would mean nothing.
+
+**An ask does not have to end in a question mark, and requiring one broke the
+first rung.** The block's own opening wording is "You said X. Walk me through
+how that actually works." — an imperative, ending in a full stop, because that
+is how somebody says it out loud. The punctuation test below was written to
+reject the spoken acknowledgement ("Okay. So you used session management.") and
+rejected this too, so the brain's own supplied probe failed the brain's own
+counter. See `_asks_for_something`.
 """
 
 import re
@@ -63,6 +71,48 @@ _WEAK = {
     "system", "systems", "platform", "layer", "approach", "process", "thing",
     "that", "this", "it", "your", "our", "we", "you", "used", "using", "use",
 }
+
+
+#: Imperatives that request an explanation. A sentence opening with one of these
+#: is asking for something, whatever it ends in.
+#:
+#: **Sentence-initial only, and that is what keeps it honest.** "Walk me through
+#: how that works" asks; "he asked me to explain the retry logic" reports. The
+#: same list read anywhere in the utterance would count the second, which is the
+#: direction this module refuses to fail in.
+_ASK_IMPERATIVES = (
+    "walk me through",
+    "talk me through",
+    "tell me",
+    "explain",
+    "describe",
+    "help me understand",
+    "give me a sense of",
+)
+
+
+def _asks_for_something(question: str) -> bool:
+    """Whether the utterance requests anything at all.
+
+    A question mark is the obvious form. An imperative is the other one, and the
+    term block hands the model an imperative on the first rung, so this file
+    could not see its own probes: measured live in `int_7e31aaff4ab2`, "You said
+    session management. Walk me through how that actually works." was asked at
+    511s and again word for word at 542s, and neither was counted. With the
+    count stuck at zero the escalated wording could never render, so the second
+    ask was the first ask again.
+
+    Statements are still not asks. "Okay. So you used session management." opens
+    no sentence with a request and carries no question mark, which is the case
+    the punctuation test was added for and which still holds.
+    """
+    if "?" in (question or ""):
+        return True
+    for sentence in re.split(r"[.!?]", (question or "").lower()):
+        stripped = " ".join(sentence.split())
+        if stripped.startswith(_ASK_IMPERATIVES):
+            return True
+    return False
 
 
 def _words(text: str) -> list[str]:
@@ -111,9 +161,13 @@ def asked_about(term: str, question: str, *, allow_deictic: bool = True) -> bool
     # candidate's own term back at them ("Okay. So you used session
     # management."), which matches every word test below and is not a question.
     # Counting it burned an attempt without anything having been put to the
-    # candidate. VOICE_RULES requires exactly one question mark in a real reply,
-    # so requiring one here is the same rule read from the other end.
-    if "?" not in question:
+    # candidate.
+    #
+    # This used to test for a question mark alone, which also rejected every
+    # probe the term block itself supplies: its first rung is an imperative and
+    # ends in a full stop. `_asks_for_something` accepts both forms and still
+    # rejects the acknowledgement.
+    if not _asks_for_something(question):
         return False
 
     asked = set(map(_singularish, _words(question)))
