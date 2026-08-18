@@ -146,6 +146,90 @@ token bound, and the guard test running the wrong fixture.
 cd backend && uv run pytest -q -m "not llm"          # 695 passed, 22 skipped
 ```
 
+## 2026-08-14 — The interview screen becomes two halves: the interviewer, and you
+
+The call screen was a small orb centred on a dark page with a 148px self-view
+tucked in the corner. It is now split: the interviewer on the left, the
+candidate's own camera on the right.
+
+**Layout only.** Not one line of the call's behaviour changed. Every element the
+script reaches for kept its id, and the diff contains no JavaScript: 37 selectors
+checked against the markup, none missing.
+
+**The left half.** The orb at `clamp(150px, 24vh, 280px)`, the speaking label
+under it, the hint, and the captions below that.
+
+**Making a graphic read as a participant rather than a spinner.** This is the
+part that needed thinking about, because the interviewer has no camera and half a
+screen of shape can easily read as a page still loading.
+
+Nothing rotates and nothing travels. Rotation is the language of loading, and a
+shape going round in circles at this size would say "still thinking" for forty
+minutes. The orb breathes instead: a 6 second, 1.8 percent scale cycle that reads
+as alive and idle, the way somebody sitting still is obviously still there.
+
+Speaking is a different KIND of motion rather than more of the same. The breathe
+stops, the border takes the live colour, a soft halo appears, and a second ring
+expands out of the edge in time with the turn. The change is legible across a
+room and cannot be confused with the idle state. The words carry it too: the
+label already said "{{BOT_NAME}} is speaking" against "Listening", and it now
+sits under something big enough to look at.
+
+`prefers-reduced-motion` turns all of it off and leaves a static scale step,
+because the motion is decoration and the words carry the same fact.
+
+**The captions.** Given half a screen the constraint stops being width and
+becomes reading comfort. Line length is capped at 62 characters rather than 640
+pixels, because a character measure stays readable when the font grows and a
+pixel one does not. Text goes 16px to 18px, line height 1.5 to 1.65. The panel
+keeps a floor of 8.5em so a one line question does not make the layout jump, and
+a ceiling of `min(42vh, 400px)`, roughly double what it was: the point of
+captions here is re-reading a question WHILE answering it, and a candidate who
+has to scroll mid-answer has lost the thing this exists to give them.
+
+The timing is untouched, and it is the reason this page has captions at all: the
+current turn only, cleared when the interviewer next STARTS speaking rather than
+when it stops.
+
+**The right half, and what it is not.** The camera is inset in its own frame with
+space around it, not bled to the edges. That is a judgement about what it is for:
+nothing watches this video and nothing scores it, and it exists so somebody can
+see their camera is on and pointing at them. Full bleed would give it the weight
+of a thing being examined. It carries no name badge and no pin control, which is
+most of what makes a video tile look like a meeting.
+
+The frame is always drawn, with a quiet line inside it, so a candidate who never
+granted the camera sees a considered empty panel rather than half a screen of
+nothing.
+
+**Not a meeting app**, which a two panel layout could easily become. There is no
+participant grid: a grid implies tiles of the same kind and the same standing,
+and there is only one person here. The two halves are deliberately not matching
+rectangles, one being a composition of a shape and words and the other a single
+video. No toolbar was added; the three controls that existed stay where they
+were. No branding on the stage.
+
+**On a phone.** Two columns do not fit, and forcing them would take the screen
+away from the captions, which is where they matter most, because a candidate on a
+phone is the one most likely to have rough audio. Below 900px the split
+collapses to one column, the orb gives up height, and the self-view returns to
+being the small corner tile it has always been. The captions keep the full width
+and a `min(38vh, 260px)` panel, still larger than the 150px they had.
+
+The frame is hidden with `display: contents` rather than `display: none`, because
+a fixed-position element inside a `display: none` parent is not rendered at all
+and hiding the frame outright would take the self-view with it.
+
+**Files**
+
+- `frontend/candidate/index.html`
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 699 passed, 22 skipped
+```
+
 ## 2026-08-14 — Five small things: a crash on "yes", a silent .env, lost section labels, a stale pill, and two unread fields
 
 ### The clarification chat crashed when the employer agreed
