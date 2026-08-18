@@ -998,6 +998,35 @@ def _render_depth_ramp(turns_spent: int) -> str:
     below a bulleted list of the other questions to ask. It now forbids the
     alternative instead of preferring the right one.
 
+    **It no longer nominates terms, and that is F2 from the follow-up audit.**
+    Stages one and two used to say "that term IS your question" and supply the
+    term block's own sentence. That made the ramp a fourth mandatory block,
+    outside the arbitration the other three share, doing the term block's job
+    with none of its accounting: no raise count, no per-section allowance, no
+    interview budget, no let-go.
+
+    Read from the ten-run arm rather than argued from the code. Of 85
+    probe-shaped questions, 33 fell at turns one and two where the ramp
+    nominated, and 22 of those named a term the judge had open anyway, so the
+    term block would have asked them. The ramp's unique contribution was the
+    remaining **11**: probes about terms the judge never flagged as unexplained.
+
+    That is what settled the shape. The alternative was to let the ramp keep
+    nominating and spend the same allowance, which preserves more but sanctions
+    the wrong thing: the judge is the authority on what went unexplained, and a
+    ramp nomination is a second opinion with no evidence behind it. Giving it
+    budget would spend a candidate's patience on terms the judge did not think
+    needed explaining.
+
+    **The stage-three prohibition was half wrong and the half is gone.** It said
+    "Do not unpack another, and do not ask again about anything you have already
+    asked about here", and was measured violated on a quarter of the turns it
+    governs. Most of that was not disobedience: 27 of the 40 probes at those
+    turns name a term the judge had open, which is the term block firing, and
+    the term block is mandatory and rendered after this one. The prohibition was
+    contradicting a block that outranks it. The anti-repetition half is true and
+    stays.
+
     **The hard part was a closed menu of four, and none of the four fits a term
     the candidate never explained.** Measured over the six substantial
     interviews in `interviewer.db`, all with a candidate answering in confident
@@ -1037,11 +1066,8 @@ a long one here makes them all long.
 Do not ask a new question, and do not move to any question listed below,
 however well one fits.
 
-If they named a technique or system without saying what it does, that term is
-your question. Say something close to this:
-  "You said you used X. Walk me through how that actually works."
-
-Otherwise go one layer in: what they personally decided, why, and what happened.
+Go one layer into what they just said: what they personally decided, why, and
+what happened.
 
 """
     if turns_spent == 2:
@@ -1049,17 +1075,8 @@ Otherwise go one layer in: what they personally decided, why, and what happened.
 NOW GET TO THE HARD PART
 Ask ONE demanding question, never a list.
 
-FIRST: did their last answer name a technique or system without saying what it
-does? If so, that term IS your question. Do not ask for its trade-off, its
-metric or the bet behind it. Those accept the term as given, and you do not yet
-know there is anything behind it.
-
-Say something close to this:
-  "You said you used X. Walk me through how that actually works."
-
-Only if everything is already explained, pick ONE instead: the trade-off they
-made, the thing that went wrong, a decision they would defend, or a number and
-how it was measured.
+Pick ONE: the trade-off they made, the thing that went wrong, a decision they
+would defend, or a number and how it was measured.
 
 """
 
@@ -1070,8 +1087,7 @@ how it was measured.
 NOW GET TO THE HARD PART
 Ask ONE demanding question, never a list.
 
-You have already unpacked a term on this topic. Do not unpack another, and do
-not ask again about anything you have already asked about here.
+Do not ask again about anything you have already asked about here.
 
 This turn, ask for {wanted}
 

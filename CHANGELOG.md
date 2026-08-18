@@ -146,6 +146,359 @@ token bound, and the guard test running the wrong fixture.
 cd backend && uv run pytest -q -m "not llm"          # 695 passed, 22 skipped
 ```
 
+## 2026-08-14 — A section's open terms belong to that section, and the budget was never the scarce thing
+
+`_open_terms` is assigned only in `apply_judgment`, and only for the section
+being judged, so at a new section's first turn it still held the previous
+section's list. That is the carry that let one term take a fresh allowance in
+section after section, and it is why an earlier attempt to change which term
+gets picked was reverted as inert: the selection rule could not fire at the
+boundary because the list it sorted was a section out of date.
+
+It is cleared when the section advances. No new state; a list is emptied.
+
+**Measured before choosing, and the evidence was one-sided.** Of the 13 probes
+that fell on a section's first turn in the previous arm, **13 named a term the
+candidate had not said in that section**. `ml_service_deployment` opened with
+"You said prompt-level rules. Walk me through how that actually works", carried
+from `applied_llm_depth`. Not one was a legitimate "you said this here".
+
+**What has the turn now** is the section's own broadest seed question, under the
+ramp's "START THIS TOPIC BROADLY, ask the widest version of it". The term block
+firing at turn zero was fighting that instruction directly.
+
+**Cross-section probing is delayed, not lost.** The judge re-reads each section
+and re-nominates from its transcript, so a term the candidate uses again here
+comes back with a judgement behind it. What goes is asking about a word they have
+not said in this topic, which is what made "you said X" false. The authored
+cross-section material was never in this list anyway: it is in the seeds, which
+say things like "how did you communicate the limitations of the language ID
+prototype to stakeholders".
+
+**Measured**
+
+Ten runs, competent, `gpt-4.1-mini`, at 22 seconds, against the F2 arm.
+
+Instruments, stated so the two arms are known to match: probe-shaped is a
+two-sentence detector; counted is the brain's own log line; mechanism is
+`probe_mechanism`, nineteen cues plus an echo; subjects, answers and attributions
+are `measure.py`; repeats are exact string equality, within a section and across
+two different sections. Every figure below is the same instrument on both arms.
+**Probe-shaped and mechanism are not comparable to each other** and are not read
+against each other here.
+
+| | F2 | this |
+| --- | --- | --- |
+| **probes on a section's first turn** | 13 | **0** |
+| **cross-boundary repeats** | 8 | **2** |
+| probe-shaped questions | 73  [4..10] | 70  [5..9] |
+| counted by the brain | 76  [0..8] | **65**  [0..8] |
+| probes per interview | [0,6,7,7,8,8,8,8,8,8] | [0,2,4,5,7,7,8,8,8,8] |
+| runs reaching the budget of 8 | 7 | **5** |
+| sections exceeding the allowance | 6/60 | 4/60 |
+| let-gos spoken | 15 | **19** |
+| mechanism questions per opportunity | 18%  [10..27] | **22%**  [15..35] |
+| distinct subjects per section | 2.9  [1..5] | 2.9  [1..6] |
+| sections on one subject | 4/60 | 3/60 |
+| distinct authored answers reached, of 31 | 10.9  [7..14] | **11.8**  [9..14] |
+| answers already given in that section | 51% | 53% |
+| within-section repeats | 5 | 5 |
+| unsupported attributions | 0.30 | 0.20 |
+
+**Predictions against actuals, and three of six were wrong**
+
+| predicted | actual | |
+| --- | --- | --- |
+| first-turn probes 13 to near zero | **0** | right |
+| cross-boundary repeats fall | **8 to 2** | right |
+| exceedance unchanged at 6/60 | 4/60 | roughly right |
+| counted should not move | **76 to 65** | **wrong** |
+| subjects per section rise | 2.9 to 2.9 | **wrong** |
+| mechanism roughly flat | **18% to 22%** | **wrong, favourably** |
+
+**Where the model was wrong, and it is the useful part.**
+
+The prediction that counted would hold rested on a claim made explicitly: the
+budget of 8 binds in most runs, so allowance freed at turn zero gets spent later
+in the same section. It was not spent. Counted fell by 11 against 13 probes
+removed, and runs reaching the budget went from 7 to 5.
+
+**So the binding constraint was never the budget. It is the supply of nominated
+terms, and the carried list was inflating that supply.** Every previous
+measurement that showed runs hitting 8 was reading a number propped up by terms
+borrowed from earlier sections. With the borrowing gone, five runs of ten never
+reach the budget at all and the spread runs from 2 to 8 rather than 6 to 8. Three
+changes have now been reasoned about as though the budget were the scarce
+resource; it was not, and the audit's own account of the caps inherits that error.
+
+Mechanism rising was not predicted by anyone and has a clean explanation. A
+first-turn probe cannot count as a mechanism question, because `_probe_shape`
+skips a turn with no preceding answer in the section, and at turn zero there is
+none. So thirteen probes moved out of a position where they could never register
+and the section instead opens on its seed, gets a substantive answer, and the
+follow-ups that echo it are exactly what the signal counts. Fewer sanctioned
+probes, more mechanism questions, better placed.
+
+Subjects per section not moving says the carried term was not what suppressed
+subject diversity. That remains unexplained and is not this change.
+
+**Held.** Mechanism rose rather than fell, well clear of the 3 to 5 percent
+probing-off floor. The let-go is still spoken and more often, 19 against 15.
+Sections over the allowance improved. Deflection on the F2 arm, completed over
+all three runs this time rather than two: 24 probes, 6 let-gos, and 4, 1 and 4
+terms reaching the report against 4, 4 and 2 in an older arm.
+
+**Files**
+
+- `backend/bot/brain/brain.py` — `_open_terms` and `_offered_term` cleared on
+  advance.
+- `backend/tests/test_brain.py` — the boundary test had pinned the carry as
+  desired behaviour and now pins its absence. Its original reason, a section's
+  first ask claiming it had asked before, is unchanged and cannot occur here at
+  all now.
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 701 passed, 22 skipped
+```
+
+## 2026-08-14 — The depth ramp stops nominating terms, and the accounting finally closes
+
+The ramp's first two stages said "that term IS your question" and supplied the
+term block's own sentence. That made it a fourth mandatory block, outside the
+arbitration the other three share, doing the term block's job with none of its
+accounting: no raise count, no allowance, no budget, no let-go.
+
+**The shape was chosen by reading the run set, not the code.** Of 85 probe-shaped
+questions in the previous arm, 33 fell at turns one and two where the ramp
+nominated, and **22 of those named a term the judge already had open**, so the
+term block would have asked them anyway. The ramp's unique contribution was the
+remaining **11**: probes about terms the judge never flagged.
+
+That ruled out the alternative, which was to let the ramp keep nominating and
+spend the same allowance. It would have sanctioned exactly those 11. The judge is
+the authority on what went unexplained; a ramp nomination is a second opinion
+with no evidence behind it, and giving it budget spends a candidate's patience on
+terms nobody thought needed explaining.
+
+**The stage-three prohibition was half wrong and that half is gone.** It said "Do
+not unpack another, and do not ask again about anything you have already asked
+about here", and the audit measured it violated on a quarter of the turns it
+governs. Most of that was not disobedience: **27 of the 40 probes in that zone
+name a term the judge had open**, which is the term block firing, and the term
+block is mandatory and rendered after the ramp. The prohibition was contradicting
+a block that outranks it. The anti-repetition half is true and stays.
+
+**Measured**
+
+Ten runs, competent, `gpt-4.1-mini`, at 22 seconds, corrected signals. The
+baseline is the F1 arm, which ran the **ungated** counter; the gate landed after
+it and was never measured on its own, so a few of F1's let-gos are ones the gate
+would have prevented.
+
+| | F1 | this |
+| --- | --- | --- |
+| probe-shaped questions | 85  [6..12] | **73**  [4..10] |
+| counted by the brain | 74  [0..12] | 76  [0..8] |
+| the gap | +11 | **-3** |
+| ...at turn 0 | 12 | 13 |
+| ...at turns 1-2, where the ramp nominated | 33 | **24** |
+| ...at turns 3+, where the term block fires | 40 | 36 |
+| **sections exceeding the allowance in behaviour** | 15/60 | **6/60** |
+| let-gos spoken | 16 | 15 |
+| mechanism questions per opportunity | 24%  [9..43] | **18%**  [10..27] |
+| probes in the stage-3 zone | 20% | 19% |
+| distinct subjects per section | 2.8  [1..6] | 2.9  [1..5] |
+| sections spending a topic on one subject | 7/60 | **4/60** |
+| answers already given in that section | 55% | **51%** |
+| distinct authored answers reached, of 31 | 11.3  [9..15] | 10.9  [7..14] |
+| unsupported attributions | 0.00 | 0.30  [0..2] |
+
+**The gap closed and went slightly negative.** 76 counted against 73
+probe-shaped, because `asked_about` recognises a named probe in any phrasing
+while the probe-shaped count matches two exact sentences. Counting more than the
+narrow detector sees is the healthy direction.
+
+**Predictions, against what happened**
+
+Three right, one wrong, and the wrong one is the useful one.
+
+| predicted | actual |
+| --- | --- |
+| probe-shaped 85 to around 74 | **73** |
+| turns 1-2 fall hardest, turns 3+ barely move | **1-2 fell 27%, 3+ fell 10%, turn 0 flat** |
+| sections over the allowance to single digits | **6 of 60** |
+| mechanism 24% to the low 20s | **18%** |
+
+**The miss, and what it shows.** Mechanism fell six points where two or three
+were predicted. The reason is an instrument mismatch of exactly the kind fixed
+this morning: the probe-shaped count matches **two** exact sentences, while
+`probe_mechanism` runs on **nineteen** cues. Counting both arms with the same
+nineteen gives 104 falling to 85, a drop of 19, which matches the mechanism drop
+of 18 almost exactly.
+
+So the ramp was producing about nineteen mechanism questions and the narrow
+detector only ever saw twelve of them, because the ramp said "say something close
+to this" and the model paraphrased: "How exactly did you check whether the
+four-bit weights changed the routing decisions", "Explain how the Mistral-format
+jinja template fits into this LoRA training". Those are mechanism questions the
+probe-shaped count is blind to.
+
+The prediction was made with a narrow instrument and the risk assessed with a
+wide one, and the two were compared as though commensurable. That is the same
+error as the duplicated cue set, one level up: not a wrong number, a comparison
+between two things that do not measure the same thing.
+
+**Mechanism did not fall to the floor.** 18% against a probing-off baseline of 3
+to 5 percent, and the per-run spread narrowed from 9-to-43 to 10-to-27. Fewer
+mechanism questions, more consistently placed, all of them now accounted for.
+
+**Held.** The let-go still spoken, 15 against 16. Sections over the allowance
+improved rather than regressed. The ramp still does its own job: stages two and
+three still demand a number, a trade-off, a failure or a decision, and the
+stage-3 zone rate is unchanged at 19%, which is the term block and not the ramp.
+Deflecting was spot-checked over two runs: 24 probes and 6 let-gos, in line with
+the older arms.
+
+Attributions rose from 0.00 to 0.30, two instances in ten runs. Small, and the
+previous arm's 0.00 was itself unusually low.
+
+**Files**
+
+- `backend/bot/brain/prompting.py` — ramp stages one, two and three.
+
+**Not in this change**
+
+F3, `_open_terms` stale across a boundary. The prediction stands and is now
+checkable: it should move repeats and subjects and leave the counted-probe and
+exceedance figures alone. Turn 0 probes held at 12 and 13 across this change,
+which is where F3 would show.
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 701 passed, 22 skipped
+```
+
+## 2026-08-14 — The probe count sees probes about terms it did not offer, and that turns out not to be the problem
+
+`_count_if_it_asked` keyed on `_offered_term`, so a probe counted only when the
+model unpacked the one term the prompt named. Unpack a different open term and
+the question happened uncounted, uncapped, with no let-go. Measured across ten
+runs: 89 probe-shaped questions against 67 counted, and ten of sixty sections
+holding more probes than the per-section allowance permits.
+
+**How a probe is recognised now.** Two passes, naming before pointing. First,
+does the question NAME any term the judge currently has open, the offered one
+first. Then, only if nothing was named, does it POINT at the offered term with a
+deictic cue.
+
+No similarity rule. The comparison is still "does this question contain a
+distinctive word of this exact term", with no threshold and no scoring. What
+widened is the set of terms checked, from one to the list the judge already
+returned. The deictic branch deliberately did not widen: "how does that actually
+work" refers to whatever was put in front of the model, and charging it to some
+other open term would be a guess in a mechanism designed to fail towards not
+counting.
+
+**Naming before pointing was a correction, found by its own test.** The first
+version checked the offered term with both tests before looking at the others,
+and real probes say a name and point in the same breath: "You said bf16. Walk me
+through how that actually works." The deictic branch fired and charged the
+offered term even when the model had unpacked something else.
+
+**What it still cannot see**, from categorising all 89:
+
+| | |
+| --- | --- |
+| names a term the judge nominated | 73 (82%) |
+| names a term the candidate said, never sanctioned | 15 (17%) |
+| names something not in the candidate's speech at all | 1 (1%) |
+
+The last is the model paraphrasing a definition. Catching it needs comparing
+text, which this repo has refused six times.
+
+**Measured, and the result is that this cannot work**
+
+Ten runs, competent, `gpt-4.1-mini`, at 22 seconds, against the current arm, with
+the corrected `probe_mechanism`.
+
+| | before | after |
+| --- | --- | --- |
+| probe-shaped questions | 89  [6..14] | 85  [6..12] |
+| counted by the brain | 67  [0..8] | 74  [0..12] |
+| the gap | +22 | +11 |
+| **counted, clipped to the budget of 8** | **67** | **67** |
+| runs exceeding the interview budget | 0 | **3** (9, 10, 12) |
+| sections past an allowance of 2, in the log | 0 | **5** |
+| sections exceeding the allowance in behaviour | 10/60 | 15/60 |
+| mechanism questions per opportunity, corrected | 25%  [12..47] | 24%  [9..43] |
+| distinct authored answers reached, of 31 | 9.8  [6..12] | 11.3  [9..15] |
+| distinct subjects per section | 2.6  [1..6] | 2.8  [1..6] |
+| let-gos spoken | 13 | 16 |
+| unsupported attributions | 0.60  [0..4] | 0.00  [0..0] |
+
+**Every probe the widened count found was one the budget had already refused to
+pay for.** Clipped to its own ceiling the new count totals 67, which is exactly
+what the old one totalled. Six of ten runs reach the budget of 8 in both arms,
+and 23 to 25 probe-shaped questions per arm happen beyond anything the budget
+could ever sanction.
+
+So the gap is not a counting problem. A counter cannot close it, because by the
+time those probes happen there is no budget left to spend and nothing is being
+offered. Closing it requires *preventing* them, and they are produced by a
+mechanism the budget does not gate: the depth ramp, which says "that term is your
+question" at turns one and two with no accounting at all. That is F2 in
+`AUDIT_FOLLOW_UP.md` and it is not this change.
+
+**The widened count also broke the invariant it was meant to serve.**
+`_term_probes_spent` is both "how many probes happened" and "how much budget is
+left", and widening one without widening the other set them against each other:
+three runs of ten spent 9, 10 and 12 against a budget of 8. So the search now
+respects the same gates as the offer. A counter that breaks its own ceiling is
+worse than one that undercounts, because everything downstream reads it as
+budget.
+
+**Kept, at a smaller claim.** With the gate, the totals return to 67 and the
+change stops being about how many. What it still does is charge the RIGHT term:
+a probe that names `bf16` while `Mistral jinja template` was offered now spends
+`bf16`'s allowance, so the cap binds on the term actually being asked about and
+the let-go is owed to the candidate for the right word. That was wrong before and
+is right now, and it is worth having on its own.
+
+**Mechanism questions did not fall**, 25 to 24 percent inside a per-run spread of
+9 to 47, so the allowance does not need raising on this evidence. Answers reached
+and subjects per section both moved up slightly. Attributions fell to zero, which
+is almost certainly unrelated to this change.
+
+**The gated version has not been re-run.** The arithmetic determines the totals,
+67 counted and a gap of about +18, but the distribution of let-gos and which
+terms hit their caps would need another ten runs to state.
+
+**What F2 and F3 should contribute, predicted before they are done**
+
+F3, `_open_terms` stale across a boundary: small, two to four probes. It changes
+which term is offered at a section's first turn rather than whether a probe is
+counted.
+
+F2, the ramp outside the arbitration: most of the remaining 23. If the residual
+gap after F2 sits at turns one and two, the ramp was the source. If it is spread
+evenly across turn positions, it is the model copying its own previous turn out
+of the verbatim window, and no accounting change will reach it.
+
+**Files**
+
+- `backend/bot/brain/terms.py` — `allow_deictic` on `asked_about`.
+- `backend/bot/brain/brain.py` — `_count_if_it_asked` widened and gated.
+- `backend/tests/test_brain.py` — two tests.
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 701 passed, 22 skipped
+```
+
 ## 2026-08-14 — The mechanism signal could not see a second ask, and never could
 
 `_MECHANISM_CUES` was defined twice in `scripts/compare_models.py`, at line 266

@@ -1159,10 +1159,75 @@ class InterviewBrain:
         back next turn with the same first-ask wording.
         """
         offered, self._offered_term = self._offered_term, None
-        if offered is None:
-            return
-        if asked_about(offered.term, bot_text):
+
+        # **Naming is read before pointing, across every open term.**
+        #
+        # The real probes look like "You said bf16. Walk me through how that
+        # actually works." They name one term and point with the same breath, so
+        # checking the offered term with both tests first charged the wrong term
+        # whenever the model unpacked something other than what it was handed.
+        # A question that says a term's name is about that term; the deictic
+        # phrase after it is the sentence the block supplied, not a second
+        # subject. Caught by the test below, not by reading.
+        # **The widened search respects the same gates as the offer.**
+        #
+        # `_term_probes_spent` is both "how many probes happened" and "how much
+        # budget is left", and widening the count without widening the gates set
+        # the two against each other: three runs of ten spent 9, 10 and 12
+        # against a budget of 8, and five sections went past an allowance of 2.
+        # A counter that breaks its own ceiling is worse than one that
+        # undercounts, because everything downstream reads it as budget.
+        #
+        # The arithmetic that settles it: clipped to the budget, the widened
+        # count totals exactly what the narrow one did, 67 across ten runs.
+        # Every probe this found was one the budget had already refused to pay
+        # for. See the changelog: the gap is not a counting problem.
+        section = self.current_section
+        gated = (
+            self._term_probes_spent >= MAX_TERM_PROBES_PER_INTERVIEW
+            or section.term_probes_spent >= MAX_TERM_PROBES_PER_SECTION
+        )
+        candidates = ([offered] if offered is not None else []) + (
+            [] if gated else [t for t in self._open_terms if t is not offered]
+        )
+        for term in candidates:
+            if term is not offered and term.term.lower() in section.closed_terms:
+                continue
+            if asked_about(term.term, bot_text, allow_deictic=False):
+                self.mark_term_raised(term)
+                return
+
+        # Nothing named. A deictic question points back at whatever was put in
+        # front of the model this turn, and at nothing else.
+        if offered is not None and asked_about(offered.term, bot_text):
             self.mark_term_raised(offered)
+            return
+
+        # **Why the search widened beyond the offered term.**
+        #
+        # The count used to stop at the offered term, so a probe about a
+        # different term happened uncounted, uncapped, and with no let-go. The
+        # allowance therefore bounded one term's appearances rather than term
+        # probing: measured across ten runs, 89 probe-shaped questions against
+        # 67 counted, and ten of sixty sections holding more probes than the
+        # per-section allowance permits, the worst holding six with none
+        # recorded at all.
+        #
+        # Nothing new is needed to recognise these. The judge returns a LIST of
+        # open terms and only one of them is offered; a question that names any
+        # of the others is a question about a term the brain already knows. That
+        # is `asked_about`'s first branch applied to a wider set, not a
+        # similarity rule: the comparison is still "does this question contain a
+        # distinctive word of this exact term", with no threshold and no scoring.
+        #
+        # The deictic branch is deliberately NOT extended. "How does that
+        # actually work" refers to whatever was just offered, and charging it to
+        # some other open term would be a guess in a mechanism whose whole design
+        # is to fail towards not counting.
+        #
+        # `_open_terms` is ordered most-raised first, so a probe that names two
+        # open terms is charged to the one nearest its cap. That is the one whose
+        # let-go is owed to the candidate.
 
     def term_to_let_go(self) -> "UnexplainedTerm | None":
         """A term that has had its allowance and is being set aside.
@@ -1285,6 +1350,39 @@ class InterviewBrain:
             )
 
         self._index += 1
+
+        # **The open-term list belongs to the section that produced it.**
+        #
+        # It is assigned only in `apply_judgment`, and only for the section being
+        # judged, so at a new section's first turn it still held the last
+        # section's terms. That is the carry that let one term take a fresh
+        # allowance in section after section, and it is why an earlier attempt to
+        # change which term gets picked was reverted as inert: the selection rule
+        # could not fire at the boundary because the list it sorted was a section
+        # out of date.
+        #
+        # Measured before clearing it: of 13 probes on a section's first turn,
+        # **13 were about a term the candidate had not said in that section.**
+        # `ml_service_deployment` opened with "You said prompt-level rules. Walk
+        # me through how that actually works", carried from `applied_llm_depth`.
+        # None was a legitimate "you said this here".
+        #
+        # What fills that turn instead is what should have had it: the section's
+        # own broadest seed question, under the ramp's "START THIS TOPIC BROADLY,
+        # ask the widest version of it". The term block firing at turn zero was
+        # fighting that instruction.
+        #
+        # **Cross-section probing is delayed, not lost.** The judge re-reads each
+        # section and re-nominates from its transcript, so a term the candidate
+        # uses again here comes back with a judgement and can be asked about
+        # properly. What goes is asking about a word they have not said in this
+        # topic, which is what makes "you said X" false. The authored
+        # cross-section material was never here anyway: it is in the seeds, which
+        # say things like "how did you communicate the limitations of the
+        # language ID prototype to stakeholders".
+        self._open_terms = []
+        self._offered_term = None
+
         self._rebalance_remaining()
         self.current_section.started_at = self._now
 

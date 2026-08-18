@@ -90,12 +90,19 @@ def _singularish(word: str) -> str:
     return word[:-1] if len(word) > 4 and word.endswith("s") else word
 
 
-def asked_about(term: str, question: str) -> bool:
+def asked_about(term: str, question: str, *, allow_deictic: bool = True) -> bool:
     """True when this question put the term to the candidate.
 
     Only meaningful for a question asked on a turn where `term` was offered to
     the model. It is not a general-purpose topic classifier and would be wrong
     used as one.
+
+    **`allow_deictic=False` drops the second branch**, leaving only the test that
+    the question names the term. That is the mode for a term the brain did NOT
+    put in front of the model on this turn: "how does that actually work" points
+    back at whatever was just offered, and reading it as an ask about some other
+    open term would be a guess. Naming is not a guess, so it carries across
+    terms; pointing is, so it does not.
     """
     if not term or not question:
         return False
@@ -119,5 +126,7 @@ def asked_about(term: str, question: str) -> bool:
 
     # Not named, but pointing back at it. Only readable as an ask because a term
     # was offered on this turn; see the module docstring.
+    if not allow_deictic:
+        return False
     lowered = " ".join(_words(question))
     return any(cue in lowered for cue in _DEICTIC_CUES)
