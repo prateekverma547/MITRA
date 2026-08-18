@@ -263,7 +263,17 @@ _COMMS_CUES = (
     "who did you", "what did they", "how did they react", "convince",
     "non-technical", "stakeholder", "audience",
 )
-_MECHANISM_CUES = (
+#: Asking how the THING works, in a section that is supposed to be about how
+#: they explained it to somebody. Narrower than the probe-shape set below on
+#: purpose: this asks "did the interviewer go technical in a communication
+#: topic", not "was this a mechanism question".
+#:
+#: **It was called `_MECHANISM_CUES` and so was the set 120 lines below it.**
+#: Python resolves module globals at call time, so both this name and that one
+#: pointed at whichever was defined last, and `_section_coverage` has been
+#: running against a cue list it was not written for since the day the second
+#: one was added.
+_MECHANICS_CUES = (
     "walk me through how", "how that actually works", "what does it actually do",
     "how does that work", "what does that do",
 )
@@ -320,7 +330,7 @@ def _section_coverage(run, brain) -> dict:
                 low = t.lower()
                 if any(c in low for c in _COMMS_CUES):
                     comms += 1
-                elif any(c in low for c in _MECHANISM_CUES):
+                elif any(c in low for c in _MECHANICS_CUES):
                     mech += 1
 
     return {
@@ -392,6 +402,13 @@ _MECHANISM_CUES = (
     "what do you mean", "what does that mean", "what does it mean",
     "what does that actually", "how does that work", "how does it work",
     "how that works", "how that actually works", "walk me through how",
+    # **The escalated probe, missing since this set was written.** The term
+    # block's second ask is "You have said X twice now. What does it actually
+    # do?", and none of the cues above match it: "what does that actually" is
+    # not "what does it actually". So every second ask, the one the whole term
+    # machinery exists to produce, was invisible to this signal. Nineteen of
+    # nineteen in the ten-run arm current when this was found.
+    "what does it actually do", "what does that do",
     "explain how", "what exactly is", "what exactly does", "how exactly",
     "what is that", "what does the", "in your system", "under the hood",
 )

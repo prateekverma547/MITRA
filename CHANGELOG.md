@@ -146,6 +146,116 @@ token bound, and the guard test running the wrong fixture.
 cd backend && uv run pytest -q -m "not llm"          # 695 passed, 22 skipped
 ```
 
+## 2026-08-14 — The mechanism signal could not see a second ask, and never could
+
+`_MECHANISM_CUES` was defined twice in `scripts/compare_models.py`, at line 266
+and again at 391. Python resolves module globals at call time, so both names
+pointed at whichever was defined last and two different signals ran against one
+cue list.
+
+The one that lost is the term block's escalation. Its sentence is "You have said
+X twice now. What does it actually do?", and the surviving list contains "what
+does that actually" but not "what does it actually do". So **every second ask,
+the question the whole term machinery exists to produce, was invisible**:
+nineteen of nineteen in the ten-run arm.
+
+It has been this way since `28e8277`, the commit that introduced `_probe_shape`.
+Both definitions arrived together, so **no mechanism figure ever recorded in this
+changelog was measured with a working signal.**
+
+Fixed by separating them, because they were never the same question. The narrow
+set belongs to `_section_coverage`, which asks whether a communication topic went
+technical, and is now `_MECHANICS_CUES`. The broad set belongs to `_probe_shape`
+and gains the two cues it was missing, `"what does it actually do"` and
+`"what does that do"`.
+
+**Nothing else in that file has the same shape.** Every module-level name and
+every tuple, set and dict literal in the measurement and brain modules was
+scanned for redefinition and repeated members. Two hits, both deliberate:
+`score.py` appends `PROSE_STYLE` to its own `SYSTEM`, the idiom used in three
+modules, and the refusing candidate says "I don't want to." three times because
+that is the scenario.
+
+**Every mechanism figure, recomputed from the runs on disk**
+
+No new interviews. The reimplementation reproduces the recorded numbers to within
+two points, so the absolute values below differ slightly from what the harness
+printed; the deltas are computed the same way on both sides and are sound.
+
+| what it measured | recorded | corrected |
+| --- | --- | --- |
+| seed rotation, three arms | 24% / 22% / 13% | **33% / 28% / 21%** |
+| the back half, turns 4+: seed shown / wrapped / absent | 19% / 21% / 6% | **27% / 27% / 8%** |
+| the `_advance_reason` reorder | 15% to 18% | **21% to 22%** |
+| the dealbreaker block | 18% to 16% | **22% to 23%** |
+| S2 and S11 together | 16% to 20% | **23% to 25%** |
+| mechanism questions inside the communication topic | 1 | **0** |
+
+**Two conclusions change and one gets stronger.**
+
+The dealbreaker block **reverses**. It was recorded as costing two points of
+mechanism, 18 to 16, and cited as one reason to revert it. Corrected, mechanism
+rose, 22 to 23. The revert recommendation stands on its other evidence, which
+did not come from this signal: `not_reached` rose from 42 to 45 percent, and in
+the topic that owns "cannot describe a time they deployed or debugged" the
+questions asking for a time did not move. But the mechanism half of that argument
+was wrong and is withdrawn.
+
+The single mechanism question that appeared in a communication topic, reported in
+the S2 and S11 entry as one leak where there had been none, **was an artefact of
+the shadowing**. With the cue set that function was written against it is zero.
+Nothing leaked.
+
+The back-half collapse gets **stronger**, and it is the figure that mattered most,
+because it is why the seed rotation wraps rather than stopping at the last seed.
+Recorded as 21 percent falling to 6 when the seed is taken away; corrected, 27
+falling to 8. Nineteen points rather than fifteen. The decision to keep the wrap
+was right and is now better supported.
+
+The reorder and the S2/S11 pair both keep their direction and lose about half
+their size, 3 points becoming 1 and 4 becoming 2. Neither conclusion rested on
+mechanism alone and neither changes.
+
+**What else in that file cannot be trusted**
+
+Verified by hand against transcripts rather than by reading, because three
+signals were wrong last week in ways that looked right in source.
+
+| signal | claims | actually | verdict |
+| --- | --- | --- | --- |
+| `probe_mechanism` | mechanism questions per opportunity | now agrees, after this fix | **trust** |
+| `probe_menu` | took the term as given | `"how did you measure"` and `"what metric"` are also `evaluation_reasoning`'s own seed questions, so a topic asking its own material scores as menu | **direction only** |
+| `probe_new_topic` | advancing the plan | introduced a seed word not in the last answer. Counted the first turn of a six-probe loop as advancing | **direction only** |
+| `seed_overlap_rough` | seed questions asked | its own docstring records 45 found where a person found 55, three of them scoring the acknowledgement | **do not set a bar on it**, as it says |
+| `probe_terms_specific` | probes spent on this person's work | has a digit or an internal capital. Scores `peft`, `confusion matrix` and `routing decision` as generic | **delete** |
+| `comms_vs_mechanism` | a communication topic going technical | agrees, now it has its own cue set | **trust** |
+| `questions_asked` | questions asked | question marks. Three turns in one run carry two, so it absorbs the one-question rule being broken instead of reporting it | **rename or split** |
+| `field_words_used` | domain vocabulary used | vocabulary present at least once in the whole interview. Twenty uses score the same as one | **presence only** |
+| `words_over_limit`, `words_median`, `interviewer_share` | turn length | exactly that | **trust** |
+| `returned_to_the_question` | did a repair get the same question back | reported as a fraction with the judgement left to a reader, which its docstring says plainly | **trust as a pointer** |
+
+`probe_terms_specific` is the one to delete rather than fix. Its docstring already
+says the question "cannot be decided reliably in code", it has been rewritten once
+after being inverted, and a proxy for product names is not a proxy for
+specificity. A signal nobody can trust is worse than no signal, because it gets
+cited.
+
+**Files**
+
+- `backend/scripts/compare_models.py`
+
+**Left undone**
+
+The accounting problem itself. F1, F2 and F3 in `AUDIT_FOLLOW_UP.md` are the real
+findings, and fixing them before the signals were verified is how this subsystem
+got nine changes deep.
+
+**Confirm**
+
+```bash
+cd backend && uv run pytest -q -m "not llm"          # 699 passed, 22 skipped
+```
+
 ## 2026-08-14 — The interview screen becomes two halves: the interviewer, and you
 
 The call screen was a small orb centred on a dark page with a 148px self-view
