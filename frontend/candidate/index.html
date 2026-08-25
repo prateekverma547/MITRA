@@ -122,6 +122,7 @@
       min-height: 100%;
       display: flex; flex-direction: column;
       background: #0f1117; color: #fff;
+      position: relative;
     }
     .bar {
       display: flex; justify-content: space-between; align-items: center;
@@ -355,6 +356,23 @@
       display: flex; gap: 12px; padding: 22px; justify-content: center;
       border-top: 1px solid #232733; position: relative;
     }
+    /* Said once, quietly, when the page comes back. It stops the record being
+       a silent trap, and somebody who knows it is noticed is less likely to do
+       it again, which is worth more than catching them.
+       Absolutely positioned so nothing reflows when it appears. A strip that
+       pushed the panels down mid interview would be an interruption, and this
+       must never be one. It sits in the panels own top padding, clear of the
+       orb below it and a long way from the captions. */
+    .noted {
+      position: absolute; top: 66px; left: 50%; transform: translateX(-50%);
+      z-index: 5; max-width: min(560px, 92vw);
+      padding: 9px 15px; border-radius: 999px;
+      background: #1b2030; border: 1px solid #2b3244; color: #c7cddb;
+      font-size: 13px; line-height: 1.45; text-align: center;
+      opacity: 1; transition: opacity 400ms ease;
+      pointer-events: none;
+    }
+    .noted.fading { opacity: 0; }
     /* The watermark, and its position is the whole of the decision.
 
        Three places on this screen were ruled out. The camera panel is the
@@ -481,6 +499,10 @@
           <li>You are assessed on what you say. Your camera picture is not scored,
               and nothing measures your face, your eyes or your expression.</li>
 <!--/RECORDING OFF-->
+          <li>If you move to another tab or window, we record that the interview
+              page was not in view, and for how long. <strong>We cannot see what
+              you were looking at.</strong> This is not scored, and it is shown to
+              the person reviewing your interview.</li>
           <li>A person reviews the result. Nothing here decides the outcome on its own.</li>
         </ul>
         <label class="consent" for="consent">
@@ -569,6 +591,7 @@
 
 <!-- Step 2 -->
 <section id="stage" class="hidden">
+  <div class="noted hidden" id="noted"></div>
   <div class="bar">
     <div class="role" id="role">{{BOT_NAME}}</div>
     <div class="by">{{COMPANY_CREDIT}}</div>
@@ -650,9 +673,130 @@
     }, 1000);
   }
 
+  // ---- When the interview page is not the thing in front of them ---------
+  //
+  // Records one fact: the page stopped being in view, and for how long. It is
+  // not a proctoring system and must never read as one. It catches the
+  // same-device case and nothing else: a phone, a second monitor with this
+  // window still focused, or a person in the room are all invisible to it, and
+  // reading a second window does not even need focus. Anyone drawing a
+  // conclusion from this data should know that first.
+  //
+  // There is no score, no threshold and no percentage, here or at the far end.
+  // A number would imply a model nobody has validated. What gets stored is a
+  // count and a duration for a person to read.
+  //
+  // Nothing here reaches the interviewer. No frame, no prompt, no transcript
+  // entry, no brain state. The bot does not know and must not be told.
+  const focusWatch = (() => {
+    let watching = false;
+    let startedAt = 0;
+    let awaySince = null;
+    let awayKind = null;
+    let noteTimer = null;
+
+    // visibilitychange and blur BOTH fire on an ordinary tab switch, so they
+    // are folded into one away state rather than counted separately. Two
+    // events, one absence.
+    const isAway = () => document.hidden || !document.hasFocus();
+
+    function begin(kind) {
+      if (!watching || awaySince !== null) return;
+      awaySince = Date.now();
+      awayKind = kind;
+    }
+
+    function end() {
+      if (!watching || awaySince === null) return;
+      const seconds = (Date.now() - awaySince) / 1000;
+      const at = Math.max(0, (awaySince - startedAt) / 1000);
+      const kind = awayKind;
+      awaySince = null;
+      awayKind = null;
+      if (seconds <= 0) return;
+      send([{ at_seconds: at, seconds, kind }]);
+      say(seconds);
+    }
+
+    // Sent as each absence ends rather than saved up, so a dropped connection
+    // at the end cannot take the whole record with it. keepalive lets a late
+    // one survive the page going away.
+    function send(absences) {
+      try {
+        fetch("/interviews/focus", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          keepalive: true,
+          body: JSON.stringify({
+            meeting_id: $("meeting").value,
+            password: $("password").value,
+            absences,
+          }),
+        }).catch(() => {});
+      } catch (err) {
+        // A lost absence is not worth a broken interview.
+      }
+    }
+
+    // Said once, plainly, and gone on its own. It does not accuse, it does not
+    // block anything, and it does not interrupt: the interviewer keeps talking
+    // and the candidate can ignore it entirely.
+    function say(seconds) {
+      const note = $("noted");
+      if (!note) return;
+      const how = seconds >= 90
+        ? `${Math.round(seconds / 60)} minutes`
+        : `${Math.max(1, Math.round(seconds))} seconds`;
+      note.textContent =
+        `The interview page was out of view for ${how}. The person reviewing ` +
+        `your interview will see that.`;
+      note.classList.remove("hidden", "fading");
+      if (noteTimer) clearTimeout(noteTimer);
+      noteTimer = setTimeout(() => {
+        note.classList.add("fading");
+        noteTimer = setTimeout(() => note.classList.add("hidden"), 400);
+      }, 6000);
+    }
+
+    const onVisibility = () => (document.hidden ? begin("hidden") : !isAway() && end());
+    const onBlur = () => begin("blur");
+    const onFocus = () => { if (!isAway()) end(); };
+
+    return {
+      // **Started when the call starts, not when the page loads.** The device
+      // check asks for camera and microphone permission, and that dialog blurs
+      // the window on every browser, so watching earlier would record an
+      // absence on every interview that ever ran and mean nothing by it.
+      start() {
+        if (watching) return;
+        watching = true;
+        startedAt = Date.now();
+        document.addEventListener("visibilitychange", onVisibility);
+        window.addEventListener("blur", onBlur);
+        window.addEventListener("focus", onFocus);
+      },
+      // **An absence still open at the end is dropped, not closed.** Closing
+      // the tab is how an interview ends, so recording it would put one final
+      // absence on every single interview, which is the same as recording
+      // nothing while looking like a finding.
+      stop() {
+        watching = false;
+        awaySince = null;
+        awayKind = null;
+        if (noteTimer) clearTimeout(noteTimer);
+        document.removeEventListener("visibilitychange", onVisibility);
+        window.removeEventListener("blur", onBlur);
+        window.removeEventListener("focus", onFocus);
+      },
+    };
+  })();
+
+  window.addEventListener("pagehide", () => focusWatch.stop());
+
   function finish(note) {
     if (timerHandle) clearInterval(timerHandle);
     if (note) $("done-note").textContent = note;
+    focusWatch.stop();
     show("done");
     if (call) { call.destroy(); call = null; }
   }
@@ -934,6 +1078,7 @@
 
     $("role").textContent = "{{BOT_NAME}} · " + session.role_title;
     show("stage");
+    focusWatch.start();
 
     // A call *object*, not Daily's prebuilt iframe. There is no participant
     // grid, no screen share and no Daily branding: the candidate should see an

@@ -12,6 +12,141 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-21 — The interview page records when it is not in view, and says so
+
+**What**
+
+A candidate can open an LLM in another tab, read an answer and speak it. That was
+done to the product deliberately and nothing noticed.
+
+The browser now records when the interview page stops being the thing in front of
+the candidate, and for how long. The consent notice says so before they join, a
+short line says so again when they come back, and the panel shows a reviewer a
+count and a duration beside the report.
+
+**What this is not, and the wording matters**
+
+It is not a proctoring system and it must not read as one anywhere in the code or
+on any screen. It catches the same-device case and nothing else. A phone, a
+second monitor with this window still focused, or another person in the room
+produce nothing at all, and reading a second window does not even require focus.
+A clean record is therefore not evidence of anything, and every place this
+surfaces says so.
+
+**There is no score, no threshold and no percentage.** A number would imply a
+model nobody has validated, and the eighteen stored interviews contain no real
+cheating to validate one against. What is stored is a count and a duration for a
+person to read.
+
+**The timing half was investigated and dropped.** The question-to-answer gap is
+derivable from stored transcripts, and it does not separate anything: across 11
+interviews and 146 exchanges the spread within one person is 4.2 times the spread
+between people (mean per-interview standard deviation 1.33s against 0.32s for the
+spread of per-interview medians). It is also measuring the wrong quantity, at
++0.60 correlation with the word count of the candidate's first fragment: short
+first fragments give a 1.9s median gap and long ones 5.5s, so it tracks how much
+they said rather than how long they thought. The longest pause in the whole
+dataset, 14.8 seconds in `int_7ffd1be01f56`, precedes the candidate saying "I
+don't know." No schema change fixes that.
+
+**What is recorded, and what is deliberately not**
+
+`visibilitychange` and `blur` both fire on an ordinary tab switch, so they are
+folded into one away state rather than counted twice. One absence per departure,
+with its start offset, its duration in seconds, and which event opened it.
+
+**Watching starts when the call starts, not when the page loads.** The device
+check asks for camera and microphone permission and that dialog blurs the window
+on every browser, so watching earlier would put an absence on every interview
+that ever ran and mean nothing by it.
+
+**An absence still open at the end is dropped rather than closed.** Closing the
+tab is how an interview ends, so recording it would put one final absence on
+every single interview, which is the same as recording nothing while looking like
+a finding. Both `finish()` and `pagehide` discard it.
+
+No duration filter is applied in the page. A notification click is under two
+seconds and reading an answer is much longer, and that is exactly the judgement
+the reviewer is being shown the duration to make. The server drops only what is
+impossible: zero or negative, or longer than any interview would run.
+
+The failure direction is worth knowing. An absence only opens on a real event, so
+a browser that reports focus oddly can leave one open and never close it, and an
+absence that never closes is discarded. It under-records rather than inventing
+absences, which is the right way round.
+
+**Storage**
+
+Its own nullable JSON column on the interview row, `focus_events`, picked up by
+the existing additive migration. Not a key inside `session_metrics`, because two
+different writers own them: the bot writes that column once at the end from its
+own process, and would clobber anything the browser had posted during the call.
+
+`POST /interviews/focus` is public and authenticated exactly as
+`/interviews/join` is, with the candidate's own meeting credentials, and refused
+with the same single message so it cannot be used to probe for valid meeting ids.
+Absences are appended as each one ends rather than saved up, so a dropped
+connection at the end cannot take the earlier ones with it. The stored list is
+capped at 200 as a defence against a page in a redraw loop; nothing is inferred
+from reaching it.
+
+**Nothing reaches the interviewer.** No frame, no prompt, no transcript entry, no
+brain state, no judge input, no scorer input. `bot/`, `feedback/` and
+`shared/contracts.py` are untouched by this change, and a test asserts the stored
+absences appear in neither the report nor the transcript.
+
+**What the candidate is told**
+
+In the notice they already read and accept, in the half that renders either way
+because it is true either way:
+
+> If you move to another tab or window, we record that the interview page was not
+> in view, and for how long. We cannot see what you were looking at. This is not
+> scored, and it is shown to the person reviewing your interview.
+
+And once, when they come back, in a small line that fades after six seconds:
+
+> The interview page was out of view for 12 seconds. The person reviewing your
+> interview will see that.
+
+It is absolutely positioned so nothing reflows when it appears, sits in the
+panels' own top padding clear of the orb and a long way from the captions, and
+takes no pointer events. It does not accuse, does not block, and does not
+interrupt: the interviewer keeps talking and the candidate can ignore it. It
+exists so the record is not a silent trap, and because somebody who knows it is
+noticed is less likely to do it again, which is worth more than catching them.
+
+**What the reviewer sees**
+
+One plain line under the three health banners:
+
+> The interview page was out of view 3 times, 47 seconds in total. The candidate
+> was told this is recorded. It shows only what happened on this device, so it
+> says nothing about a second screen, a phone, or anyone else in the room.
+
+Muted, the same weight as the generated-at line, with no colour that implies a
+verdict and no ranking. **Silent when the page was never left**, rather than
+reading "0 times": an absence is not a result, and a row saying zero would turn
+one into one.
+
+**Files**
+
+- `backend/app/db.py` — the `focus_events` column.
+- `backend/app/interviews.py` — `FocusAbsence`, `FocusReport`, `POST
+  /interviews/focus`, and the field on `InterviewView`.
+- `frontend/candidate/index.html` — the consent line, the away state machine, the
+  returning line and its styling.
+- `frontend/admin/admin.js` — `focusLine`.
+- `backend/tests/test_interviews.py` — seven tests, and the new public route.
+
+**Confirm**
+
+```
+cd backend && uv run pytest -q          # 761 passed
+```
+
+---
+
 ## 2026-08-19 — Appinventiv is credited on every screen, and a job description starts from something
 
 **What**

@@ -853,6 +853,9 @@ async def test_deleting_an_unknown_profile_is_404(client):
 #: CVs and interview transcripts, all of it personal data on a public URL.
 PUBLIC_ROUTES = {
     ("POST", "/interviews/join"),  # candidate's own credential is the password
+    # Same credential, same reason: the candidate's own browser reporting about
+    # the candidate's own interview, and it holds no other secret.
+    ("POST", "/interviews/focus"),
     ("GET", "/join"),  # the candidate join page itself
     ("GET", "/health"),
     ("POST", "/admin/login"),
@@ -1449,3 +1452,140 @@ async def test_the_interviewer_is_never_told_who_built_it(client):
 
     brain = InterviewBrain(load_blueprint())
     assert COMPANY_NAME.lower() not in brain.plan_turn().system_instruction.lower()
+
+
+# -- focus absences ----------------------------------------------------------
+
+
+async def test_an_absence_is_recorded_against_the_interview(client):
+    """A fact the browser reported, stored beside the interview it belongs to."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    posted = client.post(
+        "/interviews/focus",
+        json={
+            "meeting_id": created["meeting_id"],
+            "password": created["password"],
+            "absences": [{"at_seconds": 61.4, "seconds": 22.0, "kind": "hidden"}],
+        },
+    )
+
+    assert posted.status_code == 200, posted.text
+    assert posted.json()["recorded"] == 1
+
+    view = client.get(f"/interviews/{created['interview_id']}").json()
+    assert view["focus_events"] == [
+        {"at_seconds": 61.4, "seconds": 22.0, "kind": "hidden"}
+    ]
+
+
+async def test_absences_accumulate_rather_than_replace(client):
+    """The page sends each absence as it ends, so a later report must not take
+    the earlier ones with it."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    creds = {"meeting_id": created["meeting_id"], "password": created["password"]}
+
+    client.post("/interviews/focus", json={**creds, "absences": [
+        {"at_seconds": 10.0, "seconds": 3.0, "kind": "blur"}]})
+    client.post("/interviews/focus", json={**creds, "absences": [
+        {"at_seconds": 90.0, "seconds": 44.0, "kind": "hidden"}]})
+
+    view = client.get(f"/interviews/{created['interview_id']}").json()
+    assert [a["seconds"] for a in view["focus_events"]] == [3.0, 44.0]
+
+
+async def test_an_interview_nobody_left_records_nothing(client):
+    """An absence is not a result. Nothing sent means nothing stored, and the
+    panel renders nothing rather than a zero."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    view = client.get(f"/interviews/{created['interview_id']}").json()
+
+    assert view["focus_events"] is None
+
+
+async def test_focus_needs_the_candidates_own_credentials(client):
+    """Guarded exactly as joining is, and refused with the same one message so
+    it cannot become a way to probe for valid meeting ids."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    refused = client.post(
+        "/interviews/focus",
+        json={
+            "meeting_id": created["meeting_id"],
+            "password": "wrongpass",
+            "absences": [{"at_seconds": 1.0, "seconds": 30.0}],
+        },
+    )
+
+    assert refused.status_code == 401
+    view = client.get(f"/interviews/{created['interview_id']}").json()
+    assert view["focus_events"] is None
+
+
+async def test_implausible_absences_are_dropped(client):
+    """A zero-length absence is not an absence, and one longer than any
+    interview is a broken clock rather than a candidate who left for hours."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    client.post(
+        "/interviews/focus",
+        json={
+            "meeting_id": created["meeting_id"],
+            "password": created["password"],
+            "absences": [
+                {"at_seconds": 5.0, "seconds": 0.0},
+                {"at_seconds": 6.0, "seconds": -4.0},
+                {"at_seconds": 7.0, "seconds": 60 * 60 * 24},
+                {"at_seconds": 8.0, "seconds": 12.5},
+            ],
+        },
+    )
+
+    view = client.get(f"/interviews/{created['interview_id']}").json()
+    assert [a["seconds"] for a in view["focus_events"]] == [12.5]
+
+
+async def test_the_stored_list_is_bounded(client):
+    """A page in a redraw loop must not be able to append for forty minutes.
+    Nothing is inferred from hitting the ceiling; it just stops growing."""
+    from app.interviews import MAX_FOCUS_ABSENCES
+
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+
+    client.post(
+        "/interviews/focus",
+        json={
+            "meeting_id": created["meeting_id"],
+            "password": created["password"],
+            "absences": [
+                {"at_seconds": float(i), "seconds": 1.0}
+                for i in range(MAX_FOCUS_ABSENCES + 50)
+            ],
+        },
+    )
+
+    view = client.get(f"/interviews/{created['interview_id']}").json()
+    assert len(view["focus_events"]) == MAX_FOCUS_ABSENCES
+
+
+async def test_focus_events_never_reach_the_report(client):
+    """It is context for a reviewer beside the report, never a field inside it.
+    The scorer does not see it and the transcript does not carry it."""
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    client.post("/interviews/focus", json={
+        "meeting_id": created["meeting_id"], "password": created["password"],
+        "absences": [{"at_seconds": 30.0, "seconds": 99.0}]})
+
+    view = client.get(f"/interviews/{created['interview_id']}").json()
+
+    assert view["focus_events"]
+    assert "focus" not in str(view["feedback_report"] or {}).lower()
+    assert "focus" not in str(view["transcript"] or {}).lower()

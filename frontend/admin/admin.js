@@ -1047,6 +1047,7 @@ function reportCard(iv) {
       ${banner(health)}
       ${banner(analysis)}
       ${banner(questioning)}
+      ${focusLine(iv)}
       <div class="spread" style="margin-top:16px;align-items:center">
         <span class="small muted">
           ${rebuilding
@@ -1101,6 +1102,37 @@ function reportCard(iv) {
  *  the scoring model was told one wording and the employer read another, both
  *  claiming to describe the same recording. Render what you are given.
  */
+/*  When the interview page was not in front of the candidate.
+ *
+ *  Context beside the report, not a finding inside it. It is deliberately the
+ *  plainest thing on this screen: a count, a duration, and no verdict. No
+ *  score, no threshold, no percentage and no colour that implies one, because
+ *  a number here would suggest a model nobody has validated, and ten stored
+ *  interviews with no real cheating in them cannot validate one.
+ *
+ *  It also catches only the same-device case. A phone, a second monitor with
+ *  the browser still focused, or somebody else in the room produce nothing at
+ *  all, so a clean line here is not evidence of anything and the wording must
+ *  never suggest it is.
+ *
+ *  Silent when the page was never left. An absence is not a result, and a row
+ *  reading "0 times" would turn one into one.
+ */
+function focusLine(iv) {
+  const events = iv.focus_events || [];
+  if (!events.length) return "";
+  const total = Math.round(events.reduce((a, e) => a + (e.seconds || 0), 0));
+  const spell = total >= 90
+    ? `${Math.round(total / 60)} minutes`
+    : `${total} second${total === 1 ? "" : "s"}`;
+  const times = events.length === 1 ? "once" : `${events.length} times`;
+  return `<p class="small muted" style="margin:14px 0 0">
+    The interview page was out of view ${times}, ${esc(spell)} in total. The
+    candidate was told this is recorded. It shows only what happened on this
+    device, so it says nothing about a second screen, a phone, or anyone else
+    in the room.</p>`;
+}
+
 function banner(health) {
   if (!health || !health.degraded || !health.as_sentence) return "";
   return `<div class="note" style="margin:14px 0 0">

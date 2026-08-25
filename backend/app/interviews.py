@@ -23,7 +23,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.auth import require_admin
@@ -91,6 +91,34 @@ class JoinRequest(BaseModel):
     timezone: str | None = None
 
 
+class FocusAbsence(BaseModel):
+    """One stretch where the interview page was not the thing in front of them.
+
+    `kind` records which event opened the absence: "hidden" when the tab or
+    window stopped being visible, "blur" when it stayed visible but something
+    else took focus. Both are the same fact to a reviewer and are counted
+    together; the distinction is kept because they are not the same event and
+    flattening them here would lose that for good.
+    """
+
+    at_seconds: float
+    seconds: float
+    kind: str = "hidden"
+
+
+class FocusReport(BaseModel):
+    """Absences from one candidate's page, sent by that page.
+
+    Authenticated exactly as `/interviews/join` is, with the candidate's own
+    meeting credentials, because it is the same browser reporting about the same
+    interview and there is no other secret it holds.
+    """
+
+    meeting_id: str
+    password: str
+    absences: list[FocusAbsence] = Field(default_factory=list)
+
+
 class JoinResponse(BaseModel):
     """What the candidate's browser needs to enter the call.
 
@@ -119,6 +147,8 @@ class InterviewView(BaseModel):
     transcript: dict | None = None
     section_outcomes: list[dict] | None = None
     session_metrics: dict | None = None
+    #: Context for a reviewer, never an input to the report. See `db.Interview`.
+    focus_events: list[dict] | None = None
     feedback_report: dict | None = None
     feedback_status: str = "pending"
     feedback_error: str | None = None
@@ -433,6 +463,87 @@ async def _start_bot(
     logger.info(f"[{interview_id}] bot spawned")
 
 
+#: A defensive ceiling on what one interview may store, not a judgement about
+#: what is normal. A page in a redraw loop could otherwise append for forty
+#: minutes; a real interview produces a handful. Nothing is inferred from
+#: hitting it, and the reviewer is told the list was truncated rather than shown
+#: a total that quietly stopped counting.
+MAX_FOCUS_ABSENCES = 200
+
+#: Absences longer than the longest interview we would ever run are a broken
+#: clock, not a candidate who left for two hours.
+MAX_ABSENCE_SECONDS = 3 * 60 * 60
+
+
+@router.post("/interviews/focus")
+async def record_focus(report: FocusReport) -> dict:
+    """Record that the interview page stopped being in front of the candidate.
+
+    **This is a fact the browser reported and nothing more.** It carries no
+    score, no threshold and no percentage, and it reaches nothing that decides
+    anything: not the brain, not the prompt, not the judge, not the scorer. It
+    is stored beside the interview and shown to a reviewer as a count and a
+    duration, and what it means is theirs to judge.
+
+    It also catches only one of several ways a candidate could read an answer,
+    the same-device one, and sees nothing of a phone, a second monitor with the
+    browser still focused, or a person in the room. Anyone reading this data
+    should know that before drawing anything from it.
+
+    Public, and authenticated the way `/interviews/join` is: the candidate's own
+    meeting credentials. Appended rather than replaced, because the page sends
+    each absence as it ends and a lost connection must not take the earlier ones
+    with it.
+    """
+    meeting_id = normalise_meeting_id(report.meeting_id)
+    # One message for every failure, exactly as the join endpoint does it, so
+    # this cannot become a way to probe for valid meeting ids.
+    invalid = HTTPException(
+        status_code=401, detail="That meeting ID and password do not match an interview."
+    )
+    if not meeting_id:
+        raise invalid
+
+    if not report.absences:
+        return {"recorded": 0}
+
+    async with get_sessionmaker()() as session:
+        interview = await session.scalar(
+            select(Interview).where(Interview.meeting_id == meeting_id)
+        )
+        if interview is None or not passwords_match(report.password, interview.password):
+            raise invalid
+
+        stored = list(interview.focus_events or [])
+        room = MAX_FOCUS_ABSENCES - len(stored)
+        if room <= 0:
+            return {"recorded": 0, "truncated": True}
+
+        accepted = [
+            {
+                "at_seconds": round(max(0.0, a.at_seconds), 1),
+                "seconds": round(a.seconds, 1),
+                "kind": a.kind if a.kind in ("hidden", "blur") else "hidden",
+            }
+            for a in report.absences
+            if 0 < a.seconds <= MAX_ABSENCE_SECONDS
+        ][:room]
+
+        if not accepted:
+            return {"recorded": 0}
+
+        # Reassigned rather than mutated in place: SQLAlchemy does not track
+        # mutation inside a JSON column, so appending to the existing list would
+        # leave the change unwritten.
+        interview.focus_events = stored + accepted
+        await session.commit()
+        logger.info(
+            f"[{interview.id}] recorded {len(accepted)} focus absence(s); "
+            f"{len(interview.focus_events)} in total"
+        )
+        return {"recorded": len(accepted)}
+
+
 @router.get("/interviews/{interview_id}", response_model=InterviewView, dependencies=ADMIN_ONLY)
 async def get_interview(interview_id: str) -> InterviewView:
     async with get_sessionmaker()() as session:
@@ -452,6 +563,7 @@ async def get_interview(interview_id: str) -> InterviewView:
             transcript=interview.transcript,
             section_outcomes=interview.section_outcomes,
             session_metrics=_with_latency_modes(interview.session_metrics),
+            focus_events=interview.focus_events,
             feedback_report=_validated_report(interview.id, interview.feedback_report),
             feedback_status=interview.feedback_status,
             feedback_error=interview.feedback_error,

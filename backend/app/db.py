@@ -315,6 +315,23 @@ class Interview(Base):
     #: latencies, not just the words.
     session_metrics: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
+    #: When the interview page stopped being the thing in front of the candidate,
+    #: and for how long. One entry per absence: `{"at_seconds", "seconds",
+    #: "kind"}`.
+    #:
+    #: **Its own column rather than a key inside `session_metrics`, because two
+    #: different writers own them.** The bot writes `session_metrics` once, at
+    #: the end, from its own process. These arrive from the candidate's browser
+    #: during the call, so folding them into the same column would mean the
+    #: bot's final write silently clobbered every one of them.
+    #:
+    #: A fact the browser reported, and nothing more. There is no score, no
+    #: threshold and no percentage here, because a number would imply a model
+    #: nobody has validated: absences are shown to a reviewer as a count and a
+    #: duration, and the reviewer decides what they mean. It never reaches the
+    #: brain, the prompt, the judge or the scorer.
+    focus_events: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+
     #: Consent is captured before the candidate can join (Milestone 5). Recorded
     #: here so the timestamp sits alongside the interview it applies to.
     consent_accepted_at: Mapped[datetime | None] = mapped_column(
