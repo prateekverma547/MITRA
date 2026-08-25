@@ -12,6 +12,146 @@ Write for someone who has never seen this repository. Keep jargon out of
 
 ---
 
+## 2026-08-19 — Appinventiv is credited on every screen, and a job description starts from something
+
+**What**
+
+Three things: the company name at both ends of every page, the company logo as a
+watermark on the call, and six job descriptions an employer can start from
+instead of an empty box.
+
+**The credit, and why it differs by surface**
+
+`COMPANY_NAME` and `COMPANY_CREDIT` live in `shared/branding.py` beside
+`BOT_NAME`, and reach the pages through the same token substitution the product
+name already uses. They are deliberately separate constants. Mitra is what the
+candidate talks to and is introduced by name in the greeting; Appinventiv is who
+built it, is never spoken, and never reaches a prompt. There is a test asserting
+the company name appears nowhere in the interviewer's system instruction.
+
+The wording is the same everywhere: "by Appinventiv" at the top, "Appinventiv" at
+the bottom. The treatment is not, because the surfaces are not.
+
+- **Admin panel**, light. The header already held the product name and the words
+  "Admin panel"; the credit is pushed to the far end of that same bar, in the
+  same 13px muted grey as the label beside it, so it reads as chrome rather than
+  as a second brand. At the foot, a centred 12px line above a hairline rule, with
+  no background: a footer with a fill reads as a section of the product.
+- **Candidate join page, device check and thank you**, light. A 12px muted line
+  above and below the card, capped to the card's own width so it sits in the same
+  column. These three wrappers changed from a centred row to a centred column to
+  take them, which is the only layout change on the light screens.
+- **Call screen**, dark. The top bar was two items at opposite ends, so a third
+  between them centres itself without any of the three needing a width, which
+  matters because the timer changes width every second. Muted to a grey slightly
+  darker than the timer so the reading order is name, then time, then this. The
+  foot of this screen is the watermark rather than a second line of text, so the
+  same information is not given twice.
+
+**The watermark, and the position is the whole decision**
+
+The logo is reachable at `/assets/appinventiv-logo.png`, confirmed by request
+rather than assumed: the existing asset route serves it, 200, `image/png`.
+
+Three places were ruled out before choosing. The camera panel is the candidate's
+own face. The orb is how the interviewer signals it is speaking, and a second
+mark in that half would compete with the one thing on screen that has to stay
+unambiguous. The captions are what a candidate reads while answering and are an
+accessibility feature first.
+
+What is left is the chrome. The controls strip is centred buttons with genuine
+empty space at both ends, so the mark sits where the page was already blank, over
+no content at all, and at the opposite end of the screen from the orb. Below
+900px the controls fill the width they are given, so it drops onto its own line
+underneath rather than overlapping a button.
+
+**The artwork is transparent, and that was not the problem.** 91 percent of the
+file is fully transparent, the corners carry no matte, and it needs no white box
+removing. The problem is that it is near black ink, which on a `#0f1117` screen
+is invisible, so the page paints it white with `brightness(0) invert(1)`. That
+costs the blue in the mark: it is a two colour logo rendered in one. A supplied
+light-on-dark cut is the only thing that would bring the blue back, and is worth
+asking for.
+
+Sizing is against the ink rather than the box. The file is 1200x630 with the
+wordmark occupying only the middle 262px, so roughly seven tenths of the element
+height is padding baked into the artwork. At 40px tall the wordmark reads at
+about 17px, which is the size of the text beside it.
+
+**Job description templates**
+
+Six roles, one Markdown file each in `backend/jd_templates/`, served by a guarded
+`GET /jd-templates` that returns all six with their text in one response. About
+11KB, which is cheaper than a spinner over a box somebody is about to type into.
+Business Analyst, Project Manager, QA Engineer, Mobile Engineer (React Native),
+Marketing Manager, Social Media Content Specialist. The three that were asked for,
+plus the three roles a mobile services company refills constantly: someone to run
+the engagement, someone to test what it ships, and someone to build it.
+
+Each is around 320 words in the shape of the JDs already in the fixtures: about
+the role, what you will do, what we are looking for, nice to have. That is enough
+for the clarification chat to have something to ask about, which is the only bar
+that matters here.
+
+**Text only, and the boundary is the design.** A template fills the box. It does
+not decide what the interview tests: the clarification chat runs exactly as it
+did, the employer answers the same questions, and the `EvaluationSpec` with its
+competencies, weights and dealbreakers is produced the same way. No spec is
+pre-built and no step is skipped. There is a test asserting the templates contain
+none of the words "competency", "weight" or "dealbreaker", so a future edit cannot
+quietly turn one into a spec.
+
+**Chosen into an editable textarea, never attached as a file.** Picking a role
+loads the text and focuses it, and it is ordinary editable text from that moment.
+A template that could not be changed before the chat would be worse than none,
+because it would feed the model words the employer never meant and every
+competency after that would be derived from them. Writing from scratch still
+works, uploading a real file still works, and a file wins if somebody does both.
+Choosing a template over text already typed asks first.
+
+The title field is filled from the template only when it is empty, so a template
+never overwrites what the employer called the opening.
+
+**What is not verified**
+
+There is no JavaScript harness in this repo, so everything in `admin.js` ships
+unverified: the template buttons, the replace confirmation, the title autofill,
+and the `File` the typed text is sent as. The route behind it is tested, the
+templates are tested, and the copy is covered by `test_copy_style.py`. All of the
+CSS is unverified by definition, which is why the visual side needs a look.
+
+**Files**
+
+- `backend/shared/branding.py` — `COMPANY_NAME`, `COMPANY_CREDIT`,
+  `COMPANY_LOGO_URL`, and the note on what the artwork is.
+- `backend/app/main.py` — three tokens, and the guarded `/jd-templates` route.
+- `backend/app/jd_templates.py` — the loader, with the title read from each
+  file's own heading so the label and the text cannot disagree.
+- `backend/jd_templates/*.md` — six roles.
+- `frontend/admin/index.html`, `frontend/admin/admin.js` — header credit, footer,
+  template picker and its styling.
+- `frontend/candidate/index.html` — brand lines on three light screens, credit in
+  the call bar, watermark in the controls strip.
+- Tests in `test_api.py` and `test_interviews.py`.
+
+**Left undone**
+
+**A light-on-dark cut of the logo**, which would restore the blue on the call
+screen. The CSS filter is the honest substitute and is documented as such.
+
+**An employer cannot save their own template.** A file per role means adding one
+is a commit and a review, which is right for copy shown to a paying customer, and
+it means no migration and no drift between environments. Saving custom templates
+is a database feature nobody has asked for.
+
+**Confirm**
+
+```
+cd backend && uv run pytest -q                  # 754 passed
+```
+
+---
+
 ## 2026-08-18 — The term counter could not see the term block's own probe
 
 **What**

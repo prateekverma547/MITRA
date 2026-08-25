@@ -1392,3 +1392,60 @@ def test_the_panel_tells_a_dropped_report_apart_from_an_unscored_one():
 
     assert 'iv.feedback_status === "ready"' in panel
     assert "could not be opened" in panel
+
+
+async def test_the_template_list_needs_signing_in(client):
+    """Guarded like the rest of the panel. The sweep above would catch an
+    unguarded route; this says what the answer is when signed out."""
+    client.cookies.clear()
+    assert client.get("/jd-templates").status_code == 401
+
+
+async def test_the_template_list_carries_the_text(client):
+    """The panel loads all six at once rather than one request per role, so the
+    text has to be in this response."""
+    body = client.get("/jd-templates").json()
+
+    assert len(body) >= 6
+    first = body[0]
+    assert set(first) == {"slug", "title", "text"}
+    assert first["slug"] == "business-analyst"
+    assert "About the role" in first["text"]
+
+
+async def test_the_company_is_credited_at_both_ends_of_every_page(client):
+    """Who built it, on the panel and on every candidate screen.
+
+    Both pages already assert that no placeholder survives substitution, so this
+    checks the thing that test cannot: that the credit is actually in the markup
+    rather than a token nobody added.
+    """
+    from shared.branding import COMPANY_CREDIT, COMPANY_NAME
+
+    for page in (client.get("/admin").text, client.get("/join").text):
+        assert COMPANY_CREDIT in page
+        assert page.count(COMPANY_NAME) >= 2, "expected a credit at the top and the bottom"
+
+
+async def test_the_watermark_points_at_an_asset_that_exists(client):
+    """The call screen references the company logo by URL, and a 404 there is a
+    broken image over a live interview."""
+    from shared.branding import COMPANY_LOGO_URL
+
+    assert COMPANY_LOGO_URL in client.get("/join").text
+
+    served = client.get(COMPANY_LOGO_URL)
+    assert served.status_code == 200
+    assert served.headers["content-type"] == "image/png"
+
+
+async def test_the_interviewer_is_never_told_who_built_it(client):
+    """Mitra is who the candidate talks to. Appinventiv is who wrote it, and it
+    has no business in a prompt: an interviewer that introduced itself as the
+    vendor would be a different product."""
+    from bot.blueprint_source import load_blueprint
+    from bot.brain.brain import InterviewBrain
+    from shared.branding import COMPANY_NAME
+
+    brain = InterviewBrain(load_blueprint())
+    assert COMPANY_NAME.lower() not in brain.plan_turn().system_instruction.lower()

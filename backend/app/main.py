@@ -44,7 +44,17 @@ from blueprint.documents import DocumentError, extract_text
 from blueprint.generate import BlueprintGenerationError, BlueprintGenerator
 from blueprint.refine import BlueprintRefiner, RefinementError
 from bot.config import Settings, recording_enabled
-from shared.branding import BOT_FULL_NAME, BOT_NAME, FAVICON_URL, LOGO_URL, PRODUCT_TAGLINE
+from app.jd_templates import templates as load_jd_templates
+from shared.branding import (
+    BOT_FULL_NAME,
+    BOT_NAME,
+    COMPANY_CREDIT,
+    COMPANY_LOGO_URL,
+    COMPANY_NAME,
+    FAVICON_URL,
+    LOGO_URL,
+    PRODUCT_TAGLINE,
+)
 from shared.contracts import (
     MAX_DURATION_MINUTES,
     MIN_DURATION_MINUTES,
@@ -705,6 +715,12 @@ def _render_page(name: str) -> str:
         ("{{PRODUCT_TAGLINE}}", PRODUCT_TAGLINE),
         ("{{LOGO_URL}}", LOGO_URL),
         ("{{FAVICON_URL}}", FAVICON_URL),
+        # Who built it, as distinct from what the interviewer is called.
+        # Substituted here for the same reason the name is: one module
+        # decides it and every screen reads the same value.
+        ("{{COMPANY_NAME}}", COMPANY_NAME),
+        ("{{COMPANY_CREDIT}}", COMPANY_CREDIT),
+        ("{{COMPANY_LOGO_URL}}", COMPANY_LOGO_URL),
         # The interview-length rule, so the panel states the same numbers the
         # contract enforces instead of its own copy of them.
         ("{{DURATION_MIN}}", str(MIN_DURATION_MINUTES)),
@@ -772,6 +788,25 @@ async def join_page() -> HTMLResponse:
     see a meeting ID prompt and a consent notice, never a Daily URL.
     """
     return HTMLResponse(_render_page("candidate/index.html"), headers=NO_CACHE)
+
+
+@app.get("/jd-templates", dependencies=[Depends(require_admin)], include_in_schema=False)
+async def jd_templates() -> list[dict]:
+    """Starting points for a job description, for the profile screen.
+
+    Guarded like everything else in the panel. Nothing here is secret, but an
+    open endpoint is one more thing to reason about at the edge, and the only
+    caller is a screen you have to sign in to reach anyway.
+
+    The full text ships with the list rather than behind a second request per
+    role. Six templates is about 12KB, the panel is not on a phone network, and
+    it means picking one is instant instead of showing a spinner over a textarea
+    the employer is about to type into.
+    """
+    return [
+        {"slug": t.slug, "title": t.title, "text": t.text}
+        for t in load_jd_templates()
+    ]
 
 
 @app.get("/assets/{filename}", include_in_schema=False)

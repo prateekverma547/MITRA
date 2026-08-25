@@ -403,3 +403,50 @@ async def test_the_candidate_list_shows_where_each_interview_stands(client):
 
     assert client.get(f"/jobs/{job_id}/candidates").json()[0]["interview_status"] == "completed"
     assert client.get("/jobs").json()[0]["interviewed_count"] == 1
+
+
+# -- job description templates -----------------------------------------------
+
+
+def test_every_template_is_readable_and_titled():
+    """A slug in ORDER with no file is skipped, so an empty list would be a
+    silent failure rather than a loud one."""
+    from app.jd_templates import ORDER, templates
+
+    loaded = templates()
+    assert [t.slug for t in loaded] == list(ORDER)
+    for t in loaded:
+        assert t.title and not t.title.startswith("#")
+        # Enough for the clarification chat to have something to work with.
+        assert len(t.text.split()) > 150
+
+
+def test_a_templates_title_comes_from_its_own_heading():
+    """Kept in the file rather than in a second list, so the panel cannot label
+    a template one thing while the text the employer edits says another."""
+    from app.jd_templates import templates
+
+    by_slug = {t.slug: t for t in templates()}
+    assert by_slug["mobile-engineer"].title == "Mobile Engineer (React Native)"
+    assert by_slug["mobile-engineer"].text.startswith("# Mobile Engineer (React Native)")
+
+
+def test_templates_carry_no_dashes():
+    """Same rule as the rest of the product's voice: these are read by an
+    employer and then by a model, and the em dash is the tell."""
+    from app.jd_templates import templates
+
+    for t in templates():
+        assert "—" not in t.text and "–" not in t.text, t.slug
+
+
+def test_a_template_is_only_text_and_never_a_spec():
+    """The boundary this feature is defined by. Templates fill the JD box; the
+    clarification chat still decides what the interview tests."""
+    from app.jd_templates import templates
+
+    for t in templates():
+        lowered = t.text.lower()
+        assert "competenc" not in lowered
+        assert "weight" not in lowered
+        assert "dealbreaker" not in lowered

@@ -280,12 +280,26 @@ window.removeProfile = async (jobId) => {
   render();
 };
 
+/*  A starting point for the job description, never a replacement for the chat.
+ *
+ *  The template only fills the box. What the interview actually tests is still
+ *  decided by the clarification chat, which runs exactly as it did: the
+ *  employer answers the same questions and the EvaluationSpec is produced the
+ *  same way. Nothing here pre-builds a spec, and nothing here skips a step.
+ *
+ *  Loading it into an editable textarea rather than attaching it as a file is
+ *  the point. A template that could not be changed before the chat would be
+ *  worse than no template, because it would feed the model words the employer
+ *  never meant and every competency after that would be derived from them.
+ *  Writing from scratch and uploading a real file both still work, and an
+ *  uploaded file wins if somebody does both.
+ */
 function viewNewProfile() {
   app.innerHTML = `
     ${crumbs([{ label: "Profiles", href: "#/profiles" }, { label: "New profile" }])}
     <div class="card">
       <h2>New profile</h2>
-      <p class="sub">Name it, then upload the job description. Mitra reads the JD
+      <p class="sub">Name it, then give us the job description. Mitra reads the JD
         and asks you a few questions to work out what the interview should test.</p>
 
       <label class="lbl">What are you hiring for?</label>
@@ -297,7 +311,18 @@ function viewNewProfile() {
         same role apart.</div>
 
       <label class="lbl">Job description</label>
+      <div class="small muted" style="margin-bottom:8px">Start from one of these
+        and edit it, or write your own below, or upload a file.</div>
+      <div class="row" id="tpl" style="flex-wrap:wrap;gap:8px;margin-bottom:12px">
+        <span class="muted small">Loading templates…</span>
+      </div>
+      <textarea id="jdtext" rows="14" placeholder="Paste or write the job description here."></textarea>
+      <div class="small muted" style="margin-top:5px" id="tplnote"></div>
+
+      <label class="lbl">Or upload a file <span class="muted">(optional)</span></label>
       <input type="file" id="jd" accept=".pdf,.docx,.txt,.md" />
+      <div class="small muted" style="margin-top:5px">A file takes precedence over
+        the text above.</div>
 
       <div class="row" style="margin-top:18px">
         <button class="primary" id="up">Create profile</button>
@@ -306,19 +331,57 @@ function viewNewProfile() {
       <div class="err hidden" id="err"></div>
     </div>`;
 
+  const box = document.getElementById("jdtext");
+  const note = document.getElementById("tplnote");
+  let chosen = "";
+
+  // Templates are a convenience. If the request fails the row says so and the
+  // employer carries on with the textarea and the file input, which are the
+  // two routes that existed before this.
+  api("/jd-templates").then((list) => {
+    const row = document.getElementById("tpl");
+    if (!list.length) { row.innerHTML = `<span class="muted small">No templates.</span>`; return; }
+    row.innerHTML = list
+      .map((t) => `<button type="button" class="tplbtn" data-slug="${esc(t.slug)}">${esc(t.title)}</button>`)
+      .join("");
+    row.querySelectorAll(".tplbtn").forEach((button) => {
+      button.onclick = () => {
+        const template = list.find((t) => t.slug === button.dataset.slug);
+        // Anything already typed is somebody's work. Replacing it silently is
+        // the one move here that loses something that cannot be recovered.
+        if (box.value.trim() && box.value !== chosen &&
+            !confirm("Replace what you have written with this template?")) return;
+        box.value = template.text;
+        chosen = template.text;
+        note.textContent = "Loaded the " + template.title + " template. Edit it before you continue.";
+        const title = document.getElementById("title");
+        if (!title.value.trim()) title.value = template.title;
+        box.focus();
+      };
+    });
+  }).catch(() => {
+    document.getElementById("tpl").innerHTML =
+      `<span class="muted small">Templates could not be loaded. Write or upload a JD instead.</span>`;
+  });
+
   document.getElementById("up").onclick = async () => {
     const file = document.getElementById("jd").files[0];
+    const typed = box.value.trim();
     const err = document.getElementById("err");
-    if (!file) {
-      err.textContent = "Choose a job description file first.";
+    if (!file && !typed) {
+      err.textContent = "Add a job description, either as text or as a file.";
       err.classList.remove("hidden");
       return;
     }
+    err.classList.add("hidden");
     document.getElementById("up").disabled = true;
     document.getElementById("status").textContent = "Reading the job description…";
     try {
       const form = new FormData();
-      form.append("file", file);
+      // The endpoint takes a file, so typed text is sent as one. Named .md
+      // because that is what it is, and because source_filename is what the
+      // panel later shows as the provenance of the spec.
+      form.append("file", file || new File([typed], "job-description.md", { type: "text/markdown" }));
       form.append("title", document.getElementById("title").value);
       form.append("business_unit", document.getElementById("bu").value);
       const created = await api("/jobs", { method: "POST", body: form });

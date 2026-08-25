@@ -24,7 +24,28 @@
       position: sticky; top: 0; z-index: 10;
     }
     header .sub { color: var(--muted); font-size: 13px; }
-    main { max-width: 1080px; margin: 0 auto; padding: 26px 24px 80px; }
+    /* Who built the tool, pushed to the far end of the bar it shares with the
+       product name. Same size and colour as the "Admin panel" label beside it,
+       so it reads as one more piece of chrome rather than as a second brand
+       competing with the first. */
+    header .by { margin-left: auto; color: var(--muted); font-size: 13px; }
+    main { max-width: 1080px; margin: 0 auto; padding: 26px 24px 40px; }
+    /* The quiet end of the page. A rule above it and nothing else, because a
+       footer with a background reads as a section of the product. */
+    /* Template buttons on the profile screen. A quiet chip rather than a
+       primary action: choosing one is a shortcut, and creating the profile is
+       the thing the employer is actually here to do. */
+    button.tplbtn {
+      padding: 7px 12px; font-size: 13px; font-weight: 600;
+      border-radius: 999px; border: 1px solid var(--line);
+      background: #fff; color: var(--ink); cursor: pointer;
+    }
+    button.tplbtn:hover { border-color: var(--muted); }
+    footer.credit {
+      max-width: 1080px; margin: 0 auto; padding: 18px 24px 40px;
+      border-top: 1px solid var(--line);
+      color: var(--muted); font-size: 12px; text-align: center;
+    }
     h2 { font-size: 19px; margin: 0 0 4px; letter-spacing: -0.01em; }
     h3 { font-size: 15px; margin: 26px 0 10px; }
     p.sub { color: var(--muted); margin: 0 0 18px; }
@@ -201,8 +222,10 @@
   <header>
     <span class="brand">{{BOT_NAME}}</span>
     <span class="sub">Admin panel</span>
+    <span class="by">{{COMPANY_CREDIT}}</span>
   </header>
   <main id="app">Loading…</main>
+  <footer class="credit">{{COMPANY_NAME}}</footer>
   <script src="/admin/admin.js"></script>
 </body>
 </html>
