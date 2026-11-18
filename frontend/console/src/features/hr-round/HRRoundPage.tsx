@@ -16,6 +16,7 @@ import { Button } from "../../shell/ui/Button";
 import { CopyField, copyText } from "../../shell/ui/CopyField";
 import { PageSkeleton } from "../../shell/ui/Skeleton";
 import { useToast } from "../../shell/ui/Toast";
+import { AfterRound, HRDecision } from "./AfterRound";
 
 const SAVE_DELAY_MS = 700;
 
@@ -213,6 +214,14 @@ export function HRRoundPage() {
     load();
   }, [load]);
 
+  // While MITRA works on the round after the call, check back every few seconds.
+  const working = ["waiting_recording", "transcribing", "evaluating"].includes(view?.round?.eval_status ?? "");
+  useEffect(() => {
+    if (!working) return;
+    const timer = window.setTimeout(load, 5000);
+    return () => window.clearTimeout(timer);
+  }, [view, working, load]);
+
   async function act(kind: "book" | "end" | "cancel") {
     setBusy(kind);
     setError(null);
@@ -317,15 +326,7 @@ export function HRRoundPage() {
 
       {r && r.status === "completed" && (
         <div className="hr-grid">
-          <section className="hr-entry">
-            <div>
-              <h2 className="section-title">The HR round has ended</h2>
-              <p className="muted">
-                {r.asked.length} of {view.questions.length} questions asked. The transcript and MITRA's evaluation of it come
-                next; you will decide on Reject or Proceed to technical from there.
-              </p>
-            </div>
-          </section>
+          <AfterRound view={view} onChange={setView} />
           <SidePanel
             candidateId={view.candidate.id}
             questions={view.questions}
@@ -335,6 +336,8 @@ export function HRRoundPage() {
           />
         </div>
       )}
+
+      {r && r.status === "completed" && <HRDecision view={view} onDone={load} />}
 
       {r && (r.can_end || r.can_cancel) && (
         <div className="decision-bar decision-stack">

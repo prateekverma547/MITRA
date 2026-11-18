@@ -983,6 +983,33 @@ kbd {
 .board-card .meter-compact { grid-template-columns: 3rem minmax(60px, 1fr); }
 .board-card .meter-flag { grid-column: 1 / -1; }
 
+/* ---- after the HR round ------------------------------------------------------------------------ */
+
+.after-progress, .after-failed, .eval-card { background: var(--surface); border: 1px solid var(--rule); border-radius: 18px; padding: clamp(20px, 3vw, 32px); display: flex; flex-direction: column; gap: 16px; }
+.progress-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.progress-steps li { display: flex; gap: 14px; align-items: flex-start; padding: 10px 0; color: var(--faint); }
+.progress-steps li.active { color: var(--text); }
+.progress-steps li.done { color: var(--muted); }
+.progress-mark { width: 22px; height: 22px; display: grid; place-items: center; flex: none; color: var(--good); }
+.progress-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rule); }
+.progress-label { display: block; font-weight: 600; }
+.progress-note { display: block; font-size: var(--s-12); color: var(--muted); margin-top: 2px; }
+.hr-eval { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.eval-kicker { font-size: var(--s-12); color: var(--muted); font-weight: 500; }
+.eval-rec { font-family: var(--serif); font-size: var(--s-31); line-height: 1.15; margin-top: -8px; }
+.eval-card .mark-lg { align-self: flex-start; }
+.quote-jump { display: flex; flex-direction: column; gap: 4px; text-align: left; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; color: inherit; }
+.quote-jump:hover .cv-quote { border-left-color: var(--neon-b); }
+.quote-at { display: inline-flex; align-items: center; gap: 6px; font-size: var(--s-12); color: var(--signal); padding-left: 18px; }
+.transcript-panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 16px; overflow: hidden; }
+.transcript-panel summary { display: flex; align-items: center; gap: 8px; padding: 14px 18px; cursor: pointer; font-weight: 600; color: var(--muted); }
+.transcript-panel summary:hover { color: var(--text); }
+.transcript-hr { max-height: 60vh; border-top: 1px solid var(--rule); }
+@media (min-width: 561px) { .transcript-hr .line { grid-template-columns: 7.25rem minmax(0, 1fr); } }
+.line-at { margin-left: 8px; font-weight: 400; color: var(--faint); }
+.line.speaker-other p { color: var(--attention); font-style: italic; }
+.line.lit { background: var(--signal-soft); border-radius: 10px; margin: -6px; padding: 6px; transition: background-color 400ms ease; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

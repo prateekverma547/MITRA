@@ -114,6 +114,7 @@ async def create_meeting_token(
     expiry_seconds: int,
     is_owner: bool = False,
     user_name: str | None = None,
+    start_cloud_recording: bool = False,
 ) -> str:
     """Mint a short-lived meeting token for a room.
 
@@ -129,6 +130,11 @@ async def create_meeting_token(
     }
     if user_name:
         properties["user_name"] = user_name
+    if start_cloud_recording:
+        # Recording starts when this token's holder joins. Used for the HR
+        # round, where no bot is in the room to start it (hiring/hr_round.py).
+        properties["enable_recording"] = "cloud"
+        properties["start_cloud_recording"] = True
 
     async with aiohttp.ClientSession() as session:
         async with session.post(

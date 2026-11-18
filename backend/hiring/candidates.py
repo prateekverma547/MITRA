@@ -271,6 +271,23 @@ async def run_screening(candidate_id: str) -> None:
 # ---- the gate ------------------------------------------------------------------------------
 
 
+async def _hr_round_recommendation(session, candidate_id: str) -> str | None:
+    """MITRA's reading of the HR round, recorded beside HR's decision after it."""
+    from hiring.hr_evaluation import recommendation_text
+    from hiring.models import HRRound
+    from shared.screening import HRRoundEvaluation
+
+    hr = (
+        await session.execute(
+            select(HRRound).where(HRRound.candidate_id == candidate_id, HRRound.evaluation.isnot(None))
+            .order_by(HRRound.id.desc())
+        )
+    ).scalars().first()
+    if hr is None:
+        return None
+    return recommendation_text(HRRoundEvaluation.model_validate(hr.evaluation))
+
+
 def recommendation(fit: FitAnalysis) -> str:
     side = "below" if fit.below_threshold else "at or above"
     text = (
@@ -286,6 +303,8 @@ def recommendation(fit: FitAnalysis) -> str:
 
 
 async def gate_rules(session, candidate: Candidate, to: CandidateStage, reason: str | None) -> str | None:
+    if CandidateStage(candidate.stage) == CandidateStage.HR_DONE:
+        return await _hr_round_recommendation(session, candidate.id)
     """Extra rules at the screening gate. Returns the model recommendation to record.
 
     Proceeding to the HR round below the cut-off is allowed, decided by a

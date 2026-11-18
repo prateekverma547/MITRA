@@ -187,24 +187,28 @@ fit score; HR rejects or proceeds, and the decision is in the audit log.
       Needs you, activity, per-BU rows, score distribution and weekly flow; candidate
       directory with search, filters, sort and pages; ⌘K palette; job board view;
       `scripts/seed_demo_pipeline.py` for realistic demo data
-- [ ] HR round recording: one combined recording (decision 27), voices separated
+- [x] HR round recording: one combined recording (decision 27), voices separated
       by a transcription model after the call
 
 - [x] `round` field on the interview (`hr` / `technical`); the join path never
       spawns a bot for `hr` (a shared PR in `app/interviews.py`)
 - [x] HR round booking: a room, candidate credentials, and HR's own join from
       the console
-- [ ] Recording per participant (Daily raw-tracks), required for the HR round
-      regardless of `RECORDING_ENABLED`. Check the current Daily API first
-- [ ] After the call:
-  - [ ] each voice transcribed with OpenAI file transcription;
-  - [ ] the voices merged into one transcript ordered by spoken time;
-  - [ ] the raw transcript stored unchanged.
-- [ ] `evaluate_hr_round(transcript, questions, job) -> HRRoundEvaluation`:
+- [x] ~~Recording per participant (Daily raw-tracks)~~, superseded by decision
+      27: HR's owner token starts Daily cloud recording, whatever
+      `RECORDING_ENABLED` says, and the existing sweep collects the file
+- [x] After the call (`backend/hiring/hr_evaluation.py`):
+  - [x] the recording transcribed with `gpt-4o-transcribe-diarize`;
+  - [x] the voices told apart by which one asked the HR questions, with the
+        confidence stated, and turns ordered by spoken time;
+  - [x] the transcript stored unchanged on the round.
+- [x] `evaluate_hr_round(transcript, questions, job) -> HRRoundEvaluation`:
       soft-skill rubric, verified quotes, recommendation, findings for MITRA
+- [x] A failed step can be retried from where it stopped; a round that was
+      never recorded is completed on HR's notes, with a reason
 - [x] HR round screen: the credentials to send, the 10 questions as a
       checklist, and a notes box
-- [ ] Evaluation review, then Reject or Proceed to technical
+- [x] Evaluation review, then Reject, Not now or Proceed to technical
 - [ ] "Book technical" button, calling Track I's `book_technical()` (stub
       until it lands)
 - [ ] Send to BU head

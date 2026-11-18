@@ -77,13 +77,18 @@ async def lifespan(app: FastAPI):
     from app.recordings import sweep_enabled, sweep_forever
 
     sweeper = asyncio.create_task(sweep_forever()) if sweep_enabled() else None
+    # After an HR round: transcript, attribution, evaluation (hiring/hr_evaluation.py).
+    from hiring.hr_evaluation import hr_pipeline_forever, pipeline_enabled
+
+    hr_loop = asyncio.create_task(hr_pipeline_forever()) if pipeline_enabled() else None
     try:
         yield
     finally:
-        if sweeper is not None:
-            sweeper.cancel()
-            with suppress(asyncio.CancelledError):
-                await sweeper
+        for task in (sweeper, hr_loop):
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
 
 
 app = FastAPI(title=f"{BOT_NAME}: {BOT_FULL_NAME}", lifespan=lifespan)

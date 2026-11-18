@@ -20,16 +20,17 @@ import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import Depends, HTTPException
+from fastapi import BackgroundTasks, Depends, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from app.db import Candidate, Interview, InterviewStatus, Job, get_sessionmaker
+from app.db import Candidate, Interview, InterviewStatus, Job, RecordingStatus, get_sessionmaker
 from app.meeting import new_meeting_id, new_password
 from bot.config import Settings
 from bot.services import daily
 from hiring.api import router
+from hiring import hr_evaluation as pipeline
 from hiring.models import HRRound, Screening
 from hiring.stages import StageError, audit, move
 from org.auth import current_user, job_scope, require_role
@@ -53,6 +54,10 @@ class Progress(BaseModel):
 
 
 class CancelRequest(BaseModel):
+    reason: str
+
+
+class NotesCompletion(BaseModel):
     reason: str
 
 
@@ -118,6 +123,15 @@ async def _view(session, user: User, candidate: Candidate, job: Job) -> dict:
             "can_end": is_hr and interview.status == InterviewStatus.IN_PROGRESS,
             "can_cancel": is_hr and interview.status == InterviewStatus.SCHEDULED,
             "can_edit_notes": is_hr and interview.status != InterviewStatus.EXPIRED,
+            "recording_status": interview.recording_status,
+            "eval_status": hr.eval_status,
+            "eval_error": hr.eval_error,
+            "attribution": hr.attribution,
+            "transcript": hr.transcript,
+            "evaluation": hr.evaluation,
+            "can_retry": is_hr and hr.eval_status == pipeline.FAILED,
+            "can_complete_on_notes": is_hr and hr.eval_status == pipeline.FAILED
+            and candidate.stage == CandidateStage.HR_BOOKED,
         },
     }
 
@@ -190,6 +204,11 @@ async def join_hr_round(candidate_id: str, user: User = Depends(_hr)) -> dict:
             interview.status = InterviewStatus.IN_PROGRESS
             interview.started_at = datetime.now(UTC)
         hr.hr_joined_at = hr.hr_joined_at or datetime.now(UTC)
+        # HR's token starts the recording (decision 27); from here the sweep
+        # collects it once Daily has finished it.
+        if interview.recording_status == RecordingStatus.NOT_RECORDED:
+            interview.recording_status = RecordingStatus.RECORDING
+            interview.recording_started_at = datetime.now(UTC)
         await session.commit()
         room_name, room_url = interview.daily_room_name, interview.daily_room_url
 
@@ -197,6 +216,7 @@ async def join_hr_round(candidate_id: str, user: User = Depends(_hr)) -> dict:
     token = await daily.create_meeting_token(
         api_key=settings.daily_api_key, room_name=room_name,
         expiry_seconds=HR_TOKEN_MINUTES * 60, is_owner=True, user_name=user.name,
+        start_cloud_recording=True,
     )
     return {"room_url": room_url, "token": token}
 
@@ -228,6 +248,11 @@ async def end_hr_round(candidate_id: str, user: User = Depends(_hr)) -> dict:
         interview.status = InterviewStatus.COMPLETED
         interview.ended_at = now
         hr.ended_at = now
+        if interview.recording_status == RecordingStatus.RECORDING:
+            hr.eval_status = pipeline.WAITING
+        else:
+            hr.eval_status = pipeline.FAILED
+            hr.eval_error = "This round was not recorded: HR did not join it from the console."
         await audit(session, "hr_round_ended", by=user, subject_type="candidate", subject_id=candidate.id,
                     detail={"interview_id": interview.id, "asked": len(hr.questions_asked or [])})
         await session.commit()
@@ -248,6 +273,51 @@ async def cancel_hr_round(candidate_id: str, body: CancelRequest, user: User = D
         interview.status = InterviewStatus.EXPIRED
         try:
             await move(session, candidate, CandidateStage.READY_FOR_HR, by=user, reason=reason)
+        except StageError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+        await session.commit()
+        return await _view(session, user, candidate, job)
+
+
+@router.post("/candidates/{candidate_id}/hr-round/retry")
+async def retry_evaluation(candidate_id: str, background: BackgroundTasks, user: User = Depends(_hr)) -> dict:
+    """Try the after-call work again, from wherever it stopped."""
+    async with get_sessionmaker()() as session:
+        candidate, job = await _candidate(session, user, candidate_id)
+        found = await _latest(session, candidate_id)
+        if found is None or found[1].eval_status != pipeline.FAILED:
+            raise HTTPException(status_code=409, detail="There is nothing to retry.")
+        interview, hr = found
+        if hr.transcript:
+            hr.eval_status = pipeline.EVALUATING
+        elif interview.recording_status == RecordingStatus.STORED:
+            hr.eval_status = pipeline.TRANSCRIBING
+        elif interview.recording_status == RecordingStatus.RECORDING:
+            hr.eval_status = pipeline.WAITING
+        else:
+            raise HTTPException(status_code=409, detail="There is no recording to work from. Complete the round on your notes instead.")
+        hr.eval_error = None
+        await session.commit()
+        interview_id = interview.id
+        view = await _view(session, user, candidate, job)
+    background.add_task(pipeline.advance, interview_id)
+    return view
+
+
+@router.post("/candidates/{candidate_id}/hr-round/complete")
+async def complete_on_notes(candidate_id: str, body: NotesCompletion, user: User = Depends(_hr)) -> dict:
+    """When no recording could be evaluated, HR completes the round on their notes."""
+    reason = body.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=422, detail="Say why the round is being completed without MITRA's evaluation.")
+    async with get_sessionmaker()() as session:
+        candidate, job = await _candidate(session, user, candidate_id)
+        found = await _latest(session, candidate_id)
+        if found is None or found[1].eval_status != pipeline.FAILED:
+            raise HTTPException(status_code=409, detail="Only a round MITRA could not evaluate can be completed on notes.")
+        try:
+            await move(session, candidate, CandidateStage.HR_DONE, by=user, reason=reason,
+                       model_recommendation="No evaluation: the recording could not be evaluated.")
         except StageError as exc:
             raise HTTPException(status_code=exc.status, detail=exc.message) from exc
         await session.commit()

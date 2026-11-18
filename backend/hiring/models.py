@@ -113,3 +113,16 @@ class HRRound(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     hr_joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    #: Where the after-call work stands: not_started (round still open),
+    #: waiting_recording, transcribing, evaluating, ready, failed.
+    eval_status: Mapped[str] = mapped_column(String(24), default="not_started", server_default="not_started")
+    eval_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: The raw transcript, one entry per turn: speaker (hr, candidate, other),
+    #: text, start, end. Never edited after it is written.
+    transcript: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    #: How the voices were told apart, and how sure that is (decision 27).
+    attribution: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: shared.screening.HRRoundEvaluation, as JSON.
+    evaluation: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

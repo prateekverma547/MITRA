@@ -83,7 +83,9 @@ ALLOWED_MOVES: dict[tuple[CandidateStage, CandidateStage], frozenset[Actor]] = {
     (S.READY_FOR_HR, S.PARKED): _HR,
     (S.READY_FOR_HR, S.REJECTED): _HR,
     (S.HR_BOOKED, S.READY_FOR_HR): _SYS_HR,  # cancelled or no-show
-    (S.HR_BOOKED, S.HR_DONE): _SYS,
+    # Normally the system, once the evaluation is in. HR may complete it on
+    # their own notes, with a reason, when no recording could be evaluated.
+    (S.HR_BOOKED, S.HR_DONE): _SYS_HR,
     (S.HR_BOOKED, S.WITHDREW): _SYS_HR,
     (S.HR_DONE, S.READY_FOR_TECHNICAL): _HR,
     (S.HR_DONE, S.PARKED): _HR,

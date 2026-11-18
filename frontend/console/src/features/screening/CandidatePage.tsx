@@ -28,6 +28,7 @@ import {
   type HRQuestion,
 } from "../../contracts";
 import { BackButton } from "../../shell/ui/BackButton";
+import { Pips } from "../../shell/ui/Pips";
 import { Button, ButtonLink } from "../../shell/ui/Button";
 import { PageSkeleton } from "../../shell/ui/Skeleton";
 import { Spinner } from "../../shell/ui/Spinner";
@@ -144,18 +145,6 @@ function Screening() {
 
 const RATING_WORDS = ["Clearly lacking", "Adjacent only", "Claimed, no specifics", "Specific work", "Specific, owned, measured"];
 
-function Pips({ rating }: { rating: number | null }) {
-  if (rating === null) return <span className="pips-none">No evidence in the CV</span>;
-  return (
-    <span className="pips" role="img" aria-label={`${rating} of 4: ${RATING_WORDS[rating]}`}>
-      {[1, 2, 3, 4].map((n) => (
-        <span key={n} className={n <= rating ? "pip on" : "pip"} />
-      ))}
-      <span className="pips-word">{RATING_WORDS[rating]}</span>
-    </span>
-  );
-}
-
 function RatingRow({ r, total }: { r: CompetencyRating; total: number }) {
   return (
     <li className="rating">
@@ -163,7 +152,7 @@ function RatingRow({ r, total }: { r: CompetencyRating; total: number }) {
         <span className="rating-name">{r.competency_name}</span>
         <span className="rating-weight">{Math.round((r.weight / total) * 100)}% of the job</span>
       </div>
-      <Pips rating={r.rating} />
+      <Pips rating={r.rating} words={RATING_WORDS} none="No evidence in the CV" />
       {r.reasoning && <p className="rating-why">{r.reasoning}</p>}
       {r.evidence.map((q, i) => (
         <blockquote key={i} className="cv-quote">

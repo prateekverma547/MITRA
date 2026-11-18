@@ -251,6 +251,23 @@ export interface HRRoundState {
   can_end: boolean;
   can_cancel: boolean;
   can_edit_notes: boolean;
+  recording_status: string;
+  eval_status: "not_started" | "waiting_recording" | "transcribing" | "evaluating" | "ready" | "failed";
+  eval_error: string | null;
+  attribution: { method: string; confidence: "clear" | "likely" | "uncertain"; voices: number; other_voices: number } | null;
+  transcript: { index: number; speaker: "hr" | "candidate" | "other"; text: string; start: number; end: number }[] | null;
+  evaluation: HRRoundEvaluation | null;
+  can_retry: boolean;
+  can_complete_on_notes: boolean;
+}
+
+/** shared.screening.HRRoundEvaluation */
+export interface HRRoundEvaluation {
+  ratings: { name: string; rating: number | null; evidence: { text: string; turn_index: number; at_seconds: number }[]; reasoning: string }[];
+  questions_asked: string[];
+  recommendation: "proceed_to_technical" | "reject" | "discuss";
+  summary: string;
+  findings_for_technical: string[];
 }
 
 export interface HRRoundView {
