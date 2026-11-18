@@ -1,22 +1,21 @@
 """Console API for the hiring flow.
 
-Phase 0 has the one route every gate will use: moving a candidate, plus the
-history behind their current stage. Job requests, screening and the HR round
-arrive here in phases 1 and 2 (docs/TRACK_H.md).
+This module holds the route every gate uses, moving a candidate, plus the
+history behind their current stage. The other route modules register on the
+same router (`hiring/api.py`) and are imported at the bottom of this file.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.db import Candidate, Job, get_sessionmaker
+from hiring.api import router
 from hiring.models import DecisionRecord
 from hiring.stages import StageError, move
 from org.auth import job_scope, require_role
 from org.models import User
 from shared.stages import Actor, CandidateStage, Role, allowed_next
-
-router = APIRouter(prefix="/api", tags=["console: hiring"])
 
 _hr_or_bu_head = require_role(Role.HR, Role.BU_HEAD)
 _anyone_signed_in = require_role(Role.HR, Role.BU_HEAD, Role.ORG_ADMIN)
@@ -82,3 +81,7 @@ async def candidate_decisions(candidate_id: str, user: User = Depends(_anyone_si
             for r in rows
         ],
     }
+
+
+# Route modules that register on the same router. Imported for their effect.
+from hiring import jobs  # noqa: E402,F401

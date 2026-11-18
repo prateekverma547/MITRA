@@ -32,6 +32,12 @@ def _config(connection):
     return config
 
 
+def _head() -> str:
+    from alembic.script import ScriptDirectory
+
+    return ScriptDirectory.from_config(_config(None)).get_current_head()
+
+
 async def _run(fn):
     async with db.get_engine().begin() as connection:
         return await connection.run_sync(fn)
@@ -83,7 +89,7 @@ async def test_a_database_from_before_migrations_is_stamped_then_upgraded(databa
     job, cand, version = await _run(read)
     assert tuple(job) == ("open", None)
     assert cand[0] == "new"
-    assert version == "0002"
+    assert version == _head()
 
 
 async def test_running_it_twice_changes_nothing(database):

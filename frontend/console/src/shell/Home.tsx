@@ -3,6 +3,7 @@
 // may see, so nothing here filters by role for safety, only for layout.
 
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 import {
   CANDIDATE_STAGES,
@@ -48,7 +49,9 @@ function JobTable({ jobs }: { jobs: HomeJob[] }) {
         <tbody>
           {jobs.map((job) => (
             <tr key={job.id}>
-              <td className="job-title">{job.title}</td>
+              <td className="job-title">
+                <Link to={`/jobs/${job.id}`}>{job.title}</Link>
+              </td>
               <td>
                 <RequestStatus status={job.request_status} />
               </td>
@@ -134,9 +137,16 @@ export function Home() {
   const { me } = data;
   return (
     <section className="page">
-      <header className="page-header">
-        <h1>{TITLES[me.role](me.bu_name)}</h1>
-        {me.role === "org_admin" && <p className="muted">Read-only. Every BU, every job, every candidate.</p>}
+      <header className="page-header row">
+        <div>
+          <h1>{TITLES[me.role](me.bu_name)}</h1>
+          {me.role === "org_admin" && <p className="muted">Read-only. Every BU, every job, every candidate.</p>}
+        </div>
+        {me.role === "bu_head" && (
+          <Link className="button primary" to="/jobs/new">
+            New job request
+          </Link>
+        )}
       </header>
       <Summary data={data} />
       {data.business_units.length === 0 ? (

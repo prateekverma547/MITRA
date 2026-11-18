@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
 from loguru import logger
-from sqlalchemy import false, or_, select
+from sqlalchemy import and_, false, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.db import Job, get_sessionmaker, is_deployed
@@ -203,23 +203,34 @@ def require_role(*roles: Role) -> Callable:
 def job_scope(user: User) -> ColumnElement[bool]:
     """Which jobs this user may see, as a WHERE condition.
 
-    - BU head: their own BU's jobs, and nothing else. Jobs with no BU (made in
-      the old /admin panel) are not theirs.
-    - HR and org admin: every job in their organisation, plus jobs with no
-      organisation, which is how old /admin jobs appear.
+    - BU head: their own BU's jobs, drafts included, and nothing else. Jobs
+      with no BU (made in the old /admin panel) are not theirs.
+    - HR: every job in the organisation once the BU head has approved it.
+      A draft is still the BU head's own working document; it reaches HR on
+      Approve, which is the moment it is "sent to HR".
+    - Org admin: everything in the organisation, drafts included.
+    Both HR and admins also see jobs with no organisation, which is how old
+    /admin jobs appear.
     """
-    if Role(user.role) is Role.BU_HEAD:
+    role = Role(user.role)
+    if role is Role.BU_HEAD:
         if not user.bu_id:
             # A BU head without a BU sees nothing rather than everything.
             return false()
         return Job.bu_id == user.bu_id
-    return or_(Job.org_id == user.org_id, Job.org_id.is_(None))
+    in_org = or_(Job.org_id == user.org_id, Job.org_id.is_(None))
+    if role is Role.HR:
+        return and_(in_org, Job.request_status != "draft")
+    return in_org
 
 
 def can_see_job(user: User, job: Job) -> bool:
-    if Role(user.role) is Role.BU_HEAD:
+    role = Role(user.role)
+    if role is Role.BU_HEAD:
         return bool(user.bu_id) and job.bu_id == user.bu_id
-    return job.org_id in (user.org_id, None)
+    if job.org_id not in (user.org_id, None):
+        return False
+    return role is not Role.HR or job.request_status != "draft"
 
 
 async def visible_job_or_404(user: User, job_id: str, session) -> Job:

@@ -30,8 +30,14 @@ EMPLOYER_ROLE = "employer"
 
 SYSTEM = f"""\
 You are helping an employer define what a voice interview should evaluate. You
-have their job description. Your job is to ask the questions that turn it into a
-usable evaluation spec.
+have the role's title and usually its job description. Your job is to ask the
+questions that turn them into a usable evaluation spec.
+
+Sometimes there is no job description, only a title. Then everything you know
+about the role comes from this conversation: start by asking what the person in
+this role will actually do day to day, and allow yourself up to eight questions
+instead of six, because nothing is written down. Everything else below still
+applies, including that the spec may contain only what the employer told you.
 
 Job descriptions are marketing documents. They list responsibilities and
 generic virtues. What you need is different and more specific:
@@ -206,17 +212,19 @@ class ClarificationChat:
         self._client = AsyncOpenAI(api_key=self.api_key)
 
     async def next_turn(
-        self, *, jd_text: str, history: list[dict[str, str]]
+        self, *, jd_text: str, history: list[dict[str, str]], role_title: str = ""
     ) -> ClarificationReply:
         """Produce the next question, or the finished spec.
 
         Args:
-            jd_text: The parsed job description.
+            jd_text: The parsed job description. May be empty: a BU head can
+                describe the role in the conversation instead of uploading one.
             history: Prior turns as {"role": "assistant"|"employer", "content": ...}.
+            role_title: What the employer called the role.
         """
         messages = [
             {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": f"JOB DESCRIPTION:\n\n{jd_text}"},
+            {"role": "user", "content": _role_context(role_title, jd_text)},
         ]
         for turn in history:
             role = "assistant" if turn["role"] == INTERVIEWER_ROLE else "user"
@@ -294,6 +302,16 @@ class ClarificationChat:
         return ClarificationReply(
             reply=reply or _READY_TO_BUILD, done=True, spec=spec, inferred=inferred
         )
+
+
+def _role_context(role_title: str, jd_text: str) -> str:
+    title = f"ROLE TITLE: {role_title.strip()}\n\n" if role_title.strip() else ""
+    if jd_text.strip():
+        return f"{title}JOB DESCRIPTION:\n\n{jd_text}"
+    return (
+        f"{title}JOB DESCRIPTION: none was provided. Build your understanding of "
+        "the role from this conversation."
+    )
 
 
 def _build_spec(raw: dict) -> EvaluationSpec:

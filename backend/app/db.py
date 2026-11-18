@@ -189,6 +189,11 @@ class Job(Base):
     request_status: Mapped[str] = mapped_column(
         String(16), default="open", server_default="open"
     )
+    #: What the clarification chat assumed but the employer never said, from
+    #: the turn that finished the spec. Stored because "what MITRA understood"
+    #: must show these beside the spec every time it is opened, not only in
+    #: the reply that happened to carry them.
+    spec_inferred: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     clarification_turns: Mapped[list["ClarificationTurn"]] = relationship(
         back_populates="job", cascade="all, delete-orphan", order_by="ClarificationTurn.index"

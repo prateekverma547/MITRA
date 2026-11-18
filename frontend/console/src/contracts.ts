@@ -98,3 +98,63 @@ export interface Home {
   me: Me;
   business_units: HomeBusinessUnit[];
 }
+
+// ---- job requests (backend/hiring/jobs.py) ------------------------------------------
+
+/** shared.contracts.Competency */
+export interface Competency {
+  id: string;
+  name: string;
+  description: string;
+  weight: number;
+}
+
+/** The parts of shared.contracts.EvaluationSpec the console shows. */
+export interface Understanding {
+  role_title: string;
+  seniority: string;
+  experience_expectation: string;
+  duration_minutes: number;
+  tone?: string;
+  competencies: Competency[];
+  red_flags: string[];
+}
+
+export interface ChatTurn {
+  from: "mitra" | "you";
+  text: string;
+}
+
+export interface JobRequest {
+  id: string;
+  title: string;
+  bu_id: string | null;
+  bu_name: string | null;
+  request_status: "draft" | "open" | "closed";
+  spec_status: "awaiting_clarification" | "ready";
+  spec_version: number;
+  source_filename: string | null;
+  has_jd: boolean;
+  created_by: string | null;
+  created_at: string | null;
+  candidates: number;
+  understanding: Understanding | null;
+  inferred: string[];
+  chat: ChatTurn[];
+  can_chat: boolean;
+  can_edit: boolean;
+  can_approve: boolean;
+}
+
+/** One phrase for where a request stands, for lists and headers. */
+export function requestPhase(job: Pick<JobRequest, "request_status" | "spec_status">): {
+  label: string;
+  tone: StageTone;
+} {
+  const ready = job.spec_status === "ready";
+  if (job.request_status === "draft") {
+    return ready ? { label: "Ready to approve", tone: "attention" } : { label: "Being described", tone: "progress" };
+  }
+  if (job.request_status === "closed") return { label: "Closed", tone: "closed" };
+  return ready ? { label: "With HR", tone: "good" } : { label: "With HR, being revised", tone: "attention" };
+}

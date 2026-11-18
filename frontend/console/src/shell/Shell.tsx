@@ -32,8 +32,7 @@ export function Shell() {
         <div className="who">
           <div className="who-name">{me.name}</div>
           <div className="who-role">
-            {ROLE_LABELS[me.role]}
-            {me.bu_name ? ` · ${me.bu_name}` : ""}
+            {me.bu_name ? `${ROLE_LABELS[me.role]}, ${me.bu_name}` : ROLE_LABELS[me.role]}
           </div>
           <button type="button" className="link-button" onClick={handleSignOut}>
             Sign out

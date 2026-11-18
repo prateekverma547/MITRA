@@ -25,9 +25,7 @@ export function Welcome() {
             <Link className="door" to={`/sign-in?as=${door.role}`}>
               <span className="door-title">{door.title}</span>
               <span className="door-text">{door.text}</span>
-              <span className="door-go" aria-hidden="true">
-                Sign in →
-              </span>
+              <span className="door-go">Sign in as {door.title}</span>
             </Link>
           </li>
         ))}

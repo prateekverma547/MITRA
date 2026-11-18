@@ -150,12 +150,12 @@ home scoped to its role. CI is green.
 ### Phase 1: Job to screening (weeks 2–3)
 
 **BU head: job request**
-- [ ] New job request form: title (required), JD file (optional)
-- [ ] Chat UI over `clarify.py`, which works with or without a JD
-- [ ] "What MITRA understood": competencies and weights, depth, dealbreakers,
+- [x] New job request form: title (required), JD file (optional)
+- [x] Chat UI over `clarify.py`, which works with or without a JD
+- [x] "What MITRA understood": competencies and weights, depth, dealbreakers,
       duration, with assumptions marked; Edit goes back to the chat, Approve
       publishes it
-- [ ] Job request list with status; published jobs appear to HR under the BU
+- [x] Job request list with status; published jobs appear to HR under the BU
 
 **HR: lists and upload**
 - [ ] HR home: BU → job → candidates, with status chips and filters ("needs
