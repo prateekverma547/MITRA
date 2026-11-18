@@ -82,8 +82,9 @@ this file, **these win**; the later sections are kept for their reasoning.
   Track I (interview: candidate app, MITRA, proctoring, live view, report,
   analytics). Each owns its features from the model to the screen. Ownership,
   seams, shared files and merge rules are in
-  [docs/DEV_PLAN.md](docs/DEV_PLAN.md). Work on `h/*` or `i/*` branches off
-  `dev`; never push to `stg` (it auto-deploys) or `main` directly.
+  [docs/DEV_PLAN.md](docs/DEV_PLAN.md). Track H works on `track_h`, Track I on
+  `track_i`, both cut from `dev` and merged back by PR; never push to `dev`,
+  `stg` (it auto-deploys) or `main` directly.
 - **New changes add `changes/<date>-<slug>.md`** rather than editing
   `CHANGELOG.md`, which both tracks would otherwise conflict on.
 

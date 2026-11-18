@@ -426,7 +426,7 @@ Rules for every seam:
 | **Dependencies in their own PR.** Resolve a `uv.lock` conflict by running `uv lock`; resolve an npm lockfile conflict by reinstalling | Lockfile conflicts stay mechanical |
 | **Two frontend apps, two lockfiles.** `frontend/ui/` is imported by path | One workspace lock would conflict on every install |
 | **Tests live with their track** (directories in section 4) | New test files never collide |
-| **Short branches, daily rebase.** `h/<topic>` and `i/<topic>`, one to three days | Drift turns small conflicts into large ones |
+| **One track branch each, merged into `dev` often.** `track_h` and `track_i` are cut from `dev`. Each engineer merges their track into `dev` by PR at least twice a week and pulls `dev` back into their track daily | Drift turns small conflicts into large ones |
 
 Files that can still collide:
 
@@ -577,10 +577,11 @@ rate limit never stalls the other.
 ## 10. Phases
 
 ```
-main (production) ◄── stg (staging, auto-deploys) ◄── dev (integration) ◄── h/*  i/*
+main (production) ◄── stg (staging, auto-deploys) ◄── dev (integration) ◄── track_h
+                                                                          ◄── track_i
 ```
 
-Feature PRs merge into `dev` when CI is green and the other engineer has looked
+PRs from `track_h` and `track_i` merge into `dev` when CI is green and the other engineer has looked
 at anything in the shared list. Each phase ends with a live checkpoint on the
 `dev` environment. After a checkpoint passes, `dev` is promoted to `stg` and
 then `main`, **only when no interview is live.**
@@ -618,7 +619,8 @@ phase's work while the other closes the checkpoint.
     book_technical stub, <InterviewReport> with fixture reports.
   - backend/shared/, migrations and the shared list in DEV_PLAN.md section 4 are
     their own PR, reviewed by the other engineer, merged before the feature.
-  - Branch from dev as h/<topic>. Rebase on dev before starting work.
+  - Work on track_h. Before starting, `git pull origin dev` into it.
+  - Never push to dev, stg or main directly; dev changes arrive by PR.
   - Add changes/<date>-<slug>.md instead of editing CHANGELOG.md.
   ```
 
@@ -630,10 +632,10 @@ phase's work while the other closes the checkpoint.
 
 ## 12. Open items
 
-1. **Assign tracks.** Decide who takes H and who takes I, with GitHub
-   usernames; then add `CODEOWNERS` and each engineer's `CLAUDE.local.md`.
-2. **Push and branch.** After the live test, push `dev` and create
-   `h/foundation` and `i/foundation`.
+1. **Tracks assigned.** Track H: `sparshpatial5`. Track I: to be named, with
+   a GitHub username; then add `CODEOWNERS`.
+2. **Pushed and branched (2026-11-18).** `dev`, `track_h` and `track_i` are on
+   GitHub.
 3. **Railway `dev` environment.** Create it.
 4. **Text model.** Confirm `gpt-6.2-sol` is callable; until then the default is
    `gpt-6.1-sol`.
