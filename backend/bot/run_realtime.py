@@ -1,7 +1,10 @@
 """The realtime engine: one OpenAI Realtime model instead of STT -> LLM -> TTS.
 
-Selected with `INTERVIEW_ENGINE=realtime`. The default (`pipeline`) is the
-engine on `main`, untouched. Step 1 of docs/REALTIME_ARCHITECTURE.md.
+The default engine since 2026-11-18 (`bot/config.interview_engine`);
+`INTERVIEW_ENGINE=pipeline` selects the fallback. Step 1 of
+docs/REALTIME_ARCHITECTURE.md, plus what `dev` carried over from stg: candidate
+captions (`bot/realtime_captions.py`), presence that knows the interview is
+over, and the recording switch.
 
     Daily in -> [Silero VAD, measurement only] -> user aggregator
              -> OpenAI Realtime (hears, decides, speaks) -> Daily out
@@ -24,6 +27,7 @@ What is different and why:
 """
 
 import asyncio
+import time
 
 from loguru import logger
 from pipecat.frames.frames import LLMRunFrame, MetricsFrame
@@ -46,9 +50,10 @@ from bot.greeting import time_of_day
 from bot.observers import TranscriptObserver, TurnLatencyObserver, write_session_artifacts
 from bot.persistence import build_transcript, save_interview_result
 from bot.presence import RoomPresence, attach as attach_presence
+from bot.realtime_captions import RealtimeCaptions
 from bot.realtime_coordinator import REALTIME_TOOLS, RealtimeCoordinator
 from bot.realtime_prompt import build_realtime_instruction
-from bot.services.daily import build_transport
+from bot.services.daily import build_transport, stop_recording
 from bot.services.realtime import build_realtime_llm, realtime_session_dict
 from bot.silence import SilenceEscalation
 from bot.turn_taking import build_vad_analyzer
@@ -163,7 +168,10 @@ async def run_realtime_bot(
     coordinator = RealtimeCoordinator(blueprint=blueprint, llm=llm, session_id=session_id)
     coordinator.register_tools()
 
-    presence = attach_presence(transport, RoomPresence())
+    # Told when the interview is over, as on the pipeline engine (stg): an
+    # interview ends with the candidate leaving, and without this every
+    # interview recorded that departure as a dropped call.
+    presence = attach_presence(transport, RoomPresence(interview_over=lambda: coordinator.is_over))
 
     def exactly(text: str) -> str:
         return f'Say exactly this, word for word, and nothing else: "{text}"'
@@ -189,8 +197,13 @@ async def run_realtime_bot(
     )
 
     transcript_observer = TranscriptObserver()
+    # The offset between transcript time and recording time, so a click on a
+    # transcript line can seek the video. Same reasoning as run_bot.py.
+    transcript_clock_zero = time.time()
     latency_observer = TurnLatencyObserver()
     usage_observer = RealtimeUsageObserver()
+    # Sentence captions on the candidate page. Not RTVIObserver: see the module.
+    captions = RealtimeCaptions(session_id=session_id)
 
     pipeline = Pipeline(
         [
@@ -208,16 +221,40 @@ async def run_realtime_bot(
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
-        observers=[transcript_observer, latency_observer, usage_observer, silence, coordinator],
+        observers=[
+            transcript_observer,
+            latency_observer,
+            usage_observer,
+            silence,
+            coordinator,
+            captions,
+        ],
         idle_timeout_secs=IDLE_TIMEOUT_SECS,
         conversation_id=session_id,
     )
     silence.attach(worker)
     coordinator.attach(worker)
+    captions.attach(worker)
 
     @user_aggregator.event_handler("on_user_turn_idle")
     async def on_user_turn_idle(aggregator):
         await silence.handle_idle(aggregator)
+
+    # Recording, exactly as on the pipeline engine: off unless RECORDING_ENABLED
+    # is set, started when the bot joins rather than when the candidate does,
+    # and a failure to start never takes the interview down.
+    recording = {"on": False}
+
+    @transport.event_handler("on_joined")
+    async def on_joined(transport, data):
+        from bot.run_bot import begin_recording
+
+        recording["on"] = await begin_recording(
+            transport,
+            interview_id=interview_id,
+            session_id=session_id,
+            clock_zero=transcript_clock_zero,
+        )
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
@@ -252,6 +289,14 @@ async def run_realtime_bot(
     finally:
         await coordinator.stop()
         logger.info(f"[{session_id}] session ended ({coordinator.reason})")
+
+        if recording["on"]:
+            problem = await stop_recording(transport)
+            if problem:
+                logger.warning(
+                    f"[{session_id}] {problem} Daily closes it when the room "
+                    f"empties, so the file should still arrive."
+                )
 
         minutes = coordinator.elapsed_seconds / 60
         config = realtime_session_dict(instructions="", tools=[])

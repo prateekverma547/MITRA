@@ -191,6 +191,31 @@ def term_probing_disabled() -> bool:
     return os.environ.get(TERM_PROBING_DISABLED_ENV, "").strip().lower() in _TRUTHY
 
 
+#: Which voice engine runs an interview.
+#:
+#: **`realtime` is the default since 2026-11-18**, by product decision: one
+#: OpenAI Realtime model hears and speaks, and it was judged far smoother live
+#: than three hand-offs. `pipeline` (Deepgram -> gpt-4.1-mini -> ElevenLabs,
+#: steered turn by turn by the brain) stays as the fallback, and setting this to
+#: `pipeline` is the whole rollback. See docs/REALTIME_ARCHITECTURE.md.
+INTERVIEW_ENGINE_ENV = "INTERVIEW_ENGINE"
+REALTIME_ENGINE = "realtime"
+PIPELINE_ENGINE = "pipeline"
+ENGINES = (REALTIME_ENGINE, PIPELINE_ENGINE)
+DEFAULT_ENGINE = REALTIME_ENGINE
+
+
+def interview_engine() -> str:
+    """The engine to run, from the environment.
+
+    Unset or blank means the default. An unknown value also means the default
+    rather than a crash: a typo in a deploy setting must not stop interviews.
+    Callers that care can compare against the raw variable and warn.
+    """
+    value = os.environ.get(INTERVIEW_ENGINE_ENV, "").strip().lower()
+    return value if value in ENGINES else DEFAULT_ENGINE
+
+
 def filler_enabled() -> bool:
     """Whether the interviewer speaks while the next question is composed.
 

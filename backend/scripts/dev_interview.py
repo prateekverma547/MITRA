@@ -23,7 +23,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from loguru import logger  # noqa: E402
 
-from bot.config import MissingConfig, Settings  # noqa: E402
+from bot.config import (  # noqa: E402
+    ENGINES,
+    INTERVIEW_ENGINE_ENV,
+    PIPELINE_ENGINE,
+    MissingConfig,
+    Settings,
+    interview_engine,
+)
 from bot.services.daily import create_room  # noqa: E402
 
 ROOM_TTL_SECONDS = 60 * 60  # 1 hour — long enough for a full 40-minute session.
@@ -57,17 +64,22 @@ async def main() -> int:
     )
     parser.add_argument(
         "--engine",
-        choices=["pipeline", "realtime"],
-        default=os.environ.get("INTERVIEW_ENGINE", "pipeline"),
+        choices=list(ENGINES),
+        default=interview_engine(),
         help=(
-            "pipeline: Deepgram -> GPT-4.1-mini -> ElevenLabs (main). "
-            "realtime: one OpenAI Realtime model (docs/REALTIME_ARCHITECTURE.md)."
+            "realtime (default): one OpenAI Realtime model (docs/REALTIME_ARCHITECTURE.md). "
+            "pipeline: Deepgram -> GPT-4.1-mini -> ElevenLabs, the fallback."
         ),
     )
     args = parser.parse_args()
     no_brain = args.no_brain
     engine = args.engine
     blueprint_id = args.blueprint_id
+    if no_brain and engine != PIPELINE_ENGINE:
+        # Silently running the realtime engine would make a "baseline" that is
+        # not one.
+        logger.error("--no-brain is a pipeline-engine option; add --engine pipeline")
+        return 2
 
     try:
         settings = Settings.load()
@@ -96,7 +108,7 @@ async def main() -> int:
         "bot.run_bot",
         *bot_args,
         cwd=str(Path(__file__).resolve().parents[1]),
-        env={**os.environ, "INTERVIEW_ENGINE": engine},
+        env={**os.environ, INTERVIEW_ENGINE_ENV: engine},
     )
 
     # Let the bot verify credentials and join before we print anything, so the

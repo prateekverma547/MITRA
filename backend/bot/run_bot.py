@@ -38,6 +38,9 @@ from bot.brain.brain import InterviewBrain
 from bot.brain.drivers import OpenAIJudge
 from bot.brain_director import BrainDirector
 from bot.config import (
+    INTERVIEW_ENGINE_ENV,
+    REALTIME_ENGINE,
+    interview_engine,
     RECORDING_ENABLED_ENV,
     SESSIONS_DIR,
     MissingConfig,
@@ -167,12 +170,18 @@ async def run_bot(
     STT finalisation tune landed at the same time, and without this the two
     changes are inseparable.
 
-    `INTERVIEW_ENGINE=realtime` hands the whole session to the realtime engine
-    (`bot/run_realtime.py`): one OpenAI Realtime model in place of STT, LLM and
-    TTS. Unset or `pipeline` runs everything below, unchanged.
+    The realtime engine is the default (`bot/config.interview_engine`): the whole
+    session is handed to `bot/run_realtime.py`, one OpenAI Realtime model in
+    place of STT, LLM and TTS. `INTERVIEW_ENGINE=pipeline` runs everything below,
+    which is the fallback and the rollback.
     """
-    engine = os.environ.get("INTERVIEW_ENGINE", "pipeline").strip().lower()
-    if engine == "realtime":
+    raw_engine = os.environ.get(INTERVIEW_ENGINE_ENV, "").strip().lower()
+    engine = interview_engine()
+    if raw_engine and raw_engine != engine:
+        logger.warning(
+            f"[{session_id}] unknown {INTERVIEW_ENGINE_ENV}={raw_engine!r}; using {engine}"
+        )
+    if engine == REALTIME_ENGINE:
         from bot.run_realtime import run_realtime_bot
 
         await run_realtime_bot(
@@ -184,8 +193,6 @@ async def run_bot(
             timezone=timezone,
         )
         return
-    if engine != "pipeline":
-        logger.warning(f"[{session_id}] unknown INTERVIEW_ENGINE={engine!r}; using pipeline")
 
     settings = Settings.load()
 
