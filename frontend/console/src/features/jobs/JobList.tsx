@@ -8,6 +8,7 @@ export function JobList() {
   const { me } = useSession();
   const [jobs, setJobs] = useState<JobRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const isBuHead = me?.role === "bu_head";
 
   useEffect(() => {
     api
@@ -17,14 +18,14 @@ export function JobList() {
   }, []);
 
   return (
-    <section className="page">
-      <header className="page-header row">
+    <div className="page">
+      <header className="page-head">
         <div>
-          <h1>Job requests</h1>
-          <p className="muted">{me?.bu_name ? `${me.bu_name} business unit` : "All business units"}</p>
+          <h1 className="page-title">Job requests</h1>
+          <p className="page-sub">{me?.bu_name ? `Everything ${me.bu_name} has asked to hire for.` : "Every business unit."}</p>
         </div>
-        {me?.role === "bu_head" && (
-          <Link className="button primary" to="/jobs/new">
+        {isBuHead && (
+          <Link className="btn btn-primary" to="/jobs/new">
             New job request
           </Link>
         )}
@@ -33,24 +34,25 @@ export function JobList() {
       {error && <p className="error">{error}</p>}
       {!jobs && !error && <p className="muted">Loading…</p>}
       {jobs && jobs.length === 0 && (
-        <div className="empty-card">
-          <p>No job requests yet.</p>
-          {me?.role === "bu_head" && (
+        <div className="empty">
+          <p className="empty-title">No job requests yet</p>
+          {isBuHead && (
             <p className="muted">
-              Start one with a title. Upload a job description if you have one, or describe the role to MITRA in the
-              chat.
+              Start with a title. Upload a job description if you have one, or describe the role to MITRA in the chat.
             </p>
           )}
         </div>
       )}
       {jobs && jobs.length > 0 && (
         <div className="table-wrap">
-          <table>
+          <table className="table">
             <thead>
               <tr>
                 <th scope="col">Job</th>
                 <th scope="col">Where it stands</th>
-                <th scope="col">Candidates</th>
+                <th scope="col" className="num">
+                  Candidates
+                </th>
                 <th scope="col">Started</th>
               </tr>
             </thead>
@@ -59,15 +61,17 @@ export function JobList() {
                 const phase = requestPhase(job);
                 return (
                   <tr key={job.id}>
-                    <td className="job-title">
-                      <Link to={`/jobs/${job.id}`}>{job.title}</Link>
-                      {me?.role !== "bu_head" && job.bu_name && <div className="muted small">{job.bu_name}</div>}
+                    <td>
+                      <Link className="row-title" to={`/jobs/${job.id}`}>
+                        {job.title}
+                      </Link>
+                      {!isBuHead && job.bu_name && <span className="row-sub">{job.bu_name}</span>}
                     </td>
                     <td>
-                      <span className={`chip tone-${phase.tone}`}>{phase.label}</span>
+                      <span className={`mark tone-${phase.tone}`}>{phase.label}</span>
                     </td>
                     <td className="num">{job.candidates}</td>
-                    <td className="muted small">{job.created_at ? new Date(job.created_at).toLocaleDateString() : ""}</td>
+                    <td className="muted">{job.created_at ? new Date(job.created_at).toLocaleDateString() : ""}</td>
                   </tr>
                 );
               })}
@@ -75,6 +79,6 @@ export function JobList() {
           </table>
         </div>
       )}
-    </section>
+    </div>
   );
 }

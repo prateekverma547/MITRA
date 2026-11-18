@@ -8,15 +8,15 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../../api";
 import { requestPhase, type JobRequest, type Understanding } from "../../contracts";
 
-function Chat({ job, onUpdate }: { job: JobRequest; onUpdate: (job: JobRequest) => void }) {
+function Conversation({ job, onUpdate }: { job: JobRequest; onUpdate: (job: JobRequest) => void }) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const endRef = useRef<HTMLDivElement>(null);
+  const endRef = useRef<HTMLLIElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "nearest" });
-  }, [job.chat.length]);
+  }, [job.chat.length, busy]);
 
   async function send(event: FormEvent) {
     event.preventDefault();
@@ -35,26 +35,26 @@ function Chat({ job, onUpdate }: { job: JobRequest; onUpdate: (job: JobRequest) 
   }
 
   return (
-    <section className="card chat" aria-label="Conversation with MITRA">
-      <ol className="turns">
+    <section className="conversation" aria-label="Conversation with MITRA">
+      <ol className="transcript">
         {job.chat.map((turn, i) => (
-          <li key={i} className={`turn turn-${turn.from}`}>
-            <span className="turn-who">{turn.from === "mitra" ? "MITRA" : "You"}</span>
+          <li key={i} className={`line line-${turn.from}`}>
+            <span className="line-who">{turn.from === "mitra" ? "MITRA" : "You"}</span>
             <p>{turn.text}</p>
           </li>
         ))}
         {busy && (
-          <li className="turn turn-mitra" aria-live="polite">
-            <span className="turn-who">MITRA</span>
-            <p className="muted">Thinking…</p>
+          <li className="line line-mitra" aria-live="polite">
+            <span className="line-who">MITRA</span>
+            <p className="thinking">Thinking about your answer</p>
           </li>
         )}
+        <li ref={endRef} aria-hidden="true" className="transcript-end" />
       </ol>
-      <div ref={endRef} />
       {job.can_chat && (
-        <form className="reply" onSubmit={send}>
+        <form className="composer" onSubmit={send}>
           <label htmlFor="reply" className="visually-hidden">
-            Your reply
+            Your reply to MITRA
           </label>
           <textarea
             id="reply"
@@ -67,29 +67,34 @@ function Chat({ job, onUpdate }: { job: JobRequest; onUpdate: (job: JobRequest) 
                 e.currentTarget.form?.requestSubmit();
               }
             }}
-            placeholder="Reply to MITRA. Enter sends, Shift+Enter for a new line."
+            placeholder="Reply to MITRA"
             disabled={busy}
           />
+          <div className="composer-foot">
+            <span className="muted small">Enter sends. Shift and Enter starts a new line.</span>
+            <button type="submit" className="btn btn-primary" disabled={busy || !message.trim()}>
+              Send
+            </button>
+          </div>
           {error && (
             <p className="error" role="alert">
               {error}
             </p>
           )}
-          <button type="submit" className="primary" disabled={busy || !message.trim()}>
-            Send
-          </button>
         </form>
       )}
     </section>
   );
 }
 
-function UnderstandingCard({ u, inferred }: { u: Understanding; inferred: string[] }) {
-  const total = u.competencies.reduce((sum, c) => sum + c.weight, 0) || 1;
+function Brief({ u, inferred }: { u: Understanding; inferred: string[] }) {
+  const sum = u.competencies.reduce((s, c) => s + c.weight, 0) || 1;
   return (
-    <section className="card understanding" aria-labelledby="understood">
-      <h2 id="understood">What MITRA understood</h2>
-      <dl className="facts">
+    <article className="brief" aria-labelledby="understood">
+      <h2 id="understood" className="brief-title">
+        What MITRA understood
+      </h2>
+      <dl className="brief-facts">
         <div>
           <dt>Role</dt>
           <dd>{u.role_title}</dd>
@@ -103,53 +108,55 @@ function UnderstandingCard({ u, inferred }: { u: Understanding; inferred: string
           <dd>{u.experience_expectation}</dd>
         </div>
         <div>
-          <dt>Interview length</dt>
+          <dt>Interview</dt>
           <dd>{u.duration_minutes} minutes</dd>
         </div>
       </dl>
 
       {inferred.length > 0 && (
         <div className="assumed" role="note">
-          <strong>MITRA assumed these. You did not say them.</strong>
+          <p className="assumed-head">You did not tell MITRA these. It assumed them.</p>
           <ul>
             {inferred.map((item, i) => (
-              <li key={i}>{item}</li>
+              <li key={i}>
+                <mark>{item}</mark>
+              </li>
             ))}
           </ul>
-          <p className="small">If any is wrong, choose Edit and tell MITRA.</p>
+          <p className="muted small">If any is wrong, choose Edit and say so.</p>
         </div>
       )}
 
-      <h3>What the interview will test</h3>
-      <ul className="competencies">
+      <h3 className="brief-sub">What the interview will test</h3>
+      <ol className="weights">
         {u.competencies.map((c) => {
-          const share = Math.round((c.weight / total) * 100);
+          const share = Math.round((c.weight / sum) * 100);
           return (
             <li key={c.id}>
-              <div className="competency-head">
-                <span className="competency-name">{c.name}</span>
-                <span className="competency-weight">{share}%</span>
+              <div className="weight-head">
+                <span className="weight-name">{c.name}</span>
+                <span className="weight-value">{share}%</span>
               </div>
-              <div className="weight-bar" aria-hidden="true">
+              <div className="weight-track" aria-hidden="true">
                 <span style={{ width: `${share}%` }} />
               </div>
-              <p className="muted small">{c.description}</p>
+              <p className="weight-desc">{c.description}</p>
             </li>
           );
         })}
-      </ul>
+      </ol>
 
       {u.red_flags.length > 0 && (
         <>
-          <h3>Dealbreakers</h3>
-          <ul className="flags">
+          <h3 className="brief-sub">Dealbreakers</h3>
+          <ul className="dealbreakers">
             {u.red_flags.map((flag, i) => (
               <li key={i}>{flag}</li>
             ))}
           </ul>
         </>
       )}
-    </section>
+    </article>
   );
 }
 
@@ -181,86 +188,98 @@ export function JobDetail() {
     }
   }
 
+  const crumbs = (
+    <nav className="crumbs" aria-label="Breadcrumb">
+      <Link to="/jobs">Job requests</Link>
+    </nav>
+  );
+
   if (error && !job) {
     return (
-      <section className="page">
-        <p className="muted small">
-          <Link to="/jobs">Job requests</Link> /
-        </p>
+      <div className="page">
+        {crumbs}
         <p className="error">{error}</p>
-      </section>
+      </div>
     );
   }
-  if (!job) return <section className="page muted">Loading…</section>;
+  if (!job) return <div className="page muted">Loading…</div>;
 
   const phase = requestPhase(job);
   const describing = job.spec_status !== "ready";
+  const source = job.source_filename ? `From ${job.source_filename}` : "No job description uploaded";
 
   return (
-    <section className="page">
-      <header className="page-header">
-        <p className="muted small">
-          <Link to="/jobs">Job requests</Link> /
-        </p>
-        <div className="row">
-          <div>
-            <h1>{job.title}</h1>
-            <p className="muted">
-              {job.bu_name} business unit.{job.created_by ? ` Started by ${job.created_by}.` : ""}{" "}
-              {job.source_filename ? `Job description: ${job.source_filename}.` : "No job description uploaded."}
-            </p>
-          </div>
-          <span className={`chip tone-${phase.tone}`}>{phase.label}</span>
+    <div className="page page-wide">
+      {crumbs}
+      <header className="page-head">
+        <div>
+          <h1 className="page-title">{job.title}</h1>
+          <p className="page-sub">
+            {job.bu_name}
+            {job.created_by ? `, started by ${job.created_by}` : ""}. {source}.
+          </p>
         </div>
+        <span className={`mark mark-lg tone-${phase.tone}`}>{phase.label}</span>
       </header>
 
       {error && <p className="error">{error}</p>}
-
       {job.request_status === "open" && !describing && (
-        <p className="banner good">This request is with HR. They can now add candidates to it.</p>
+        <p className="notice notice-good">This request is with HR. They can now add candidates to it.</p>
       )}
       {job.request_status === "open" && describing && (
-        <p className="banner attention">
+        <p className="notice notice-attention">
           You are revising a request HR already has. When MITRA summarises it again, candidates who have not been
-          interviewed get an updated plan; anyone already interviewed keeps theirs.
+          interviewed get an updated plan. Anyone already interviewed keeps theirs.
         </p>
       )}
 
-      <div className={describing ? "split" : "split understood"}>
-        {job.understanding && <UnderstandingCard u={job.understanding} inferred={job.inferred} />}
-        {(describing || job.chat.length > 0) && (
-          <div className="chat-column">
-            {!describing && <h2 className="small-heading">The conversation</h2>}
-            <Chat job={job} onUpdate={setJob} />
-          </div>
-        )}
-      </div>
+      {describing ? (
+        <div className="describe">
+          <Conversation job={job} onUpdate={setJob} />
+          <aside className="describe-aside">
+            <h2 className="aside-title">What happens next</h2>
+            <p>MITRA asks one question at a time. When it has enough, it summarises the role for you to confirm.</p>
+            <p>Anything it assumes rather than hears from you is marked, so you can correct it before HR sees it.</p>
+          </aside>
+        </div>
+      ) : (
+        <div className="understood">
+          {job.understanding && <Brief u={job.understanding} inferred={job.inferred} />}
+          <details className="conversation-record">
+            <summary>The conversation ({job.chat.length} messages)</summary>
+            <Conversation job={job} onUpdate={setJob} />
+          </details>
+        </div>
+      )}
 
       {(job.can_edit || job.can_approve) && (
-        <div className="actions sticky-actions">
-          {job.can_approve && !confirming && (
-            <button type="button" className="primary" disabled={busy} onClick={() => setConfirming(true)}>
-              Approve and send to HR
-            </button>
-          )}
-          {confirming && (
-            <span className="confirm">
-              Send “{job.title}” to HR?{" "}
-              <button type="button" className="primary" disabled={busy} onClick={() => act("approve")}>
-                Yes, send it
-              </button>{" "}
-              <button type="button" className="button" disabled={busy} onClick={() => setConfirming(false)}>
+        <div className="decision-bar">
+          {confirming ? (
+            <>
+              <span className="decision-q">Send “{job.title}” to HR?</span>
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => act("approve")}>
+                Send to HR
+              </button>
+              <button type="button" className="btn" disabled={busy} onClick={() => setConfirming(false)}>
                 Not yet
               </button>
-            </span>
-          )}
-          {job.can_edit && !confirming && (
-            <button type="button" className="button" disabled={busy} onClick={() => act("edit")}>
-              Edit
-            </button>
+            </>
+          ) : (
+            <>
+              {job.can_approve && (
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={() => setConfirming(true)}>
+                  Approve and send to HR
+                </button>
+              )}
+              {job.can_edit && (
+                <button type="button" className="btn" disabled={busy} onClick={() => act("edit")}>
+                  Edit with MITRA
+                </button>
+              )}
+            </>
           )}
         </div>
       )}
-    </section>
+    </div>
   );
 }

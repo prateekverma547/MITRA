@@ -11,7 +11,7 @@ import { featureRoutes } from "./shell/registry";
 
 function Loading() {
   return (
-    <div className="center-screen" role="status">
+    <div className="loading-screen" role="status">
       <span className="muted">Loading…</span>
     </div>
   );
@@ -41,10 +41,10 @@ function RoleGate({ roles, children }: { roles?: Role[]; children: ReactNode }) 
   const { me } = useSession();
   if (roles && me && !roles.includes(me.role)) {
     return (
-      <section className="page">
-        <h1>Not available</h1>
-        <p className="muted">Your role does not include this screen.</p>
-      </section>
+      <div className="page">
+        <h1 className="page-title">Not available to your role</h1>
+        <p className="page-sub">This screen belongs to another role. Your home has everything yours can do.</p>
+      </div>
     );
   }
   return <>{children}</>;

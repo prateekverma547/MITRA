@@ -1,6 +1,8 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { ROLE_LABELS } from "../contracts";
 import { useSession } from "../session";
+import { Brand } from "./Brand";
+import { Footer } from "./Footer";
 import { navFor } from "./registry";
 
 export function Shell() {
@@ -17,31 +19,29 @@ export function Shell() {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <img src="/assets/TrasparentLogo.png" alt="" width={28} height={28} />
-          <span>MITRA</span>
-        </div>
-        <nav aria-label="Main">
+      <aside className="rail">
+        <Brand />
+        <nav aria-label="Main" className="rail-nav">
           {items.map((item) => (
-            <NavLink key={item.to} to={item.to} className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
+            <NavLink key={item.to} to={item.to} className={({ isActive }) => (isActive ? "rail-link active" : "rail-link")}>
               {item.label}
             </NavLink>
           ))}
         </nav>
         <div className="who">
-          <div className="who-name">{me.name}</div>
-          <div className="who-role">
-            {me.bu_name ? `${ROLE_LABELS[me.role]}, ${me.bu_name}` : ROLE_LABELS[me.role]}
-          </div>
-          <button type="button" className="link-button" onClick={handleSignOut}>
+          <span className="who-name">{me.name}</span>
+          <span className="who-role">{me.bu_name ? `${ROLE_LABELS[me.role]}, ${me.bu_name}` : ROLE_LABELS[me.role]}</span>
+          <button type="button" className="quiet-link" onClick={handleSignOut}>
             Sign out
           </button>
         </div>
       </aside>
-      <main className="content">
-        <Outlet />
-      </main>
+      <div className="main">
+        <main className="content">
+          <Outlet />
+        </main>
+        <Footer />
+      </div>
     </div>
   );
 }

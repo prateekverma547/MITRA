@@ -2,6 +2,8 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ROLE_LABELS, ROLES, type Role } from "../../contracts";
 import { useSession } from "../../session";
+import { Brand } from "../../shell/Brand";
+import { Footer } from "../../shell/Footer";
 
 function safeNext(next: string | null): string {
   // Only ever go somewhere inside the console.
@@ -34,40 +36,56 @@ export function SignIn() {
   }
 
   return (
-    <div className="center-screen">
-      <form className="card signin" onSubmit={submit} noValidate>
-        <h1>{doorRole ? `Sign in: ${ROLE_LABELS[doorRole]}` : "Sign in"}</h1>
-        <label htmlFor="email">Work email</label>
-        <input
-          id="email"
-          type="email"
-          autoComplete="username"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          autoFocus
-        />
-        <label htmlFor="password">Password</label>
-        <input
-          id="password"
-          type="password"
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-        <button type="submit" className="primary" disabled={busy || !email || !password}>
-          {busy ? "Signing in…" : "Sign in"}
-        </button>
-        <p className="muted small">
-          Your account decides what you can see. <Link to="/">Back</Link>
-        </p>
-      </form>
+    <div className="public">
+      <header className="public-top">
+        <Link to="/" className="brand-link" aria-label="MITRA home">
+          <Brand />
+        </Link>
+      </header>
+
+      <main className="signin-page">
+        <form className="signin" onSubmit={submit} noValidate>
+          <h1>{doorRole ? `Sign in as ${ROLE_LABELS[doorRole]}` : "Sign in"}</h1>
+          <p className="muted">Use your work email. Your account decides what you can see.</p>
+
+          <div className="field">
+            <label htmlFor="email">Work email</label>
+            <input
+              id="email"
+              type="email"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoFocus
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+          <button type="submit" className="btn btn-primary btn-block" disabled={busy || !email || !password}>
+            {busy ? "Signing in…" : "Sign in"}
+          </button>
+          <Link to="/" className="quiet-link">
+            Choose a different way in
+          </Link>
+        </form>
+      </main>
+
+      <Footer />
     </div>
   );
 }
