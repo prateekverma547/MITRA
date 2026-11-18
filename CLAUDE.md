@@ -13,10 +13,37 @@
 > | [docs/BRAIN.md](docs/BRAIN.md) | the interview brain and its invariants |
 > | [docs/DECISIONS.md](docs/DECISIONS.md) | every decision with its measurement |
 > | [docs/OPERATIONS.md](docs/OPERATIONS.md) | running the deployed system |
+> | [docs/DEV_PLAN.md](docs/DEV_PLAN.md) | **the current plan**: two tracks, their seam, how they merge |
+> | [docs/REALTIME_ARCHITECTURE.md](docs/REALTIME_ARCHITECTURE.md) | the realtime engine, Director, proctoring design |
 >
 > The milestone plan below is now **history rather than instruction**, all six
 > are delivered. It is kept because the Definition of Done for each records what
 > "working" was taken to mean, which is often the thing a later change breaks.
+
+## Current direction (2026-11-18): read before the rules below
+
+Product decisions taken on 2026-11-18. Where they contradict a later section of
+this file, **these win**; the later sections are kept for their reasoning.
+
+- **The realtime engine is the main engine** (`bot/run_realtime.py`, OpenAI
+  Realtime speech-to-speech). This supersedes "Pipecat pipeline, NOT OpenAI
+  Realtime" below. The pipeline engine (Deepgram -> gpt-4.1-mini -> ElevenLabs)
+  stays as the fallback: `INTERVIEW_ENGINE=pipeline`. The rules about not
+  interrupting, never fabricating, verified quotes and humans deciding all
+  still hold, and the Director (brain + judge over an independent Deepgram
+  transcript) is how they are enforced on the realtime engine.
+- **Proctoring and a live human supervisor are in scope.** This supersedes their
+  "out of scope" entries below. Notes only: the supervisor never speaks.
+  Proctoring is evidence for a person, never a score, never in Mitra's context.
+- **React + Vite + TypeScript** for the new console, supervisor dashboard and
+  candidate app. The old plain-JS `/admin` and `/join` stay until cutover.
+- **Two tracks, two engineers, two Claude accounts.** Track C (candidate and
+  interview intelligence) and Track S (supervisor and console). Ownership,
+  shared files, branching and the merge rules are in
+  [docs/DEV_PLAN.md](docs/DEV_PLAN.md). Work on `c/*` or `s/*` branches off
+  `dev`; never push to `stg` (it auto-deploys) or `main` directly.
+- **New changes add `changes/<date>-<slug>.md`** rather than editing
+  `CHANGELOG.md`, which both tracks would otherwise conflict on.
 
 **MITRA**, Machine Interviewer for Talent Review & Assessment. The bot
 introduces itself to candidates as "Mitra". The name lives in
