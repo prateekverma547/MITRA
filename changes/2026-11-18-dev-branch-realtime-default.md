@@ -11,7 +11,7 @@ the interviewer says, as they did on stg.
 **Why**
 
 The realtime engine was judged far smoother live, and it is the base for the
-supervisor and proctoring work. Both engineers need one starting point that has
+live view and proctoring work. Both engineers need one starting point that has
 everything, and `docs/DEV_PLAN.md` is the plan built on it.
 
 **How**

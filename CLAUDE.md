@@ -32,15 +32,19 @@ this file, **these win**; the later sections are kept for their reasoning.
   interrupting, never fabricating, verified quotes and humans deciding all
   still hold, and the Director (brain + judge over an independent Deepgram
   transcript) is how they are enforced on the realtime engine.
-- **Proctoring and a live human supervisor are in scope.** This supersedes their
-  "out of scope" entries below. Notes only: the supervisor never speaks.
-  Proctoring is evidence for a person, never a score, never in Mitra's context.
-- **React + Vite + TypeScript** for the new console, supervisor dashboard and
-  candidate app. The old plain-JS `/admin` and `/join` stay until cutover.
+- **Proctoring and live watching are in scope.** This supersedes their "out of
+  scope" entries below. The employer who planned an interview can watch it live
+  from the console: booking returns two links, the candidate's join link and a
+  live view link for that interview behind the console login. Notes only: the
+  employer never speaks into the call. Proctoring is evidence for a person,
+  never a score, never in Mitra's context.
+- **React + Vite + TypeScript** for the new console (planning, live view,
+  reports) and the new candidate app. The old plain-JS `/admin` and `/join`
+  stay until cutover.
 - **Two tracks, two engineers, two Claude accounts.** Track C (candidate and
-  interview intelligence) and Track S (supervisor and console). Ownership,
-  shared files, branching and the merge rules are in
-  [docs/DEV_PLAN.md](docs/DEV_PLAN.md). Work on `c/*` or `s/*` branches off
+  interview intelligence) and Track E (employer console). Ownership, shared
+  files, branching and the merge rules are in
+  [docs/DEV_PLAN.md](docs/DEV_PLAN.md). Work on `c/*` or `e/*` branches off
   `dev`; never push to `stg` (it auto-deploys) or `main` directly.
 - **New changes add `changes/<date>-<slug>.md`** rather than editing
   `CHANGELOG.md`, which both tracks would otherwise conflict on.
