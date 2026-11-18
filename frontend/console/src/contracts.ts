@@ -260,3 +260,97 @@ export interface HRRoundView {
   can_book: boolean;
   round: HRRoundState | null;
 }
+
+// ---- dashboards, directory, search (backend/hiring/insights.py) ---------------------------
+
+export type GroupKey = "screening" | "hr" | "technical" | "bu_head" | "shortlisted" | "closed";
+
+export interface Overview {
+  scope: { business_units: { id: string; name: string }[]; bu: string | null; days: number };
+  kpis: {
+    open_jobs: number;
+    draft_jobs: number;
+    active_candidates: number;
+    needs_you: number;
+    screened: number;
+    passed_screen: number;
+    added_by_week: number[];
+    decided_by_week: number[];
+  };
+  pipeline: { key: GroupKey; label: string; count: number }[];
+  by_bu: { bu_id: string | null; name: string; open_jobs: number; groups: Record<GroupKey, number>; total: number }[];
+  needs_you: {
+    candidate_id: string;
+    name: string;
+    job_id: string;
+    job_title: string;
+    bu_name: string | null;
+    stage: CandidateStage;
+    action: string;
+    waiting_days: number;
+  }[];
+  activity: { at: string | null; actor: string; candidate_id: string; candidate: string; job_title: string; to: CandidateStage; reason: string | null }[];
+  scores: { bins: number[]; threshold: number | null; screened: number; passed: number };
+  weeks: string[];
+}
+
+export interface DirectoryItem {
+  id: string;
+  name: string;
+  stage: CandidateStage;
+  group: GroupKey;
+  job: { id: string; title: string };
+  bu_name: string | null;
+  score_percent: number | null;
+  threshold_percent: number | null;
+  enough_evidence: boolean | null;
+  below: boolean;
+  needs: string | null;
+  waiting_days: number;
+  added: string | null;
+}
+
+export interface Directory {
+  total: number;
+  page: number;
+  page_size: number;
+  items: DirectoryItem[];
+  facets: { groups: Record<GroupKey, number>; needs_me: number; below: number };
+  business_units: { id: string; name: string }[];
+  groups: { key: GroupKey; label: string }[];
+}
+
+export interface SearchResults {
+  candidates: { id: string; name: string; stage: CandidateStage; job_title: string }[];
+  jobs: { id: string; title: string; bu_name: string | null; request_status: string }[];
+  business_units: { id: string; name: string }[];
+}
+
+export function initials(name: string | null | undefined): string {
+  const parts = (name ?? "?").trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "?") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+
+export function ago(iso: string | null): string {
+  if (!iso) return "";
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+/** Mirrors backend/hiring/insights.py GROUPS. */
+export const GROUPS: { key: GroupKey; label: string; stages: CandidateStage[] }[] = [
+  { key: "screening", label: "Screening", stages: ["new", "screened"] },
+  { key: "hr", label: "HR round", stages: ["ready_for_hr", "hr_booked", "hr_done"] },
+  { key: "technical", label: "Technical", stages: ["ready_for_technical", "technical_booked", "technical_done"] },
+  { key: "bu_head", label: "With BU head", stages: ["with_bu_head", "on_hold"] },
+  { key: "shortlisted", label: "Shortlisted", stages: ["shortlisted"] },
+  { key: "closed", label: "Closed", stages: ["rejected", "parked", "withdrew"] },
+];
+export function groupOf(stage: CandidateStage): GroupKey {
+  return GROUPS.find((g) => g.stages.includes(stage))?.key ?? "screening";
+}

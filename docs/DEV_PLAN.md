@@ -99,6 +99,8 @@ These override the matching lines in CLAUDE.md, which says so at its top.
 | 24 | **Check Intelligence** tab in the admin panel: one interview turn by turn in phase 2; trends across interviews in phase 4 |
 | 25 | **UI polish is the last phase.** Live tracking and Check Intelligence are built properly early |
 | 26 | **A screening score needs evidence behind 75% of the job's weight.** Below that it reads "too little evidence to judge", and proceeding needs a reason, as for a low score. Found live: a product manager's CV scored 50% for an LLM job on 10% of the weight. Same 75% rule the report uses for interview coverage |
+| 27 | **The HR round is recorded as one combined recording** (no S3 bucket, so Daily's per-person recording is unavailable). After the call, a transcription model separates the two voices and code works out which is HR from the questions they ask. Attribution can occasionally be wrong, so evaluation quotes say which speaker they were attributed to |
+| 28 | **Dashboards are role-scoped on the server and built to the dataviz skill's rules:** validated palettes, a table view for every chart, filters in one row above what they scope |
 
 ## 2. Feature catalogue
 
@@ -107,6 +109,8 @@ accepted into scope on 2026-11-18. **Owner** is the track (section 4); **Ph** is
 the phase (section 10).
 
 ### Organisation and access
+
+_Added 2026-11-18: the dashboard (pipeline, Needs you, activity, per-BU, scores, weekly flow), the candidate directory (search, filters, sort, pages), the ⌘K command palette and the job board view, all Track H._
 
 | Feature | Owner | Ph |
 | --- | --- | --- |

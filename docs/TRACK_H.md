@@ -25,7 +25,7 @@ the live view, the report, Check Intelligence and analytics.
 
 | | Paths |
 | --- | --- |
-| **Yours** | `backend/org/`, `backend/hiring/`, `backend/blueprint/clarify.py`, `backend/blueprint/documents.py`, `frontend/console/src/shell/`, `frontend/console/src/features/{auth,jobs,screening,hr-round,results,org,transparency,admin-users}/`, `backend/tests/org/`, `backend/tests/hiring/` |
+| **Yours** | `backend/org/`, `backend/hiring/`, `backend/screening/`, `backend/blueprint/clarify.py`, `backend/blueprint/documents.py`, `frontend/console/src/shell/`, `frontend/console/src/features/{auth,jobs,screening,hr-round,directory,results,org,transparency,admin-users}/`, `backend/tests/org/`, `backend/tests/hiring/` |
 | **Track I's, do not edit** | `backend/bot/`, `backend/feedback/`, `backend/proctoring/`, `backend/live/`, `backend/analytics/`, `backend/blueprint/generate.py`, `backend/blueprint/refine.py`, `frontend/candidate-app/`, `frontend/ui/`, `frontend/console/src/features/{live,report,analytics}/` |
 | **Shared: one PR at a time, the other engineer reviews** | `backend/shared/`, `backend/app/main.py`, `backend/app/db.py`, `backend/app/interviews.py`, `backend/app/meeting.py`, `backend/migrations/`, `pyproject.toml` + `uv.lock`, `Dockerfile`, consent copy, `CLAUDE.md`, `docs/DEV_PLAN.md` |
 
@@ -182,6 +182,13 @@ home scoped to its role. CI is green.
 fit score; HR rejects or proceeds, and the decision is in the audit log.
 
 ### Phase 2: HR round (weeks 3–5)
+
+- [x] Dashboards and scale (added 2026-11-18): role-scoped overview with pipeline,
+      Needs you, activity, per-BU rows, score distribution and weekly flow; candidate
+      directory with search, filters, sort and pages; ⌘K palette; job board view;
+      `scripts/seed_demo_pipeline.py` for realistic demo data
+- [ ] HR round recording: one combined recording (decision 27), voices separated
+      by a transcription model after the call
 
 - [x] `round` field on the interview (`hr` / `technical`); the join path never
       spawns a bot for `hr` (a shared PR in `app/interviews.py`)

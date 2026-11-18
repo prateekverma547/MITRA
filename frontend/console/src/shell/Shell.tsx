@@ -1,20 +1,23 @@
-import { Briefcase, Home as HomeIcon, LogOut } from "lucide-react";
+import { Briefcase, Home as HomeIcon, LogOut, Search, Users } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { ROLE_LABELS } from "../contracts";
 import { useSession } from "../session";
 import { Brand } from "./Brand";
+import { CommandPalette, useCommandPalette } from "./CommandPalette";
 import { Footer } from "./Footer";
 import { navFor } from "./registry";
 import { Button } from "./ui/Button";
 
-const ICONS: Record<string, typeof HomeIcon> = { "/home": HomeIcon, "/jobs": Briefcase };
+const ICONS: Record<string, typeof HomeIcon> = { "/home": HomeIcon, "/jobs": Briefcase, "/candidates": Users };
 
 export function Shell() {
   const { me, signOut } = useSession();
   const navigate = useNavigate();
   const [leaving, setLeaving] = useState(false);
+  const palette = useCommandPalette();
   if (!me) return null;
+  const mac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
 
   const items = [{ to: "/home", label: "Home", order: 0 }, ...navFor(me.role)];
 
@@ -28,6 +31,11 @@ export function Shell() {
     <div className="shell">
       <aside className="rail">
         <Brand />
+        <button type="button" className="rail-search" onClick={() => palette.setOpen(true)}>
+          <Search size={16} aria-hidden="true" />
+          <span>Search</span>
+          <kbd>{mac ? "⌘K" : "Ctrl K"}</kbd>
+        </button>
         <nav aria-label="Main" className="rail-nav">
           {items.map((item) => {
             const Icon = ICONS[item.to];
@@ -58,6 +66,7 @@ export function Shell() {
         </main>
         <Footer />
       </div>
+      <CommandPalette open={palette.open} onClose={() => palette.setOpen(false)} />
     </div>
   );
 }

@@ -1,8 +1,16 @@
-import { UserPlus } from "lucide-react";
+import { Columns3, Rows3, UserPlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../api";
-import { STAGE_LABELS, STAGE_TONES, type CandidateSummary, type JobCandidates } from "../../contracts";
+import {
+  GROUPS,
+  STAGE_LABELS,
+  STAGE_TONES,
+  groupOf,
+  initials,
+  type CandidateSummary,
+  type JobCandidates,
+} from "../../contracts";
 import { BackButton } from "../../shell/ui/BackButton";
 import { ButtonLink } from "../../shell/ui/Button";
 import { RowLink } from "../../shell/ui/RowLink";
@@ -29,6 +37,21 @@ export function CandidateList() {
   const [data, setData] = useState<JobCandidates | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const [view, setView] = useState<"table" | "board">(() => {
+    try {
+      return (localStorage.getItem("mitra.candidates.view") as "table" | "board") || "table";
+    } catch {
+      return "table";
+    }
+  });
+  function choose(v: "table" | "board") {
+    setView(v);
+    try {
+      localStorage.setItem("mitra.candidates.view", v);
+    } catch {
+      // Private windows refuse storage; the choice just will not stick.
+    }
+  }
 
   useEffect(() => {
     api
@@ -83,15 +106,27 @@ export function CandidateList() {
         </div>
       ) : (
         <>
-          <div className="segmented" role="group" aria-label="Show">
-            {FILTERS.map((f) => (
-              <button key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
-                {f.label}
+          <div className="filters">
+            <div className="segmented" role="group" aria-label="Show">
+              {FILTERS.map((f) => (
+                <button key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            <div className="segmented view-toggle" role="group" aria-label="Layout">
+              <button type="button" aria-pressed={view === "table"} onClick={() => choose("table")}>
+                <Rows3 size={14} aria-hidden="true" /> Table
               </button>
-            ))}
+              <button type="button" aria-pressed={view === "board"} onClick={() => choose("board")}>
+                <Columns3 size={14} aria-hidden="true" /> Board
+              </button>
+            </div>
           </div>
           {shown.length === 0 ? (
             <p className="muted">Nobody here matches that filter.</p>
+          ) : view === "board" ? (
+            <Board candidates={shown} />
           ) : (
             <div className="table-wrap">
               <table className="table table-fixed">
@@ -130,6 +165,45 @@ export function CandidateList() {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+
+/** Columns by step, for seeing a job's whole pipeline at once. Read-only:
+ * moving someone happens on their page, where reasons and rules apply. */
+function Board({ candidates }: { candidates: CandidateSummary[] }) {
+  return (
+    <div className="board">
+      {GROUPS.map((g) => {
+        const cards = candidates.filter((c) => groupOf(c.stage) === g.key);
+        return (
+          <section key={g.key} className="board-col" aria-label={g.label}>
+            <header className="board-head">
+              <span className={`swatch seg-${g.key}`} aria-hidden="true" />
+              <span>{g.label}</span>
+              <span className="board-n">{cards.length}</span>
+            </header>
+            <div className="board-cards">
+              {cards.length === 0 && <span className="board-empty">Nobody</span>}
+              {cards.map((c) => (
+                <Link key={c.id} to={`/candidates/${c.id}`} viewTransition className="board-card">
+                  <span className="board-card-head">
+                    <span className="avatar avatar-sm" aria-hidden="true">
+                      {initials(c.name)}
+                    </span>
+                    <span className="board-name">{c.name}</span>
+                  </span>
+                  <span className={`mark tone-${STAGE_TONES[c.stage]}`}>{STAGE_LABELS[c.stage]}</span>
+                  {c.score_percent !== null && (
+                    <ScoreMeter score={c.score_percent} threshold={c.threshold_percent} enoughEvidence={c.enough_evidence} compact />
+                  )}
+                </Link>
+              ))}
+            </div>
+          </section>
+        );
+      })}
     </div>
   );
 }
