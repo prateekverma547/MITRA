@@ -29,6 +29,10 @@ dependencies = [
     # "Asia/Calcutta", a perfectly valid alias, and it only produced the right
     # greeting because the fallback happened to be the same place.
     "tzdata>=2024.1",
+    # Versioned schema changes. The organisation platform adds tables and
+    # foreign keys to tables that already hold real interviews, which the
+    # add-a-nullable-column step in app/db.py cannot do (docs/DEV_PLAN.md).
+    "alembic>=1.13",
 ]
 
 [dependency-groups]

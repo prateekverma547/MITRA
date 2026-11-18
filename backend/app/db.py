@@ -174,6 +174,22 @@ class Job(Base):
     #: are planned against a spec that has since moved on.
     spec_version: Mapped[int] = mapped_column(default=1, server_default="1")
 
+    # The organisation platform (docs/DEV_PLAN.md). Nullable because jobs made
+    # in the old /admin panel have no organisation, BU or creator; scoping
+    # treats them as the organisation's, visible to HR and admins only.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organisations.id"), nullable=True, index=True
+    )
+    bu_id: Mapped[str | None] = mapped_column(
+        ForeignKey("business_units.id"), nullable=True, index=True
+    )
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    #: draft (the BU head is still describing it), open (approved, HR can see
+    #: it), closed. Old /admin jobs were usable at once, so they read as open.
+    request_status: Mapped[str] = mapped_column(
+        String(16), default="open", server_default="open"
+    )
+
     clarification_turns: Mapped[list["ClarificationTurn"]] = relationship(
         back_populates="job", cascade="all, delete-orphan", order_by="ClarificationTurn.index"
     )
@@ -231,6 +247,16 @@ class Candidate(Base):
     #: ahead of this, the plan is stale: it is testing for something the
     #: employer has since changed their mind about.
     spec_version: Mapped[int] = mapped_column(default=1, server_default="1")
+
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organisations.id"), nullable=True, index=True
+    )
+    #: Where they stand in the hiring flow: `shared.stages.CandidateStage`.
+    #: Only `hiring.stages.move()` changes it, and every change leaves a row in
+    #: `decisions`.
+    stage: Mapped[str] = mapped_column(
+        String(32), default="new", server_default="new", index=True
+    )
 
     job: Mapped[Job] = relationship(back_populates="candidates")
     interviews: Mapped[list["Interview"]] = relationship(
@@ -388,7 +414,25 @@ class Interview(Base):
     #: this instead of a player.
     recording_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organisations.id"), nullable=True, index=True
+    )
+
     candidate: Mapped[Candidate] = relationship(back_populates="interviews")
+
+
+#: Packages that define tables on this `Base` outside this file. Each track
+#: keeps its tables in its own `models.py` (docs/DEV_PLAN.md section 6), so
+#: they are listed here once rather than imported ad hoc: anything that needs
+#: the whole schema (migrations, `create_all`) calls `load_models()` first.
+MODEL_MODULES: tuple[str, ...] = ("org.models", "hiring.models")
+
+
+def load_models() -> None:
+    import importlib
+
+    for name in MODEL_MODULES:
+        importlib.import_module(name)
 
 
 _engine = None
@@ -421,9 +465,44 @@ async def create_all() -> None:
     Renames, type changes and backfills are not attempted — they need real
     migrations, which arrive with real data.
     """
+    load_models()
     async with get_engine().begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
         await connection.run_sync(_add_missing_columns)
+
+
+#: The revision that describes the schema as it was before migrations existed.
+BASELINE_REVISION = "0001"
+
+
+async def prepare_schema() -> None:
+    """Bring the database to the latest migration. Run at startup.
+
+    Three cases:
+    - a fresh database: every migration runs, from the baseline up;
+    - a database `create_all` built before migrations existed (stg,
+      production): stamped at the baseline, which matches what `create_all`
+      made, then upgraded from there;
+    - an already-migrated database: whatever is new runs.
+    """
+    load_models()
+    async with get_engine().begin() as connection:
+        await connection.run_sync(_upgrade_to_head)
+
+
+def _upgrade_to_head(connection) -> None:
+    from pathlib import Path
+
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import inspect
+
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config.attributes["connection"] = connection
+    tables = set(inspect(connection).get_table_names())
+    if "alembic_version" not in tables and "jobs" in tables:
+        command.stamp(config, BASELINE_REVISION)
+    command.upgrade(config, "head")
 
 
 def _add_missing_columns(connection) -> None:
@@ -457,3 +536,9 @@ async def reset_engine() -> None:
         await _engine.dispose()
     _engine = None
     _sessionmaker = None
+
+
+# Register every track's tables on `Base` as soon as this module is imported,
+# so a foreign key to `organisations` or `users` always has its table. The
+# modules import `Base` from here, which already exists at this point.
+load_models()

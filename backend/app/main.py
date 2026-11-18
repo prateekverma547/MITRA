@@ -31,7 +31,7 @@ from app.db import (
     InterviewStatus,
     Job,
     SpecStatus,
-    create_all,
+    prepare_schema,
     get_sessionmaker,
 )
 from blueprint.clarify import (
@@ -66,7 +66,7 @@ from shared.contracts import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await create_all()
+    await prepare_schema()
 
     # Recordings arrive from Daily after the call rather than during it, and
     # they have to be deleted ten days later. Both are clock-driven, neither can
