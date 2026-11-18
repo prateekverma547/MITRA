@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "candidate_id": "cand_fixture_ai_01",
+  "job_id": "job_fixture_ai_engineer",
+  "ratings": [
+    {
+      "competency_id": "llm_apps",
+      "competency_name": "LLM application engineering",
+      "weight": 0.25,
+      "rating": 3,
+      "evidence": [
+        "Added a lab-test booking agent stack to a live FastAPI health chatbot without modifying a single line of the two existing versions."
+      ],
+      "reasoning": "Shipped LLM features into a live product; retrieval design itself is not described."
+    },
+    {
+      "competency_id": "adaptation_serving",
+      "competency_name": "Model adaptation and serving",
+      "weight": 0.2,
+      "rating": 4,
+      "evidence": [
+        "bf16 LoRA on SageMaker ml.g7e.2xlarge, 914 training examples",
+        "Quantised to GPTQ 4-bit at 14.2 GB with statistically flat accuracy against the bf16 baseline."
+      ],
+      "reasoning": "Fine-tuned and quantised a model for production, with a stated baseline."
+    },
+    {
+      "competency_id": "evaluation",
+      "competency_name": "Evaluation and honest measurement",
+      "weight": 0.2,
+      "rating": 4,
+      "evidence": [
+        "Reached 97.08 percent decision accuracy against the GPT-4o reference ceiling.",
+        "Reported that the prong-open detector reached roughly 0.50 AUROC, which is chance"
+      ],
+      "reasoning": "Reports numbers against a named reference and reports a negative result plainly."
+    },
+    {
+      "competency_id": "realtime_voice",
+      "competency_name": "Real-time and voice systems",
+      "weight": 0.15,
+      "rating": 4,
+      "evidence": [
+        "Built six production voice agents on LiveKit Agents with OpenAI Realtime"
+      ],
+      "reasoning": "Direct production voice-agent experience."
+    },
+    {
+      "competency_id": "deployment_observability",
+      "competency_name": "Deployment and observability",
+      "weight": 0.1,
+      "rating": 3,
+      "evidence": [
+        "Built the observability stack for an internal AI governance platform"
+      ],
+      "reasoning": "Built observability tooling; own-service debugging is implied rather than shown."
+    },
+    {
+      "competency_id": "client_communication",
+      "competency_name": "Client communication",
+      "weight": 0.1,
+      "rating": null,
+      "evidence": [],
+      "reasoning": "The CV reports one recommendation to a client but nothing about how it was delivered or received."
+    }
+  ],
+  "score_percent": 90.3,
+  "assessed_weight_percent": 90.0,
+  "threshold_percent": 50.0,
+  "summary": "Strong production record in voice agents, fine-tuning and evaluation. Client communication is not evidenced in the CV and is a good topic for the HR round.",
+  "experience_note": "About five years in ML, two of them on voice and LLM work. Meets the JD's 4+ years.",
+  "identity_fields_removed": [
+    "name",
+    "location"
+  ],
+  "model": "fixture",
+  "prompt_version": "fixture"
+}

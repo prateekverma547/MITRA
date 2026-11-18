@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "candidate_id": "cand_fixture_ai_01",
+  "interview_id": "int_fixture_hr_01",
+  "ratings": [
+    {
+      "name": "Honesty with stakeholders",
+      "rating": 3,
+      "evidence": [
+        {
+          "text": "We told them the number was chance and showed them why the labels were the problem.",
+          "turn_index": 7,
+          "at_seconds": 312.4,
+          "speaker": "candidate"
+        }
+      ],
+      "reasoning": "Illustrative fixture: delivered an unwelcome finding with its cause."
+    },
+    {
+      "name": "Communication",
+      "rating": 3,
+      "evidence": [
+        {
+          "text": "I start with what the model gets wrong, then what it costs them.",
+          "turn_index": 11,
+          "at_seconds": 488.0,
+          "speaker": "candidate"
+        }
+      ],
+      "reasoning": "Illustrative fixture: structured, plain explanation."
+    },
+    {
+      "name": "Logistics",
+      "rating": null,
+      "evidence": [],
+      "reasoning": "Notice period not discussed."
+    }
+  ],
+  "questions_asked": [
+    "hr1",
+    "hr2",
+    "hr3",
+    "hr4",
+    "hr7",
+    "hr8"
+  ],
+  "recommendation": "proceed_to_technical",
+  "summary": "Illustrative fixture. Clear and candid about results; logistics still open.",
+  "findings_for_technical": [
+    "How the 97.08 percent decision accuracy was measured and on what data",
+    "Client communication is covered; one confirming question is enough"
+  ],
+  "model": "fixture",
+  "prompt_version": "fixture"
+}

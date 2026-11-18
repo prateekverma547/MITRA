@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "candidate_id": "cand_fixture_ai_01",
+  "from_stage": "screened",
+  "to_stage": "ready_for_hr",
+  "actor": "hr",
+  "actor_user_id": "user_fixture_hr",
+  "reason": null,
+  "model_recommendation": "score 90.3% (threshold 50%)"
+}

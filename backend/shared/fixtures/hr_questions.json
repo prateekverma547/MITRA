@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "candidate_id": "cand_fixture_ai_01",
+  "job_id": "job_fixture_ai_engineer",
+  "questions": [
+    {
+      "id": "hr1",
+      "text": "Walk me through what you own end to end in your current role.",
+      "why": "Anchors the timeline behind the CV bullets."
+    },
+    {
+      "id": "hr2",
+      "text": "Tell me about a time a client wanted a number your results did not support.",
+      "why": "No CV evidence for client communication; the JD values honesty about results."
+    },
+    {
+      "id": "hr3",
+      "text": "How did the jewellery client react when you said the detector was at chance?",
+      "why": "The CV reports the finding but not how it was delivered."
+    },
+    {
+      "id": "hr4",
+      "text": "Describe a deadline you could not move. What did you cut?",
+      "why": "The JD says the deadline rarely moves."
+    },
+    {
+      "id": "hr5",
+      "text": "Tell me about feedback on your work you disagreed with.",
+      "why": "Teamwork, beyond the skills list."
+    },
+    {
+      "id": "hr6",
+      "text": "You took sole ownership of an inherited service. How did you get up to speed?",
+      "why": "A claim of ownership with little detail."
+    },
+    {
+      "id": "hr7",
+      "text": "The role is hybrid, three days in Noida. Does that work for you?",
+      "why": "Stated in the JD."
+    },
+    {
+      "id": "hr8",
+      "text": "What do you want next that you do not have now?",
+      "why": "Motivation for a move."
+    },
+    {
+      "id": "hr9",
+      "text": "What did you change in your work recently because of something new in the field?",
+      "why": "Learning in a fast-moving field."
+    },
+    {
+      "id": "hr10",
+      "text": "What is your notice period, and what are your expectations?",
+      "why": "Logistics."
+    }
+  ],
+  "model": "fixture",
+  "prompt_version": "fixture"
+}
