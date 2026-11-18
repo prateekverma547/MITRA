@@ -59,3 +59,31 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
+
+
+class Screening(Base):
+    """CV screening for one candidate: the fit analysis and the HR questions.
+
+    One row per candidate, replaced on a re-run. It lives here rather than as
+    columns on `candidates` so Track H's screening never edits the shared table.
+
+    status: `waiting` (CV uploaded, HR has not chosen Proceed), `running`,
+    `ready`, `failed`. Screening starts on Proceed rather than at upload,
+    because the flow asks HR to confirm the CV was read correctly first, and
+    screening a CV they are about to replace would be wasted work.
+    """
+
+    __tablename__ = "screenings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    candidate_id: Mapped[str] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="waiting", server_default="waiting")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: shared.screening.FitAnalysis, as JSON.
+    fit_analysis: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: shared.screening.HRQuestionSet, as JSON.
+    hr_questions: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

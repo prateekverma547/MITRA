@@ -158,24 +158,25 @@ home scoped to its role. CI is green.
 - [x] Job request list with status; published jobs appear to HR under the BU
 
 **HR: lists and upload**
-- [ ] HR home: BU → job → candidates, with status chips and filters ("needs
+- [x] HR home: BU → job → candidates, with status chips and filters ("needs
       me", "below threshold", "this week")
-- [ ] CV upload with Re-upload or Proceed
+- [x] CV upload with Re-upload or Proceed
 
 **Screening**
-- [ ] `analyse_fit(job, cv) -> FitAnalysis`:
-  - [ ] identity removed first;
-  - [ ] ratings 0–4 with CV quotes, the quotes verified in code;
-  - [ ] the % computed in code, plus the assessed share of weight and the
+- [x] `analyse_fit(job, cv) -> FitAnalysis`:
+  - [x] identity removed first;
+  - [x] ratings 0–4 with CV quotes, the quotes verified in code;
+  - [x] the % computed in code, plus the assessed share of weight and the
         reasoning;
-  - [ ] run as a background task the moment the CV is uploaded.
-- [ ] `hr_questions(job, cv, fit) -> HRQuestionSet`: 10 questions, each with a
+  - [x] run as a background task when HR chooses Proceed (the flow asks HR to
+        confirm the CV first, so screening a file about to be replaced is avoided).
+- [x] `hr_questions(job, cv, fit) -> HRQuestionSet`: 10 questions, each with a
       "why we're asking"
-- [ ] Fit analysis screen: overall %, a per-competency chart, reasoning tied to
+- [x] Fit analysis screen: overall %, a per-competency chart, reasoning tied to
       CV lines, "no evidence" items, the 10 questions
-- [ ] Gates:
-  - [ ] below 50%: Reject (red), or Proceed anyway with a reason;
-  - [ ] at or above 50%: Not now, or Begin HR round.
+- [x] Gates:
+  - [x] below 50%: Reject (red), or Proceed anyway with a reason;
+  - [x] at or above 50%: Not now, or Begin HR round.
 
 **Checkpoint:** a BU head raises a job; HR uploads a CV and sees an evidenced
 fit score; HR rejects or proceeds, and the decision is in the audit log.

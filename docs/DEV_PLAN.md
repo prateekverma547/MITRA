@@ -98,6 +98,7 @@ These override the matching lines in CLAUDE.md, which says so at its top.
 | 23 | **No captions** on the candidate's screen, neither Mitra's nor their own. On-screen integrity reminders are separate and stay |
 | 24 | **Check Intelligence** tab in the admin panel: one interview turn by turn in phase 2; trends across interviews in phase 4 |
 | 25 | **UI polish is the last phase.** Live tracking and Check Intelligence are built properly early |
+| 26 | **A screening score needs evidence behind 75% of the job's weight.** Below that it reads "too little evidence to judge", and proceeding needs a reason, as for a low score. Found live: a product manager's CV scored 50% for an LLM job on 10% of the weight. Same 75% rule the report uses for interview coverage |
 
 ## 2. Feature catalogue
 

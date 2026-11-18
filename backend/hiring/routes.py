@@ -45,7 +45,11 @@ async def move_candidate(
     async with get_sessionmaker()() as session:
         candidate = await _visible_candidate(session, user, candidate_id)
         try:
-            record = await move(session, candidate, body.to, by=user, reason=body.reason)
+            recommendation = await gate_rules(session, candidate, body.to, body.reason)
+            record = await move(
+                session, candidate, body.to, by=user, reason=body.reason,
+                model_recommendation=recommendation,
+            )
         except StageError as exc:
             raise HTTPException(status_code=exc.status, detail=exc.message) from exc
         await session.commit()
@@ -84,4 +88,5 @@ async def candidate_decisions(candidate_id: str, user: User = Depends(_anyone_si
 
 
 # Route modules that register on the same router. Imported for their effect.
-from hiring import jobs  # noqa: E402,F401
+from hiring import candidates, jobs  # noqa: E402,F401
+from hiring.candidates import gate_rules  # noqa: E402

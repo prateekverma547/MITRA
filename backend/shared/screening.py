@@ -29,6 +29,16 @@ SCHEMA_VERSION = 1
 #: changes which buttons HR is offered; it never moves a candidate.
 DEFAULT_THRESHOLD_PERCENT = 50.0
 
+#: How much of the job's weight the CV must speak to before its score means
+#: anything. "No evidence" is left out of the score, which is right (a missing
+#: line is not a zero), but it means a CV that says almost nothing relevant can
+#: score well on the one thing it does mention. Found live: a product manager's
+#: CV scored 50% for an LLM engineering job, judged on 10% of the weight. Below
+#: this line the screen is "too little evidence to judge", treated at the gate
+#: like a low score. Same 75%-by-weight rule the feedback report applies to
+#: interview coverage (feedback/score.py), for the same reason.
+MIN_ASSESSED_WEIGHT_PERCENT = 75.0
+
 #: Ratings run 0-4, the same scale the technical report uses.
 MAX_RATING = 4
 
@@ -127,6 +137,16 @@ class FitAnalysis(BaseModel):
     @property
     def below_threshold(self) -> bool:
         return self.score_percent < self.threshold_percent
+
+    @property
+    def enough_evidence(self) -> bool:
+        return self.assessed_weight_percent >= MIN_ASSESSED_WEIGHT_PERCENT
+
+    @property
+    def passes_screen(self) -> bool:
+        """At or above the cut-off, on enough of the job to mean it. Anything
+        else needs a written reason to proceed. It never moves anyone."""
+        return self.enough_evidence and not self.below_threshold
 
     @property
     def no_evidence(self) -> list[CompetencyRating]:

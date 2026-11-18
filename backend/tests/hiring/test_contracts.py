@@ -209,3 +209,17 @@ def test_every_stage_is_reachable_from_new():
                 reachable.add(to)
                 frontier.append(to)
     assert reachable == set(S)
+
+
+def test_a_high_score_on_too_little_of_the_job_does_not_pass_the_screen():
+    thin = FitAnalysis.from_ratings(
+        candidate_id="c", job_id="j", summary="",
+        ratings=[rating("a", 0.2, 4), rating("b", 0.8, None)],
+    )
+    assert thin.score_percent == 100.0 and not thin.below_threshold
+    assert not thin.enough_evidence and not thin.passes_screen
+    full = FitAnalysis.from_ratings(
+        candidate_id="c", job_id="j", summary="",
+        ratings=[rating("a", 0.8, 3), rating("b", 0.2, None)],
+    )
+    assert full.enough_evidence and full.passes_screen

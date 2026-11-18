@@ -62,7 +62,7 @@ export function JobList() {
                 return (
                   <tr key={job.id}>
                     <td>
-                      <Link className="row-title" to={`/jobs/${job.id}`}>
+                      <Link className="row-title" to={me?.role === "hr" ? `/jobs/${job.id}/candidates` : `/jobs/${job.id}`}>
                         {job.title}
                       </Link>
                       {!isBuHead && job.bu_name && <span className="row-sub">{job.bu_name}</span>}

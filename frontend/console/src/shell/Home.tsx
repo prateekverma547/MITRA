@@ -32,7 +32,7 @@ function requestLabel(status: string) {
   return status === "draft" ? "Draft" : status === "closed" ? "Closed" : "Open";
 }
 
-function JobTable({ jobs }: { jobs: HomeJob[] }) {
+function JobTable({ jobs, hr }: { jobs: HomeJob[]; hr: boolean }) {
   if (jobs.length === 0) return <p className="muted">No job requests in this unit yet.</p>;
   return (
     <div className="table-wrap">
@@ -53,7 +53,7 @@ function JobTable({ jobs }: { jobs: HomeJob[] }) {
           {jobs.map((job) => (
             <tr key={job.id}>
               <td>
-                <Link className="row-title" to={`/jobs/${job.id}`}>
+                <Link className="row-title" to={hr ? `/jobs/${job.id}/candidates` : `/jobs/${job.id}`}>
                   {job.title}
                 </Link>
               </td>
@@ -73,7 +73,7 @@ function JobTable({ jobs }: { jobs: HomeJob[] }) {
   );
 }
 
-function BuSection({ bu }: { bu: HomeBusinessUnit }) {
+function BuSection({ bu, hr }: { bu: HomeBusinessUnit; hr: boolean }) {
   const id = `bu-${bu.id ?? "none"}`;
   return (
     <section className="section" aria-labelledby={id}>
@@ -83,7 +83,7 @@ function BuSection({ bu }: { bu: HomeBusinessUnit }) {
           {bu.jobs.length} {bu.jobs.length === 1 ? "job" : "jobs"}
         </span>
       </h2>
-      <JobTable jobs={bu.jobs} />
+      <JobTable jobs={bu.jobs} hr={hr} />
     </section>
   );
 }
@@ -176,7 +176,7 @@ export function Home() {
       {data.business_units
         .filter((bu) => bu.jobs.length > 0 || me.role === "bu_head")
         .map((bu) => (
-          <BuSection key={bu.id ?? "unassigned"} bu={bu} />
+          <BuSection key={bu.id ?? "unassigned"} bu={bu} hr={me.role === "hr"} />
         ))}
       <QuietUnits units={me.role === "bu_head" ? [] : data.business_units.filter((bu) => bu.jobs.length === 0)} />
     </div>

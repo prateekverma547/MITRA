@@ -224,7 +224,13 @@ export function JobDetail() {
 
       {error && <p className="error">{error}</p>}
       {job.request_status === "open" && !describing && (
-        <p className="notice notice-good">This request is with HR. They can now add candidates to it.</p>
+        <p className="notice notice-good">
+          This request is with HR.{" "}
+          <Link to={`/jobs/${job.id}/candidates`}>
+            {job.candidates === 0 ? "No candidates yet" : `See its ${job.candidates} ${job.candidates === 1 ? "candidate" : "candidates"}`}
+          </Link>
+          .
+        </p>
       )}
       {job.request_status === "open" && describing && (
         <p className="notice notice-attention">

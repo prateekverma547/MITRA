@@ -12,5 +12,5 @@ export const feature: Feature = {
     { path: "/jobs/new", element: <NewJob />, roles: ["bu_head"] },
     { path: "/jobs/:jobId", element: <JobDetail /> },
   ],
-  nav: [{ to: "/jobs", label: "Job requests", roles: ["bu_head", "org_admin"], order: 10 }],
+  nav: [{ to: "/jobs", label: "Job requests", roles: ["bu_head", "hr", "org_admin"], order: 10 }],
 };

@@ -158,3 +158,78 @@ export function requestPhase(job: Pick<JobRequest, "request_status" | "spec_stat
   if (job.request_status === "closed") return { label: "Closed", tone: "closed" };
   return ready ? { label: "With HR", tone: "good" } : { label: "With HR, being revised", tone: "attention" };
 }
+
+// ---- candidates and screening (backend/hiring/candidates.py, shared/screening.py) ----
+
+export type ScreeningStatus = "waiting" | "running" | "ready" | "failed";
+
+export interface CandidateSummary {
+  id: string;
+  name: string;
+  stage: CandidateStage;
+  source_filename: string | null;
+  created_at: string | null;
+  screening_status: ScreeningStatus;
+  score_percent: number | null;
+  assessed_weight_percent: number | null;
+  threshold_percent: number;
+  /** The share of the job's weight the CV must speak to for its score to count. */
+  min_assessed_percent: number;
+  enough_evidence: boolean;
+  /** Needs a written reason to proceed: a low score, or too little to judge. */
+  below_threshold: boolean;
+}
+
+export interface JobCandidates {
+  job: { id: string; title: string; bu_name: string | null; accepting: boolean };
+  threshold_percent: number;
+  can_add: boolean;
+  candidates: CandidateSummary[];
+}
+
+/** shared.screening.CompetencyRating */
+export interface CompetencyRating {
+  competency_id: string;
+  competency_name: string;
+  weight: number;
+  rating: number | null;
+  evidence: string[];
+  reasoning: string;
+}
+
+/** shared.screening.FitAnalysis */
+export interface FitAnalysis {
+  ratings: CompetencyRating[];
+  score_percent: number;
+  assessed_weight_percent: number;
+  threshold_percent: number;
+  summary: string;
+  experience_note: string | null;
+  identity_fields_removed: string[];
+}
+
+export interface HRQuestion {
+  id: string;
+  text: string;
+  why: string;
+}
+
+export interface CandidateDetail extends CandidateSummary {
+  job: { id: string; title: string; bu_name: string | null };
+  cv_text: string;
+  screening_error: string | null;
+  fit: FitAnalysis | null;
+  hr_questions: { questions: HRQuestion[] } | null;
+  next: CandidateStage[];
+  can_reupload: boolean;
+  can_proceed: boolean;
+}
+
+export interface DecisionEntry {
+  from: CandidateStage;
+  to: CandidateStage;
+  actor: "system" | "hr" | "bu_head";
+  reason: string | null;
+  model_recommendation: string | null;
+  at: string | null;
+}
