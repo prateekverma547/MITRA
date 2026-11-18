@@ -1,4 +1,4 @@
-import { Columns3, Rows3, UserPlus } from "lucide-react";
+import { Columns3, GitCompareArrows, Rows3, UserPlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../api";
@@ -88,11 +88,18 @@ export function CandidateList() {
             {data.job.title}, {data.job.bu_name}. The screening cut-off is {data.threshold_percent}%.
           </p>
         </div>
-        {data.can_add && data.job.accepting && (
-          <ButtonLink variant="primary" to={`/jobs/${data.job.id}/candidates/new`} icon={<UserPlus size={17} />}>
-            Add candidate
-          </ButtonLink>
-        )}
+        <div className="actions">
+          {data.candidates.some((c) => c.stage !== "new") && (
+            <ButtonLink to={`/jobs/${data.job.id}/compare`} icon={<GitCompareArrows size={17} />}>
+              Compare candidates
+            </ButtonLink>
+          )}
+          {data.can_add && data.job.accepting && (
+            <ButtonLink variant="primary" to={`/jobs/${data.job.id}/candidates/new`} icon={<UserPlus size={17} />}>
+              Add candidate
+            </ButtonLink>
+          )}
+        </div>
       </header>
 
       {data.can_add && !data.job.accepting && (

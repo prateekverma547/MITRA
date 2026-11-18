@@ -309,6 +309,29 @@ export interface Overview {
   activity: { at: string | null; actor: string; candidate_id: string; candidate: string; job_title: string; to: CandidateStage; reason: string | null }[];
   scores: { bins: number[]; threshold: number | null; screened: number; passed: number };
   weeks: string[];
+  role: Role;
+  /** How long what waits on this person has waited, by step. */
+  ageing: { buckets: string[]; rows: { action: string; stage: CandidateStage; buckets: number[]; median_days: number | null; count: number }[] };
+  jobs: OverviewJob[];
+  /** Candidates added in the period who ever reached each forward step. */
+  conversion: { key: GroupKey; label: string; reached: number }[];
+  /** Median days spent in each step, over finished spells. */
+  stage_time: { key: GroupKey; label: string; median_days: number | null; count: number }[];
+  proceed_anyway: { total: number; groups: Record<GroupKey, number> };
+  mine: { by_week: number[]; outcomes: Partial<Record<CandidateStage, number>> };
+}
+
+export interface OverviewJob {
+  id: string;
+  title: string;
+  bu_name: string | null;
+  status: string;
+  open_days: number | null;
+  groups: Record<GroupKey, number>;
+  total: number;
+  scores: { candidate_id: string; name: string; score: number; enough_evidence: boolean; group: GroupKey }[];
+  threshold: number | null;
+  waiting_on_you: number;
 }
 
 export interface DirectoryItem {

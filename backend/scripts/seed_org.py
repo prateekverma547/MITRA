@@ -20,9 +20,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import db  # noqa: E402
-from org.seed import PEOPLE, seed_demo_org  # noqa: E402
+from org.seed import DEMO_PASSWORD, PEOPLE, seed_demo_org  # noqa: E402
 
-DEFAULT_PASSWORD = "mitra-demo-password"
+DEFAULT_PASSWORD = DEMO_PASSWORD
 
 
 async def main(password: str) -> int:

@@ -1,0 +1,96 @@
+/* Track H. The org admin's screens: people, business units and privacy.
+   Built from the shell's tokens, so light and dark both follow. */
+
+.admin-tabs { margin-top: -8px; }
+
+/* A password shown once. It is the only time anyone sees it. */
+.once {
+  display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--brief-shadow);
+}
+.once-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.once-title { font-weight: 650; color: var(--ink); }
+.once .copy-value { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: var(--s-18); letter-spacing: 0.04em; }
+
+.admin-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px 16px; align-items: end; }
+.admin-form .actions { grid-column: 1 / -1; }
+.field select, .admin-inline select, .admin-inline input {
+  font: inherit; color: var(--text); background: var(--surface); height: 46px;
+  padding: 0 12px; border: 1px solid var(--rule); border-radius: 8px; width: 100%;
+}
+.field select, .admin-inline select {
+  appearance: none; padding-right: 36px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 19px) 19px, calc(100% - 14px) 19px; background-size: 5px 5px; background-repeat: no-repeat;
+}
+.field select:focus, .admin-inline select:focus, .admin-inline input:focus {
+  outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft);
+}
+.field textarea {
+  font: inherit; color: var(--text); background: var(--surface); padding: 11px 13px;
+  border: 1px solid var(--rule); border-radius: 8px; resize: vertical; min-height: 72px;
+}
+.field textarea:focus { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+
+.table .col-actions { width: 132px; }
+/* Positioned, so a visually hidden header label is clipped by the scroll area
+   instead of widening the page on a phone. */
+.admin-table { position: relative; }
+.table td.cell-actions { text-align: right; }
+.table tr.is-off td:not(.cell-actions) { opacity: 0.6; }
+.table tr.editing td { background: color-mix(in srgb, var(--signal-soft) 45%, var(--surface)); }
+.table tr.edit-row td { padding-top: 4px; background: color-mix(in srgb, var(--signal-soft) 45%, var(--surface)); }
+.edit-panel { display: flex; flex-direction: column; gap: 14px; padding: 4px 0 6px; }
+.admin-inline { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.admin-inline > * { flex: 0 1 auto; }
+.admin-inline select, .admin-inline input { width: auto; min-width: 180px; }
+.edit-divider { border: 0; border-top: 1px solid var(--rule); margin: 2px 0; }
+.you { font-size: var(--s-12); font-weight: 600; color: var(--signal); margin-left: 6px; }
+.role-line { display: flex; flex-direction: column; gap: 2px; }
+
+/* Retention: one row per kind of data. The due count is the figure that matters. */
+.retention-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.retention-item {
+  display: grid; grid-template-columns: minmax(0, 1.4fr) auto minmax(0, 1fr); gap: 18px 28px; align-items: center;
+  padding: 18px 22px; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px;
+}
+.retention-item h3 { font-family: var(--serif); font-size: var(--s-22); color: var(--ink); font-weight: 500; }
+.retention-days { display: flex; align-items: center; gap: 10px; }
+.retention-days input {
+  width: 92px; height: 44px; padding: 0 12px; font: 600 var(--s-18) var(--sans); text-align: right;
+  font-variant-numeric: tabular-nums; color: var(--text); background: var(--paper);
+  border: 1px solid var(--rule); border-radius: 8px;
+}
+.retention-days input:focus { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.retention-due { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.due-figure { font: 600 var(--s-26) / 1 var(--sans); font-variant-numeric: tabular-nums; color: var(--ink); }
+.due-figure.has { color: var(--attention); }
+.due-label { font-size: var(--s-12); color: var(--muted); }
+.retention-confirm { grid-column: 1 / -1; }
+@media (max-width: 760px) { .retention-item { grid-template-columns: minmax(0, 1fr); } }
+
+/* Deletion requests: open ones carry a clock. */
+.requests { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.request {
+  display: flex; flex-direction: column; gap: 10px; padding: 18px 22px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 14px;
+}
+.request.open { border-left: 3px solid var(--attention); }
+.request-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.request-name { font-weight: 650; font-size: var(--s-18); color: var(--ink); }
+.request-meta { color: var(--muted); font-size: var(--s-12); }
+.request-note { color: var(--text); max-width: 72ch; white-space: pre-wrap; }
+.request-resolution { color: var(--muted); max-width: 72ch; border-left: 2px solid var(--rule); padding-left: 12px; }
+
+.picker { display: flex; flex-direction: column; gap: 6px; }
+.picker-results { list-style: none; margin: 0; padding: 0; border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.picker-results li + li { border-top: 1px solid var(--rule); }
+.picker-results button {
+  width: 100%; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 10px 14px;
+  border: 0; background: transparent; color: var(--text); font: inherit; cursor: pointer;
+}
+.picker-results button:hover, .picker-results button:focus-visible { background: var(--signal-soft); outline: none; }
+.picked { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-radius: 10px; background: var(--signal-soft); }
+
+.consent-summary { color: var(--muted); }
+.consent-summary strong { color: var(--ink); font-variant-numeric: tabular-nums; }

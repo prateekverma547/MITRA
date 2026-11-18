@@ -122,3 +122,68 @@ async def test_search_is_scoped_like_everything_else(populated):
     found = populated.get("/api/search?q=Asha").json()
     assert [c["name"] for c in found["candidates"]] == ["Asha Menon"]
     assert [j["title"] for j in populated.get("/api/search?q=engineer").json()["jobs"]] == ["AI Engineer"]
+
+
+# ---- what each role's home adds ------------------------------------------------------------------
+
+
+async def test_conversion_counts_the_furthest_step_even_for_closed_candidates(populated):
+    from app import db
+    from hiring.models import DecisionRecord
+
+    # Imran was rejected after the HR round: he reached the HR step.
+    async with db.get_sessionmaker()() as session:
+        session.add(DecisionRecord(candidate_id="cand_a5", from_stage="hr_done", to_stage="rejected", actor="hr",
+                                   reason="Not a fit"))
+        await session.commit()
+    sign_in(populated, "admin@mitra.local")
+    data = populated.get("/api/overview?days=0").json()
+    reached = {s["key"]: s["reached"] for s in data["conversion"]}
+    assert reached["screening"] >= reached["hr"] >= reached["technical"] >= reached["bu_head"]
+    # Neha (hr_booked), Ravi (with_bu_head) and Imran (rejected after HR) reached HR.
+    assert reached["hr"] == 3
+    assert reached["bu_head"] == 1
+
+
+async def test_time_in_step_comes_from_the_decision_history(populated):
+    from app import db
+    from app.db import Candidate
+    from hiring.models import DecisionRecord
+
+    start = datetime.now(UTC) - timedelta(days=20)
+    async with db.get_sessionmaker()() as session:
+        (await session.get(Candidate, "cand_a4")).created_at = start
+        session.add(DecisionRecord(candidate_id="cand_a4", from_stage="screened", to_stage="ready_for_hr", actor="hr",
+                                   created_at=start + timedelta(days=4)))
+        session.add(DecisionRecord(candidate_id="cand_a4", from_stage="hr_done", to_stage="ready_for_technical",
+                                   actor="hr", created_at=start + timedelta(days=10)))
+        await session.commit()
+    sign_in(populated, "admin@mitra.local")
+    steps = {s["key"]: s for s in populated.get("/api/overview?days=0").json()["stage_time"]}
+    assert steps["screening"]["median_days"] == pytest.approx(4, abs=0.01)
+    assert steps["hr"]["median_days"] == pytest.approx(6, abs=0.01)
+
+
+async def test_hr_sees_how_long_their_queue_has_waited(populated):
+    sign_in(populated, "hr@mitra.local")
+    data = populated.get("/api/overview").json()
+    rows = {r["action"]: r for r in data["ageing"]["rows"]}
+    assert rows["Decide after screening"]["count"] >= 1
+    assert sum(rows["Run the HR round"]["buckets"]) == rows["Run the HR round"]["count"]
+    jobs = {j["title"]: j for j in data["jobs"]}
+    assert jobs["AI Engineer"]["total"] >= 5
+    assert any(s["name"] == "Asha Menon" for s in jobs["AI Engineer"]["scores"])
+
+
+async def test_the_bu_head_sees_only_their_own_jobs(populated):
+    sign_in(populated, "ai.head@mitra.local")
+    data = populated.get("/api/overview").json()
+    assert {j["bu_name"] for j in data["jobs"]} == {"AI"}
+
+
+async def test_badges_count_what_waits_on_you(populated):
+    sign_in(populated, "hr@mitra.local")
+    hr = populated.get("/api/badges").json()["needs_you"]
+    assert hr == populated.get("/api/overview").json()["kpis"]["needs_you"]
+    sign_in(populated, "ai.head@mitra.local")
+    assert populated.get("/api/badges").json()["needs_you"] == 1  # Ravi, with the BU head

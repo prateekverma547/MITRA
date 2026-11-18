@@ -119,6 +119,44 @@ async def _bus(session, user: User) -> list[BusinessUnit]:
     return list((await session.execute(query)).scalars())
 
 
+# ---- analytics helpers ----------------------------------------------------------------------------
+
+#: The journey's forward steps, in order. "Closed" is an outcome, not a step.
+STEPS = ("screening", "hr", "technical", "bu_head", "shortlisted")
+STEP_INDEX = {key: i for i, key in enumerate(STEPS)}
+AGE_BUCKETS = ((0, 2, "0–2 days"), (3, 6, "3–6 days"), (7, None, "A week or more"))
+
+
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    return ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
+
+
+def _furthest_step(candidate: Candidate, history: list[DecisionRecord]) -> int:
+    """The furthest forward step this candidate ever reached, closed or not."""
+    stages = [candidate.stage] + [d.from_stage for d in history] + [d.to_stage for d in history]
+    reached = [STEP_INDEX[g] for g in (GROUP_OF.get(st) for st in stages) if g in STEP_INDEX]
+    return max(reached, default=0)
+
+
+def _spans(candidate: Candidate, history: list[DecisionRecord]) -> dict[str, float]:
+    """Days spent in each step this candidate has finished, from their decision history."""
+    spent: dict[str, float] = {}
+    group = "screening"
+    entered = _utc(candidate.created_at)
+    for d in sorted(history, key=lambda d: (_utc(d.created_at) or datetime.min.replace(tzinfo=UTC), d.id or 0)):
+        at = _utc(d.created_at)
+        to_group = GROUP_OF.get(d.to_stage, group)
+        if to_group != group:
+            if entered and at and group in STEP_INDEX and group != "shortlisted":
+                spent[group] = spent.get(group, 0.0) + max(0.0, (at - entered).total_seconds() / 86400)
+            group, entered = to_group, at
+    return spent
+
+
 # ---- the dashboard ------------------------------------------------------------------------------
 
 
@@ -225,6 +263,97 @@ async def overview(
         })
 
     active = sum(n for g, n in pipeline.items() if g not in ("closed", "shortlisted"))
+
+    history: dict[str, list[DecisionRecord]] = defaultdict(list)
+    for d in decisions:
+        history[d.candidate_id].append(d)
+
+    def in_window(c: Candidate) -> bool:
+        created = _utc(c.created_at)
+        return not since or (created is not None and created >= since)
+
+    # Ageing of what waits on this person, step by step (HR and BU heads).
+    ageing_rows: dict[str, dict] = {}
+    for n in needs:
+        row = ageing_rows.setdefault(n["action"], {"action": n["action"], "stage": n["stage"], "days": []})
+        row["days"].append(n["waiting_days"])
+    order = [a for _, a in WAITS_ON.values()]
+    ageing = []
+    for row in sorted(ageing_rows.values(), key=lambda r: order.index(r["action"]) if r["action"] in order else -1):
+        days_list = row.pop("days")
+        row["buckets"] = [
+            sum(1 for d in days_list if d >= lo and (hi is None or d <= hi)) for lo, hi, _ in AGE_BUCKETS
+        ]
+        row["median_days"] = _median(days_list)
+        row["count"] = len(days_list)
+        ageing.append(row)
+
+    # Each job: where its candidates stand and how strong the field is.
+    per_job: dict[str, dict] = {}
+    for j in jobs:
+        created = _utc(j.created_at)
+        per_job[j.id] = {
+            "id": j.id, "title": j.title or "Untitled job", "bu_name": bu_names.get(j.bu_id, j.business_unit),
+            "status": j.request_status, "open_days": max(0, (now - created).days) if created else None,
+            "groups": {k: 0 for k, _, _ in GROUPS}, "total": 0, "scores": [], "threshold": None,
+            "waiting_on_you": 0,
+        }
+    for c, j, s in rows:
+        job = per_job.get(j.id)
+        if job is None:
+            continue
+        job["groups"][GROUP_OF.get(c.stage, "screening")] += 1
+        job["total"] += 1
+        job["waiting_on_you"] += bool(_needs(role, c, s))
+        fit = _fit(s)
+        if fit is not None:
+            job["threshold"] = fit.threshold_percent
+            job["scores"].append({
+                "candidate_id": c.id, "name": c.name, "score": round(fit.score_percent, 1),
+                "enough_evidence": fit.enough_evidence, "group": GROUP_OF.get(c.stage, "screening"),
+            })
+    job_rows = sorted(
+        per_job.values(),
+        key=lambda r: (r["status"] != "open", -r["waiting_on_you"], -r["total"], r["title"].lower()),
+    )
+
+    # How far candidates get, and how long each step takes (candidates added in the window).
+    windowed = [c for c, _, _ in rows if in_window(c)]
+    reached = [0] * len(STEPS)
+    step_days: dict[str, list[float]] = defaultdict(list)
+    for c in windowed:
+        furthest = _furthest_step(c, history[c.id])
+        for i in range(furthest + 1):
+            reached[i] += 1
+        for group, days_spent in _spans(c, history[c.id]).items():
+            step_days[group].append(days_spent)
+    labels = {k: label for k, label, _ in GROUPS}
+    conversion = [{"key": k, "label": labels[k], "reached": reached[i]} for i, k in enumerate(STEPS)]
+    stage_time = [
+        {"key": k, "label": labels[k], "median_days": _median(step_days[k]), "count": len(step_days[k])}
+        for k in STEPS if k != "shortlisted"
+    ]
+
+    # "Proceed anyway": below the cut-off, sent on by HR with a reason. Where did they end up?
+    anyway = Counter()
+    for c, _, s in rows:
+        fit = _fit(s)
+        if fit is None or fit.passes_screen:
+            continue
+        if any(d.from_stage == S.SCREENED.value and d.to_stage == S.READY_FOR_HR.value for d in history[c.id]):
+            anyway[GROUP_OF.get(c.stage, "screening")] += 1
+
+    # This person's own decisions.
+    mine = [d for d in decisions if d.actor_user_id == user.id]
+    mine_by_week = [0] * WEEKS
+    for d in mine:
+        i = _bucket(weeks, _utc(d.created_at))
+        if i is not None:
+            mine_by_week[i] += 1
+    my_outcomes = Counter(
+        d.to_stage for d in mine if not since or ((_utc(d.created_at) or now) >= since)
+    )
+
     return {
         "scope": {"business_units": [{"id": b.id, "name": b.name} for b in bus], "bu": bu, "days": days},
         "kpis": {
@@ -246,11 +375,30 @@ async def overview(
             }
             for b_id in ([b.id for b in bus] + ([None] if None in per_bu else []))
         ],
-        "needs_you": needs[:8],
+        "needs_you": needs[:12],
         "activity": activity,
         "scores": {"bins": histogram, "threshold": threshold, "screened": screened, "passed": passed},
         "weeks": [w.date().isoformat() for w in weeks],
+        "role": role.value,
+        "ageing": {"buckets": [label for _, _, label in AGE_BUCKETS], "rows": ageing},
+        "jobs": job_rows,
+        "conversion": conversion,
+        "stage_time": stage_time,
+        "proceed_anyway": {
+            "total": sum(anyway.values()),
+            "groups": {k: anyway.get(k, 0) for k, _, _ in GROUPS},
+        },
+        "mine": {"by_week": mine_by_week, "outcomes": dict(my_outcomes)},
     }
+
+
+@router.get("/badges")
+async def badges(user: User = Depends(current_user)) -> dict:
+    """The sidebar's "N waiting for you". Cheap enough to read on every page change."""
+    role = Role(user.role)
+    async with get_sessionmaker()() as session:
+        rows, _ = await _rows(session, user, None)
+    return {"needs_you": sum(1 for c, _, s in rows if _needs(role, c, s))}
 
 
 # ---- the candidate directory ------------------------------------------------------------------------

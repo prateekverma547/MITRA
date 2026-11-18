@@ -1,25 +1,54 @@
-import { Briefcase, Home as HomeIcon, LogOut, Search, Users } from "lucide-react";
-import { useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { Home as HomeIcon, LogOut, Search } from "lucide-react";
+import { useEffect, useState } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { api } from "../api";
 import { ROLE_LABELS } from "../contracts";
 import { useSession } from "../session";
 import { Brand } from "./Brand";
 import { CommandPalette, useCommandPalette } from "./CommandPalette";
 import { Footer } from "./Footer";
-import { navFor } from "./registry";
+import { navFor, type NavItem } from "./registry";
 import { Button } from "./ui/Button";
 
-const ICONS: Record<string, typeof HomeIcon> = { "/home": HomeIcon, "/jobs": Briefcase, "/candidates": Users };
+/** How many people are waiting on the signed-in user. Refreshed on every page change. */
+function useBadges() {
+  const location = useLocation();
+  const [needsYou, setNeedsYou] = useState(0);
+  useEffect(() => {
+    let live = true;
+    api
+      .get<{ needs_you: number }>("/badges")
+      .then((b) => live && setNeedsYou(b.needs_you))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [location.pathname]);
+  return { needs_you: needsYou };
+}
 
 export function Shell() {
   const { me, signOut } = useSession();
   const navigate = useNavigate();
   const [leaving, setLeaving] = useState(false);
   const palette = useCommandPalette();
+  const badges = useBadges();
   if (!me) return null;
   const mac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
 
-  const items = [{ to: "/home", label: "Home", order: 0 }, ...navFor(me.role)];
+  const items: NavItem[] = [{ to: "/home", label: "Home", order: 0, roles: [me.role], icon: HomeIcon }, ...navFor(me.role)];
+  // Main items first, then each named section in order of its first item.
+  const sections: { title: string | null; items: NavItem[] }[] = [];
+  for (const item of items) {
+    const title = item.section ?? null;
+    let group = sections.find((s) => s.title === title);
+    if (!group) {
+      group = { title, items: [] };
+      if (title === null) sections.unshift(group);
+      else sections.push(group);
+    }
+    group.items.push(item);
+  }
 
   async function handleSignOut() {
     setLeaving(true);
@@ -37,20 +66,32 @@ export function Shell() {
           <kbd>{mac ? "⌘K" : "Ctrl K"}</kbd>
         </button>
         <nav aria-label="Main" className="rail-nav">
-          {items.map((item) => {
-            const Icon = ICONS[item.to];
-            return (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                viewTransition
-                className={({ isActive }) => (isActive ? "rail-link active" : "rail-link")}
-              >
-                {Icon && <Icon size={17} aria-hidden="true" />}
-                {item.label}
-              </NavLink>
-            );
-          })}
+          {sections.map((section) => (
+            <div key={section.title ?? "main"} className="rail-group">
+              {section.title && <span className="rail-section">{section.title}</span>}
+              {section.items.map((item) => {
+                const Icon = item.icon;
+                const count = item.badge ? badges[item.badge] : 0;
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === "/home"}
+                    viewTransition
+                    className={({ isActive }) => (isActive ? "rail-link active" : "rail-link")}
+                  >
+                    {Icon && <Icon size={17} aria-hidden="true" />}
+                    <span className="rail-label">{item.label}</span>
+                    {count > 0 && (
+                      <span className="rail-badge" aria-label={`${count} waiting for you`}>
+                        {count}
+                      </span>
+                    )}
+                  </NavLink>
+                );
+              })}
+            </div>
+          ))}
         </nav>
         <div className="who">
           <span className="who-name">{me.name}</span>

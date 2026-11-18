@@ -88,5 +88,13 @@ async def candidate_decisions(candidate_id: str, user: User = Depends(_anyone_si
 
 
 # Route modules that register on the same router. Imported for their effect.
-from hiring import candidates, hr_round, insights, jobs  # noqa: E402,F401
+from hiring import (  # noqa: E402,F401
+    candidates,
+    hr_round,
+    insights,
+    jobs,
+    results,
+    technical,
+    transparency,
+)
 from hiring.candidates import gate_rules  # noqa: E402

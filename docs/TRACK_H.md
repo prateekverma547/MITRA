@@ -209,20 +209,21 @@ fit score; HR rejects or proceeds, and the decision is in the audit log.
 - [x] HR round screen: the credentials to send, the 10 questions as a
       checklist, and a notes box
 - [x] Evaluation review, then Reject, Not now or Proceed to technical
-- [ ] "Book technical" button, calling Track I's `book_technical()` (stub
-      until it lands)
-- [ ] Send to BU head
-- [ ] In-app badges: "N waiting for you"
+- [x] "Book technical" button, calling Track I's `book_technical()` (stub
+      until it lands: `hiring/technical.py`, placeholder links marked as such)
+- [x] Send to BU head
+- [x] In-app badges: "N waiting for you"
 
 **Checkpoint:** a real HR round is held in MITRA, transcribed and evaluated,
 and the candidate moves on or is rejected.
 
 ### Phase 3: Joined up (weeks 5–7)
 
-- [ ] BU head results page: rubric chart, summary, strengths and gaps, JD
-      match, with Track I's `<InterviewReport>` embedded
-- [ ] Side-by-side comparison of all candidates for one job
-- [ ] BU head decision: Shortlist, On hold or Reject, with a reason
+- [x] BU head results page: rubric chart, summary, strengths and gaps, JD
+      match; Track I's `<InterviewReport>` drops into `TechnicalReportSlot`
+      (an honest empty state until it lands, never fixture data)
+- [x] Side-by-side comparison of all candidates for one job
+- [x] BU head decision: Shortlist, On hold or Reject, with a reason
 - [ ] HR findings handed to Track I for MITRA's plan (`HRRoundEvaluation` on
       the candidate)
 
@@ -232,13 +233,18 @@ panel is retired.
 
 ### Phase 4: Org view (weeks 7–8)
 
-- [ ] Org dashboard: every BU's jobs and candidates, read-only
-- [ ] Transparency: searchable transcripts, recordings and reports; the audit
-      log with each decision next to the model's recommendation
-- [ ] AI usage register: the model and prompt version behind every score you
-      produce
-- [ ] Consent records, retention periods, deletion requests
-- [ ] User and BU management: invite, assign a BU, deactivate
+- [x] Org dashboard: every BU's jobs and candidates, read-only, plus how far
+      candidates get, time in each step, and "Proceed anyway" outcomes
+- [x] Role-specific homes (added 2026-11-19): HR's desk (queue, ageing, job
+      load), the BU head's (decisions, strength of each field, their jobs), the
+      org admin's (conversion, time in step, BUs, overrides)
+- [x] Transparency: searchable transcripts, recordings and reports; the audit
+      log with each decision next to the model's recommendation (technical
+      round records appear when Track I lands)
+- [x] AI usage register: the model and prompt version behind every score you
+      produce (gap: the job-understanding chat does not store its model yet)
+- [x] Consent records, retention periods, deletion requests
+- [x] User and BU management: invite, assign a BU, deactivate
 
 **Checkpoint:** an org admin can answer "what happened, what did it cost, who
 decided" for any candidate.
@@ -258,6 +264,8 @@ decided" for any candidate.
 | Screening quality | `scripts/screen_cv.py <jd> <cv>` prints the `FitAnalysis` and every failed quote. Keep a small labelled set of JD/CV pairs (start with `tests/fixtures/documents/`) |
 | Screening fairness | The same CV with names and genders swapped must give the same score |
 | A real HR round | Two browsers: HR signed in to the console, the candidate in a private window on the old `/join` page until Track I's app has its HR mode |
+| From technical round to the BU head, before Track I's interview | Book the technical round, then `uv run python scripts/simulate_technical_done.py "<name>"` (local only) and send them on |
+| Demo sign-in | The sign-in screen lists the seeded demo accounts on a developer machine (`GET /api/auth/demo`); never when deployed |
 | HR evaluation without holding a round | A two-speaker transcript fixture through `evaluate_hr_round()` |
 | Results pages before the real report | The fixture reports via `<InterviewReport>` |
 | Booking before Track I's booking exists | The `book_technical` stub |

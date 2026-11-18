@@ -4,13 +4,14 @@ Every route here is under `/api`. The console app (frontend/console) calls
 them; the old `/admin` panel does not.
 """
 
+import os
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
-from app.db import Candidate, Job, get_sessionmaker
+from app.db import Candidate, Job, get_sessionmaker, is_deployed
 from hiring.stages import audit
 from org.auth import (
     COOKIE_NAME,
@@ -22,6 +23,7 @@ from org.auth import (
     job_scope,
 )
 from org.models import BusinessUnit, User
+from org.seed import DEMO_PASSWORD, PEOPLE
 from org.users import authenticate, normalise_email
 from shared.stages import Role
 
@@ -72,6 +74,28 @@ async def login(body: LoginRequest, response: Response) -> dict:
 async def logout(response: Response) -> dict:
     response.delete_cookie(COOKIE_NAME, path="/")
     return {"signed_out": True}
+
+
+@router.get("/auth/demo")
+async def demo_accounts() -> dict:
+    """The demo accounts a developer can sign in with, on their own machine only.
+
+    Public, because it is read by the sign-in screen. On a deployed instance it
+    is always empty: a known password on a public URL is worse than none, and
+    the seed scripts refuse to create these accounts there anyway. Locally it
+    lists only demo accounts that exist, are active, and really do sign in with
+    the demo password, so a button never offers a sign-in that fails.
+    """
+    if is_deployed() or os.environ.get("DEMO_LOGIN", "1").strip().lower() in ("0", "false", "no", "off"):
+        return {"enabled": False, "accounts": []}
+    password = os.environ.get("DEMO_PASSWORD") or DEMO_PASSWORD
+    accounts = []
+    async with get_sessionmaker()() as session:
+        for email, _, role, bu in PEOPLE:
+            user = await authenticate(session, email, password)
+            if user is not None:
+                accounts.append({"email": user.email, "name": user.name, "role": user.role, "bu_name": bu})
+    return {"enabled": bool(accounts), "accounts": accounts, "password": password if accounts else None}
 
 
 @router.get("/auth/me")
@@ -138,3 +162,6 @@ async def home(user: User = Depends(current_user)) -> dict:
         groups.append({"id": None, "name": "Unassigned", "jobs": unassigned})
 
     return {"me": _me(user, bu_name), "business_units": groups}
+
+
+from org import admin  # noqa: E402,F401  (registers the admin routes on this router)

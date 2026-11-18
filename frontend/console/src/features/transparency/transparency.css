@@ -1,0 +1,85 @@
+/* Transparency (Track H). Uses the console's tokens; nothing here defines a
+   colour of its own except through them. Followed and differed are the
+   validated two-series pair (--series-1, --series-2). */
+
+.tx-tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--rule); margin-top: -12px; }
+.tx-tab {
+  position: relative; padding: 10px 14px 12px; font: 500 var(--s-15) / 1 var(--sans); color: var(--muted);
+  text-decoration: none; border-radius: 8px 8px 0 0; transition: color 160ms ease, background-color 160ms ease;
+}
+.tx-tab:hover { color: var(--text); background: var(--surface); }
+.tx-tab.active { color: var(--ink); font-weight: 600; }
+.tx-tab.active::after {
+  content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--signal);
+}
+.tx-tab:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+.tx-date { display: inline-flex; align-items: center; gap: 8px; font-size: var(--s-12); color: var(--muted); }
+.tx-date input {
+  font: inherit; font-size: var(--s-15); color: var(--text); background: var(--surface); border: 1px solid var(--rule);
+  border-radius: 10px; padding: 9px 10px; min-height: 42px;
+}
+.tx-date input:focus { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+
+/* Followed / differed. Text on the marks stays dark enough to read. */
+.tx-bar .seg { cursor: default; }
+.tx-seg-followed { background: var(--series-1); }
+.tx-seg-differed { background: var(--series-2); color: #2a1300; }
+.swatch.tx-seg-followed, .swatch.tx-dot-followed { background: var(--series-1); }
+.swatch.tx-seg-differed, .swatch.tx-dot-differed { background: var(--series-2); }
+.swatch.tx-dot-not_comparable { background: var(--closed); }
+/* Hollow, so "no recommendation" differs from "not comparable" by shape too. */
+.swatch.tx-dot-no_recommendation { background: transparent; box-shadow: inset 0 0 0 1.5px var(--closed); }
+.swatch.tx-dot-mitra { background: transparent; box-shadow: inset 0 0 0 1.5px var(--signal); border-radius: 50%; }
+.tx-outcome { display: inline-flex; align-items: center; gap: 7px; font-size: var(--s-12); font-weight: 500; color: var(--text); line-height: 1.3; }
+.tx-outcome-differed { font-weight: 600; }
+
+.tx-table td { vertical-align: top; }
+.tx-table .tx-col-when { width: 13%; }
+.tx-table .tx-col-person { width: 19%; }
+.tx-table .tx-col-move { width: 22%; }
+.tx-table .tx-col-who { width: 13%; }
+.tx-table .tx-col-outcome { width: 15%; }
+.tx-table .tx-col-what { width: 22%; }
+.tx-when { color: var(--muted); font-size: var(--s-12); font-variant-numeric: tabular-nums; }
+.tx-move { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: var(--s-12); color: var(--muted); }
+.tx-move strong { color: var(--text); font-weight: 600; }
+.tx-reason { margin-top: 6px; font-style: italic; color: var(--text); }
+.tx-actor { font-weight: 600; }
+.tx-actor-mitra { color: var(--signal); }
+.tx-rec { font-size: var(--s-12); color: var(--muted); line-height: 1.5; }
+.tx-what { font-weight: 500; }
+.tx-table .row-sub + .row-sub { margin-top: 4px; }
+
+.tx-flat { border-radius: 10px; }
+.tx-code { font-family: inherit; font-size: var(--s-12); padding: 2px 7px; border-radius: 6px; background: var(--paper); border: 1px solid var(--rule); color: var(--text); white-space: nowrap; }
+.tx-missing { font-size: var(--s-12); color: var(--attention); font-weight: 600; white-space: nowrap; }
+.tx-pair { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.tx-picked td { background: var(--signal-soft); }
+.tx-row-act { text-align: right; }
+
+.tx-note { background: var(--surface); border: 1px dashed var(--rule); color: var(--muted); }
+
+.tx-records { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.tx-record {
+  display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 14px; padding: 18px 20px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 14px;
+}
+.tx-record-icon { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--signal); background: var(--signal-soft); }
+.tx-record-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tx-record-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.tx-record-line { color: var(--text); font-size: var(--s-15); }
+.tx-matches { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tx-matches li { display: grid; grid-template-columns: 8.5rem minmax(0, 1fr); gap: 12px; align-items: baseline; }
+.tx-match-who { font-size: var(--s-12); font-weight: 600; color: var(--muted); }
+.tx-match-text { padding-left: 12px; border-left: 2px solid var(--rule); line-height: 1.55; }
+.tx-matches mark { background: var(--signal-soft); color: var(--ink); border-radius: 3px; padding: 0 2px; }
+.tx-video { width: 100%; max-width: 640px; border-radius: 10px; background: #000; }
+
+@media (max-width: 560px) {
+  .tx-matches li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .tx-record { grid-template-columns: minmax(0, 1fr); }
+  .tx-record-icon { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .tx-tab { transition: none; } }
+.tx-clear { align-self: flex-start; margin-top: 8px; }

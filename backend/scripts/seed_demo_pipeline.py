@@ -106,6 +106,8 @@ async def main(count: int, seed: int) -> int:
                         id=new_id("job"), title=title, business_unit=bu_name, jd_text="", org_id=demo.org_id,
                         bu_id=demo.bu_ids[bu_name], created_by=heads.get(bu_name), request_status="open",
                         spec_status=SpecStatus.READY, evaluation_spec=SPEC | {"role_title": title},
+                        # Opened before its first candidate arrives (they arrive over 55 days).
+                        created_at=now - timedelta(days=rng.uniform(56, 75)),
                     )
                     session.add(job)
                     await session.flush()
@@ -124,8 +126,10 @@ async def main(count: int, seed: int) -> int:
             session.add(candidate)
             await session.flush()
             strong = "rejected" not in path or len(path) > 3
+            fit = None
             if "screened" in path:
-                session.add(Screening(candidate_id=cid, status="ready", fit_analysis=fit_for(rng, cid, job.id, strong),
+                fit = fit_for(rng, cid, job.id, strong)
+                session.add(Screening(candidate_id=cid, status="ready", fit_analysis=fit,
                                       started_at=added, finished_at=added + timedelta(minutes=1)))
             else:
                 session.add(Screening(candidate_id=cid, status="waiting"))
@@ -143,12 +147,34 @@ async def main(count: int, seed: int) -> int:
                     org_id=demo.org_id, candidate_id=cid, from_stage=frm, to_stage=to, actor=actor.value,
                     actor_user_id=user, created_at=at,
                     reason="Example reason." if to in ("rejected", "parked", "on_hold") else None,
+                    model_recommendation=_said(rng, frm, to, fit),
                 ))
             made += 1
         await session.commit()
     await db.reset_engine()
     print(f"Added {made} example candidates across {len(jobs)} job requests in {len(JOBS)} business units.")
     return 0
+
+
+def _said(rng: random.Random, frm: str, to: str, fit: dict | None) -> str | None:
+    """What MITRA recommended at this move, in the sentences the real flows write.
+
+    Screening gates carry the screening reading; decisions after the HR round
+    carry an HR evaluation, which people usually but not always follow. Other
+    moves carry none, as in the real system.
+    """
+    from hiring.candidates import recommendation
+
+    if frm == "screened" and fit:
+        return recommendation(FitAnalysis.model_validate(fit))
+    if frm == "hr_done":
+        agrees = rng.random() < 0.8
+        go = to == "ready_for_technical"
+        verdict = "proceed to the technical round" if go == agrees else "reject"
+        if rng.random() < 0.1:
+            verdict = "discuss: the evidence points neither way"
+        return f"HR round evaluation recommends: {verdict}."
+    return None
 
 
 if __name__ == "__main__":

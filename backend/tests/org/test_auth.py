@@ -11,9 +11,7 @@ from sqlalchemy import select
 
 from org import auth
 from shared.stages import Role
-
 from tests.console_support import PASSWORD, org_client, sign_in  # noqa: F401
-
 
 # ---- passwords and tokens ----------------------------------------------------
 
@@ -280,7 +278,7 @@ def console_routes():
     return [r for r in api_routes(app.routes) if r.path.startswith("/api/")]
 
 
-PUBLIC = {("POST", "/api/auth/login"), ("POST", "/api/auth/logout")}
+PUBLIC = {("POST", "/api/auth/login"), ("POST", "/api/auth/logout"), ("GET", "/api/auth/demo")}
 
 
 def _url(path: str) -> str:
@@ -339,3 +337,26 @@ async def test_account_rules_keep_scoping_sound(org_client):
         for case in cases:
             with pytest.raises(UserError):
                 await create_user(session, org_id=org_id, name="n", **case)
+
+
+# ---- demo sign-in ---------------------------------------------------------------------------------
+
+
+def test_demo_sign_in_lists_only_accounts_that_work(org_client, monkeypatch):
+    # The test organisation uses its own password, so nothing is offered...
+    assert org_client.get("/api/auth/demo").json() == {"enabled": False, "accounts": [], "password": None}
+    # ...until the demo password is the one the accounts really have.
+    monkeypatch.setenv("DEMO_PASSWORD", PASSWORD)
+    demo = org_client.get("/api/auth/demo").json()
+    assert demo["enabled"] and demo["password"] == PASSWORD
+    assert {a["email"] for a in demo["accounts"]} >= {"hr@mitra.local", "admin@mitra.local"}
+    assert org_client.post("/api/auth/login", json={"email": "hr@mitra.local", "password": demo["password"]}).status_code == 200
+
+
+def test_demo_sign_in_is_never_offered_deployed(org_client, monkeypatch):
+    monkeypatch.setenv("DEMO_PASSWORD", PASSWORD)
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    assert org_client.get("/api/auth/demo").json()["accounts"] == []
+    monkeypatch.delenv("RAILWAY_ENVIRONMENT")
+    monkeypatch.setenv("DEMO_LOGIN", "0")
+    assert org_client.get("/api/auth/demo").json()["accounts"] == []

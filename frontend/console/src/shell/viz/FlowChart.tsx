@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
  * Two lines on one axis: candidates added and decisions people made, by week.
  * A crosshair finds the week; the readout lists both.
  */
-export function FlowChart({ weeks, added, decided }: { weeks: string[]; added: number[]; decided: number[] }) {
+export function FlowChart({ weeks, added, decided, decidedLabel = "Decisions by people" }: { weeks: string[]; added: number[]; decided: number[]; decidedLabel?: string }) {
   const [hover, setHover] = useState<number | null>(null);
   const svg = useRef<SVGSVGElement>(null);
   const W = 520;
@@ -86,7 +86,7 @@ export function FlowChart({ weeks, added, decided }: { weeks: string[]; added: n
           <i className="key key-1" /> Candidates added
         </li>
         <li>
-          <i className="key key-2" /> Decisions by people
+          <i className="key key-2" /> {decidedLabel}
         </li>
       </ul>
     </div>

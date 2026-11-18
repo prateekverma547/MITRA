@@ -1,7 +1,8 @@
-// One candidate, from CV upload to the screening gate. The page follows the
-// screening row: waiting (check the CV), running (poll), failed (try again),
-// ready (the fit, the questions and the decision). What this person may do
-// comes from the server (`next`, `can_proceed`, `can_reupload`).
+// One candidate, read in the order a person needs it: what happens now (and
+// the buttons for it), the four facts at a glance, then strengths and gaps,
+// the CV against the job, and, at the side, MITRA's summary, the HR questions
+// and the history. What this person may do comes from the server (`next`,
+// `can_proceed`, `can_reupload`). Track H.
 
 import {
   ArrowRightCircle,
@@ -22,18 +23,18 @@ import {
   STAGE_TONES,
   type CandidateDetail,
   type CandidateStage,
-  type CompetencyRating,
   type DecisionEntry,
-  type FitAnalysis,
-  type HRQuestion,
 } from "../../contracts";
 import { BackButton } from "../../shell/ui/BackButton";
-import { Pips } from "../../shell/ui/Pips";
 import { Button, ButtonLink } from "../../shell/ui/Button";
 import { PageSkeleton } from "../../shell/ui/Skeleton";
 import { Spinner } from "../../shell/ui/Spinner";
 import { useToast } from "../../shell/ui/Toast";
-import { ScoreMeter } from "./ScoreMeter";
+import { useSession } from "../../session";
+import { TechnicalEntry } from "../results/TechnicalEntry";
+import type { Results } from "../results/types";
+import { CandidateEvidence, Glance, History, NextStepText, Sidebar } from "./CandidateParts";
+import "./candidate.css";
 
 const POLL_MS = 2500;
 
@@ -141,85 +142,6 @@ function Screening() {
   );
 }
 
-// ---- ready: the fit ---------------------------------------------------------------------------
-
-const RATING_WORDS = ["Clearly lacking", "Adjacent only", "Claimed, no specifics", "Specific work", "Specific, owned, measured"];
-
-function RatingRow({ r, total }: { r: CompetencyRating; total: number }) {
-  return (
-    <li className="rating">
-      <div className="rating-head">
-        <span className="rating-name">{r.competency_name}</span>
-        <span className="rating-weight">{Math.round((r.weight / total) * 100)}% of the job</span>
-      </div>
-      <Pips rating={r.rating} words={RATING_WORDS} none="No evidence in the CV" />
-      {r.reasoning && <p className="rating-why">{r.reasoning}</p>}
-      {r.evidence.map((q, i) => (
-        <blockquote key={i} className="cv-quote">
-          {q}
-        </blockquote>
-      ))}
-    </li>
-  );
-}
-
-function Fit({ fit, minAssessed }: { fit: FitAnalysis; minAssessed: number }) {
-  const total = fit.ratings.reduce((s, r) => s + r.weight, 0) || 1;
-  const below = fit.score_percent < fit.threshold_percent;
-  const enough = fit.assessed_weight_percent >= minAssessed;
-  return (
-    <article className="fit live-border">
-      <div className="fit-score">
-        <ScoreMeter score={fit.score_percent} threshold={fit.threshold_percent} enoughEvidence={enough} />
-        {enough ? (
-          <p className="fit-caption">
-            {below ? "Below" : "At or above"} the {fit.threshold_percent}% cut-off, judged on {fit.assessed_weight_percent}%
-            of the job's weight. Competencies the CV says nothing about are left out, not scored as zero.
-          </p>
-        ) : (
-          <p className="fit-caption fit-caption-warn">
-            Too little evidence to judge. The CV speaks to only {fit.assessed_weight_percent}% of what the job asks for, so
-            this score rests on very little. MITRA needs at least {minAssessed}% before a score means anything.
-          </p>
-        )}
-      </div>
-      {fit.summary && <p className="fit-summary">{fit.summary}</p>}
-      {fit.experience_note && <p className="fit-experience">{fit.experience_note}</p>}
-
-      <h3 className="brief-sub">Against each thing the job asks for</h3>
-      <ol className="ratings">
-        {fit.ratings.map((r) => (
-          <RatingRow key={r.competency_id} r={r} total={total} />
-        ))}
-      </ol>
-      {fit.identity_fields_removed.length > 0 && (
-        <p className="muted small">
-          Removed from the CV before screening: {fit.identity_fields_removed.join(", ")}. Quotes above are from that
-          version.
-        </p>
-      )}
-    </article>
-  );
-}
-
-function Questions({ questions }: { questions: HRQuestion[] }) {
-  return (
-    <section className="questions" aria-labelledby="hr-questions">
-      <h2 id="hr-questions" className="section-title">
-        Questions for the HR round
-      </h2>
-      <ol className="question-list">
-        {questions.map((q) => (
-          <li key={q.id}>
-            <p className="question-text">{q.text}</p>
-            <p className="question-why">{q.why}</p>
-          </li>
-        ))}
-      </ol>
-    </section>
-  );
-}
-
 // ---- the decision -----------------------------------------------------------------------------
 
 interface Choice {
@@ -321,31 +243,6 @@ function Decide({ c, onDone }: { c: CandidateDetail; onDone: () => void }) {
   );
 }
 
-const ACTORS = { system: "MITRA", hr: "HR", bu_head: "BU head" };
-
-function History({ entries }: { entries: DecisionEntry[] }) {
-  if (entries.length === 0) return null;
-  return (
-    <section aria-labelledby="history">
-      <h2 id="history" className="section-title">
-        History
-      </h2>
-      <ol className="history">
-        {entries.map((d, i) => (
-          <li key={i}>
-            <span className="history-what">
-              {ACTORS[d.actor]} moved them to <strong>{STAGE_LABELS[d.to]}</strong>
-            </span>
-            {d.at && <span className="history-when">{new Date(d.at).toLocaleString()}</span>}
-            {d.reason && <p className="history-reason">{d.reason}</p>}
-            {d.model_recommendation && <p className="history-model">MITRA's reading at the time: {d.model_recommendation}</p>}
-          </li>
-        ))}
-      </ol>
-    </section>
-  );
-}
-
 // ---- the HR round ---------------------------------------------------------------------------
 
 const AFTER_BOOKING: CandidateStage[] = ["hr_booked", "hr_done", "ready_for_technical", "technical_booked", "technical_done", "with_bu_head", "shortlisted", "on_hold"];
@@ -394,8 +291,8 @@ function HRRoundEntry({ c, onBooked }: { c: CandidateDetail; onBooked: () => voi
           <h2 className="section-title">HR round</h2>
           <p className="muted">{c.stage === "hr_booked" ? "Booked. Send the credentials, then join from here." : "The HR round has happened."}</p>
         </div>
-        <ButtonLink variant={c.stage === "hr_booked" ? "primary" : "secondary"} to={`/candidates/${c.id}/hr-round`} icon={<Video size={17} />}>
-          Open the HR round
+        <ButtonLink variant={c.stage === "hr_booked" || c.stage === "hr_done" ? "primary" : "secondary"} to={`/candidates/${c.id}/hr-round`} icon={<Video size={17} />}>
+          {c.stage === "hr_done" ? "Open the HR round to decide" : c.stage === "hr_booked" ? "Open the HR round" : "See the HR round"}
         </ButtonLink>
       </section>
     );
@@ -407,18 +304,22 @@ function HRRoundEntry({ c, onBooked }: { c: CandidateDetail; onBooked: () => voi
 
 export function CandidatePage() {
   const { candidateId } = useParams();
+  const { me } = useSession();
   const [c, setC] = useState<CandidateDetail | null>(null);
+  const [results, setResults] = useState<Results | null>(null);
   const [history, setHistory] = useState<DecisionEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [detail, decisions] = await Promise.all([
+      const [detail, decisions, summary] = await Promise.all([
         api.get<CandidateDetail>(`/candidates/${candidateId}`),
         api.get<{ decisions: DecisionEntry[] }>(`/candidates/${candidateId}/decisions`),
+        api.get<Results>(`/candidates/${candidateId}/results`).catch(() => null),
       ]);
       setC(detail);
       setHistory(decisions.decisions);
+      setResults(summary);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -441,32 +342,55 @@ export function CandidatePage() {
       </div>
     );
   }
-  if (!c) return <PageSkeleton />;
+  if (!c || !me) return <PageSkeleton />;
+
+  const screened = c.screening_status === "ready" && c.fit;
+  // Each stage shows only its own action in "What happens now".
+  const decidesHere = screened && (c.stage === "screened" || c.stage === "parked");
+  const hrStep = c.stage === "ready_for_hr" || c.stage === "hr_booked" || c.stage === "hr_done";
+  const techStep = ["ready_for_technical", "technical_booked", "technical_done", "with_bu_head", "on_hold"].includes(c.stage);
 
   return (
-    <div className="page page-wide">
+    <div className="page page-wide cand">
       <BackButton fallback={`/jobs/${c.job.id}/candidates`} label={c.job.title} />
-      <header className="page-head">
+      <header className="page-head cand-head">
         <div>
           <h1 className="page-title">{c.name}</h1>
           <p className="page-sub">
-            Candidate for {c.job.title}, {c.job.bu_name}.
+            {c.job.title}, {c.job.bu_name}
+            {c.source_filename ? `. CV: ${c.source_filename}` : ""}
           </p>
         </div>
         <span className={`mark mark-lg tone-${STAGE_TONES[c.stage]}`}>{STAGE_LABELS[c.stage]}</span>
       </header>
 
+      <section className="next-step" aria-labelledby="next-title">
+        <div className="next-copy">
+          <h2 id="next-title" className="next-title">
+            What happens now
+          </h2>
+          <NextStepText stage={c.stage} role={me.role} />
+        </div>
+        <div className="next-actions">
+          {decidesHere && <Decide c={c} onDone={load} />}
+          {hrStep && <HRRoundEntry c={c} onBooked={load} />}
+          {techStep && <TechnicalEntry candidateId={c.id} stage={c.stage} isBuHead={me.role === "bu_head"} onChange={load} />}
+        </div>
+      </section>
+
       {(c.screening_status === "waiting" || c.screening_status === "failed") && <CheckCv c={c} onUpdate={setC} />}
       {c.screening_status === "running" && <Screening />}
-      {c.screening_status === "ready" && c.fit && (
-        <div className="screened">
-          <Fit fit={c.fit} minAssessed={c.min_assessed_percent} />
-          {c.hr_questions && <Questions questions={c.hr_questions.questions} />}
-        </div>
+
+      {screened && (
+        <>
+          <Glance c={c} results={results} history={history} />
+          <div className="cand-grid">
+            <CandidateEvidence fit={c.fit!} results={results} />
+            <Sidebar fit={c.fit!} questions={c.hr_questions?.questions ?? []} history={<History entries={history} />} />
+          </div>
+        </>
       )}
-      <HRRoundEntry c={c} onBooked={load} />
-      <History entries={history} />
-      {c.screening_status === "ready" && <Decide c={c} onDone={load} />}
+      {!screened && <History entries={history} />}
     </div>
   );
 }

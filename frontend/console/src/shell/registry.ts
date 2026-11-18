@@ -3,6 +3,7 @@
 // means editing a shared file (docs/DEV_PLAN.md section 6). Track H owns the
 // shell; each feature folder belongs to one track.
 
+import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Role } from "../contracts";
 
@@ -22,6 +23,12 @@ export interface NavItem {
   roles: Role[];
   /** Position in the sidebar, lowest first. Home is 0. */
   order: number;
+  /** Sidebar icon. */
+  icon?: LucideIcon;
+  /** Sidebar group heading; items without one sit in the main group. */
+  section?: string;
+  /** Shows the count of people waiting on the signed-in user. */
+  badge?: "needs_you";
 }
 
 export interface Feature {

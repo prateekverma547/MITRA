@@ -3,7 +3,7 @@
 // from the server (`can_chat`, `can_edit`, `can_approve`), so HR and admins
 // see the same page read-only.
 
-import { CheckCheck, PencilLine, SendHorizontal, Users, X } from "lucide-react";
+import { CheckCheck, GitCompareArrows, PencilLine, SendHorizontal, Users, X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "../../api";
@@ -245,9 +245,16 @@ export function JobDetail() {
       {job.request_status === "open" && !describing && (
         <div className="notice notice-good notice-row">
           <span>This request is with HR. {job.candidates === 0 ? "No candidates yet." : ""}</span>
-          <ButtonLink size="sm" to={`/jobs/${job.id}/candidates`} icon={<Users size={15} />}>
-            {job.candidates === 0 ? "Open candidates" : `See ${job.candidates} ${job.candidates === 1 ? "candidate" : "candidates"}`}
-          </ButtonLink>
+          <span className="actions">
+            {job.candidates > 1 && (
+              <ButtonLink size="sm" variant="ghost" to={`/jobs/${job.id}/compare`} icon={<GitCompareArrows size={15} />}>
+                Compare them
+              </ButtonLink>
+            )}
+            <ButtonLink size="sm" to={`/jobs/${job.id}/candidates`} icon={<Users size={15} />}>
+              {job.candidates === 0 ? "Open candidates" : `See ${job.candidates} ${job.candidates === 1 ? "candidate" : "candidates"}`}
+            </ButtonLink>
+          </span>
         </div>
       )}
       {job.request_status === "open" && describing && (

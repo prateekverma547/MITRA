@@ -235,9 +235,7 @@ async def run_screening(candidate_id: str) -> None:
         if candidate is None or job is None or not job.evaluation_spec:
             return
         spec = EvaluationSpec.model_validate(job.evaluation_spec)
-        inputs = dict(
-            candidate_id=candidate.id, job_id=job.id, spec=spec, jd_text=job.jd_text or "",
-        )
+        inputs = {"candidate_id": candidate.id, "job_id": job.id, "spec": spec, "jd_text": job.jd_text or ""}
         cv_text, name = candidate.cv_text, candidate.name
 
     try:
@@ -303,13 +301,22 @@ def recommendation(fit: FitAnalysis) -> str:
 
 
 async def gate_rules(session, candidate: Candidate, to: CandidateStage, reason: str | None) -> str | None:
-    if CandidateStage(candidate.stage) == CandidateStage.HR_DONE:
-        return await _hr_round_recommendation(session, candidate.id)
-    """Extra rules at the screening gate. Returns the model recommendation to record.
+    """Extra rules at each gate. Returns the model recommendation to record.
+
+    The recommendation recorded is the one the person had in front of them:
+    the screening fit at the screening gate, the HR round evaluation after the
+    HR round, and the technical report once the technical round is done.
 
     Proceeding to the HR round below the cut-off is allowed, decided by a
     person, and needs a written reason, so "proceed anyway" is never a reflex.
     """
+    stage = CandidateStage(candidate.stage)
+    if stage == CandidateStage.HR_DONE:
+        return await _hr_round_recommendation(session, candidate.id)
+    if stage in (CandidateStage.TECHNICAL_DONE, CandidateStage.WITH_BU_HEAD, CandidateStage.ON_HOLD):
+        from hiring.technical import technical_recommendation
+
+        return await technical_recommendation(session, candidate.id)
     if CandidateStage(candidate.stage) not in (CandidateStage.SCREENED, CandidateStage.PARKED):
         return None
     screening = (

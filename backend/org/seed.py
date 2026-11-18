@@ -16,10 +16,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import Candidate, Job, SpecStatus
 from org.models import User
-from org.users import create_user, get_or_create_bu, get_or_create_org, new_id, normalise_email
+from org.users import (
+    create_user,
+    get_or_create_bu,
+    get_or_create_org,
+    new_id,
+    normalise_email,
+)
 from shared.stages import Role
 
 ORG_NAME = "Demo Organisation"
+
+#: The well-known password `scripts/seed_org.py` gives demo accounts. Known on
+#: purpose, which is why neither the seed nor the demo sign-in runs deployed.
+DEMO_PASSWORD = "mitra-demo-password"
 BUSINESS_UNITS = ("AI", "Business", "Data Science", "Finance", "Software")
 
 #: (email, name, role, BU name or None)
