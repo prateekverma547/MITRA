@@ -108,30 +108,36 @@ Tick these in your PRs. Each phase ends with a joint live checkpoint on `dev`.
 
 ### Phase 0: Foundation (week 1)
 
-- [ ] Contracts in `backend/shared/`, written with Track I: `CandidateStage`,
+- [x] Contracts in `backend/shared/`, written with Track I: `CandidateStage`,
       `Decision`, `HRQuestionSet`, `FitAnalysis`, `HRRoundEvaluation`, each with
       a fixture
-- [ ] Alembic set up; first migration for `Organisation`, `BusinessUnit`,
+- [x] Alembic set up; first migration for `Organisation`, `BusinessUnit`,
       `User` (role, BU, `org_id`), and job request fields on `Job` (BU,
       creator, status)
-- [ ] Sign-in:
-  - [ ] hashed passwords and httpOnly session cookies;
-  - [ ] `current_user()`, a role guard and `bu_scope()`;
-  - [ ] the route sweep test, which replaces the admin-only one.
-- [ ] Candidate stage machine: `CandidateStage`, the allowed moves, and `move()`
+- [x] Sign-in:
+  - [x] hashed passwords and httpOnly session cookies;
+  - [x] `current_user()`, a role guard and `bu_scope()`;
+  - [x] the route sweep test, which replaces the admin-only one.
+- [x] Candidate stage machine: `CandidateStage`, the allowed moves, and `move()`
       writing a `Decision` and an audit entry
-- [ ] Register routers once in `app/main.py` (`org`, `hiring`, plus Track I's
+- [x] Register routers once in `app/main.py` (`org`, `hiring`, plus Track I's
       packages) with empty stubs
 - [ ] Console app (`frontend/console/`, React + Vite + TS):
   - [ ] the shell, with layout, navigation and a home screen per role;
   - [ ] self-registering feature routes (`import.meta.glob` over
         `features/*/routes.tsx`).
-- [ ] `scripts/seed_org.py`: one admin, one HR, two BU heads in different BUs,
+- [x] `scripts/seed_org.py`: one admin, one HR, two BU heads in different BUs,
       sample jobs
 - [ ] The welcome page with three doors, all going to one sign-in
 
 **Checkpoint:** three seeded accounts sign in, and each lands on its own empty
 home scoped to its role. CI is green.
+
+> **Status 2026-11-18:** the backend half is done: contracts with fixtures,
+> migrations, sign-in and scoping (`job_scope` rather than `bu_scope`), the
+> stage machine, router registration and the seed script. The console shell
+> and welcome page are next, and need Node.js. Track I's contract half
+> (`InterviewEvent`, the report types, `TwoLinks`) is theirs to add.
 
 ### Phase 1: Job to screening (weeks 2–3)
 
