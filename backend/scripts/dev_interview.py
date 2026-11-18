@@ -12,6 +12,7 @@ exercised by ear without any of that.
 
 import argparse
 import asyncio
+import os
 import signal
 import sys
 import uuid
@@ -54,8 +55,18 @@ async def main() -> int:
             "real candidate against their generated blueprint."
         ),
     )
+    parser.add_argument(
+        "--engine",
+        choices=["pipeline", "realtime"],
+        default=os.environ.get("INTERVIEW_ENGINE", "pipeline"),
+        help=(
+            "pipeline: Deepgram -> GPT-4.1-mini -> ElevenLabs (main). "
+            "realtime: one OpenAI Realtime model (docs/REALTIME_ARCHITECTURE.md)."
+        ),
+    )
     args = parser.parse_args()
     no_brain = args.no_brain
+    engine = args.engine
     blueprint_id = args.blueprint_id
 
     try:
@@ -85,6 +96,7 @@ async def main() -> int:
         "bot.run_bot",
         *bot_args,
         cwd=str(Path(__file__).resolve().parents[1]),
+        env={**os.environ, "INTERVIEW_ENGINE": engine},
     )
 
     # Let the bot verify credentials and join before we print anything, so the
@@ -100,7 +112,9 @@ async def main() -> int:
     print(f"  {room.url}")
     print("=" * 72)
     print(f"  session: {session_id}")
-    print(f"  mode:    {'M1 static prompt (baseline)' if no_brain else 'sectioned brain'}")
+    print(f"  engine:  {engine}")
+    if engine == "pipeline":
+        print(f"  mode:    {'M1 static prompt (baseline)' if no_brain else 'sectioned brain'}")
     print(f"  running: {blueprint_id or 'pm_senior (role-level fixture)'}")
     print("  Open the URL above in a browser, allow the mic, and start talking.")
     print("  Press Ctrl-C here to end the session and dump the transcript.")

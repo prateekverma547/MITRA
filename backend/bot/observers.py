@@ -30,6 +30,7 @@ from loguru import logger
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
+    LLMFullResponseStartFrame,
     MetricsFrame,
     TranscriptionFrame,
     TTSTextFrame,
@@ -63,11 +64,17 @@ class _DedupObserver(BaseObserver):
     def _is_new(self, frame) -> bool:
         if frame.id in self._seen:
             return False
+        # `broadcast_frame` sends two copies of one event, one each way, with
+        # different ids that point at each other. Counting both doubled
+        # `turns_started` and so halved `false_turn_end_rate` in every session
+        # report, on both engines, until 2026-11-13.
+        sibling = getattr(frame, "broadcast_sibling_id", None)
+        is_copy = sibling is not None and sibling in self._seen
         self._seen.add(frame.id)
         self._order.append(frame.id)
         if len(self._order) > self._max_frames:
             self._seen.discard(self._order.pop(0))
-        return True
+        return not is_copy
 
 
 @dataclass
@@ -442,15 +449,25 @@ class TranscriptObserver(_DedupObserver):
                 self._append(speaker, frame.text.strip())
 
         elif isinstance(frame, TTSTextFrame):
-            if frame.text.strip():
-                self._bot_buffer.append(frame.text.strip())
+            if getattr(frame, "includes_inter_frame_spaces", False):
+                # Fragments that already carry their own spacing (the realtime
+                # engine streams "Hel", "lo there"). Joining them with spaces
+                # would split words apart in the hiring record.
+                if frame.text:
+                    self._bot_buffer.append(frame.text)
+            elif frame.text.strip():
+                self._bot_buffer.append(" " + frame.text.strip())
 
-        elif isinstance(frame, BotStoppedSpeakingFrame):
+        elif isinstance(frame, (BotStoppedSpeakingFrame, LLMFullResponseStartFrame)):
+            # A new reply starts a new turn. Without this, a reply cut off by
+            # the candidate was glued onto the next one ("I'mGood evening"),
+            # because the cut-off words were still waiting for a
+            # BotStoppedSpeaking that came after the next reply had begun.
             self._flush_bot()
 
     def _flush_bot(self):
         if self._bot_buffer:
-            self._append("interviewer", " ".join(self._bot_buffer))
+            self._append("interviewer", " ".join("".join(self._bot_buffer).split()))
             self._bot_buffer = []
             self._interviewer_has_spoken = True
 
@@ -504,8 +521,13 @@ def write_session_artifacts(
     silence_events: list[dict] | None = None,
     brain_events: list[dict] | None = None,
     section_outcomes: list[dict] | None = None,
+    extra: dict | None = None,
 ) -> Path:
-    """Persist transcript + metrics for the session and log a readable summary."""
+    """Persist transcript + metrics for the session and log a readable summary.
+
+    `extra` is merged into the saved payload: the realtime engine records its
+    engine settings and token usage there.
+    """
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{session_id}.json"
 
@@ -522,6 +544,7 @@ def write_session_artifacts(
         "brain_events": brain_events or [],
         "section_outcomes": section_outcomes or [],
         "turns": [t.to_dict() for t in latency.turns],
+        **(extra or {}),
     }
     path.write_text(json.dumps(payload, indent=2))
 
@@ -530,5 +553,7 @@ def write_session_artifacts(
     logger.info(f"===== LATENCY =====\n{json.dumps(latency.summary(), indent=2)}\n")
     if silence_events:
         logger.info(f"===== SILENCE =====\n{json.dumps(silence_events, indent=2)}\n")
+    if extra:
+        logger.info(f"===== ENGINE =====\n{json.dumps(extra, indent=2)}\n")
     logger.info(f"Session artifacts written to {path}")
     return path

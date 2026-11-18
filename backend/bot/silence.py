@@ -152,8 +152,20 @@ class SilenceEscalation(BaseObserver):
         presence=None,
         patience=None,
         interview_over=None,
+        speak=None,
+        prompt=None,
+        close=None,
     ):
         super().__init__()
+        #: Optional async callables for engines with no separate TTS (the
+        #: realtime engine). Without them the ladder speaks through TTS and the
+        #: LLM context exactly as before.
+        #: speak(text): say these words. prompt(instruction): reply following
+        #: this instruction. close(text, reason): say goodbye, then end the call
+        #: once it has been heard.
+        self._speak = speak
+        self._prompt = prompt
+        self._close = close
         self._ladder = ladder or SilenceLadder()
         self._session_id = session_id
         #: Optional. Without it the ladder behaves exactly as it did before,
@@ -267,17 +279,23 @@ class SilenceEscalation(BaseObserver):
 
         if stage == 0:
             self._record(1, "nudge", self._ladder.nudge_text)
-            await self._inject(TTSSpeakFrame(self._ladder.nudge_text))
+            if self._speak is not None:
+                await self._speak(self._ladder.nudge_text)
+            else:
+                await self._inject(TTSSpeakFrame(self._ladder.nudge_text))
             await self._inject(UserIdleTimeoutUpdateFrame(timeout=gaps[1]))
 
         elif stage == 1:
             self._record(2, "rephrase_and_audio_check")
-            await self._inject(
-                LLMMessagesAppendFrame(
-                    [{"role": "developer", "content": self._ladder.audio_check_instruction}],
-                    run_llm=True,
+            if self._prompt is not None:
+                await self._prompt(self._ladder.audio_check_instruction)
+            else:
+                await self._inject(
+                    LLMMessagesAppendFrame(
+                        [{"role": "developer", "content": self._ladder.audio_check_instruction}],
+                        run_llm=True,
+                    )
                 )
-            )
             await self._inject(UserIdleTimeoutUpdateFrame(timeout=gaps[2]))
 
         else:
@@ -285,6 +303,12 @@ class SilenceEscalation(BaseObserver):
             # Stop the ladder before we begin closing, so a late timer cannot
             # fire again while the goodbye is still being spoken.
             await self._inject(UserIdleTimeoutUpdateFrame(timeout=0))
+            if self._close is not None:
+                # The engine speaks the goodbye and hangs up once it is heard.
+                # An EndWorkerFrame queued now would end the call before a
+                # realtime model had produced a single word of it.
+                await self._close(self._ladder.closing_text, "abandoned_by_candidate")
+                return
             await self._inject(TTSSpeakFrame(self._ladder.closing_text))
             # EndWorkerFrame flushes queued frames before shutting down, so the
             # goodbye is actually heard rather than cut off by the disconnect.
