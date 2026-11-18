@@ -41,15 +41,34 @@ who is signed in, what they may see, and where a candidate stands.
 - `scripts/seed_org.py` and `scripts/create_user.py`.
 - `.env.example`: `SESSION_SECRET`.
 
+**The console (added the same day)**
+
+- `frontend/console/`: React 19 + Vite 8 + TypeScript 7, with exact versions
+  pinned in the lockfile.
+  - Hash routing.
+  - Feature folders register their own routes, so the shell is never edited
+    to add a screen.
+  - The welcome page has three doors to one sign-in.
+  - A home screen per role, fed by the already-scoped `/api/home`.
+- FastAPI serves the built app at `/console`, and says how to build it when it
+  has not been built.
+- `Dockerfile`: a Node stage builds the console; only `dist/` reaches the
+  runtime image. Not yet built locally: Docker is not installed here.
+- `tests/hiring/test_console_contracts.py` fails if the console's copy of the
+  stage and role values drifts from `shared/stages.py`.
+
 **Left undone**
 
-- The console app (React shell, role homes, the welcome page) needs Node.js.
+- `npm audit` reports a high-severity ReDoS in `picomatch`, which Vite uses
+  at build time only. The suggested fix downgrades Vite to 6.2, so it is left
+  until Vite ships a patched release.
 - Rate limiting on sign-in.
 - User management screens (phase 4).
 
 **Confirm**
 
 ```bash
-cd backend && uv run pytest -q              # 835 passed
+cd backend && uv run pytest -q              # 838 passed
+cd frontend/console && npm install && npm run build
 uv run python scripts/seed_org.py           # demo org, prints the sign-ins
 ```

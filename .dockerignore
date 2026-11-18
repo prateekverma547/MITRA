@@ -25,3 +25,7 @@ uploads/
 
 .git
 .github
+
+# The console is built inside the image from its lockfile.
+frontend/console/node_modules
+frontend/console/dist

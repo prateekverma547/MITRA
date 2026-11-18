@@ -790,6 +790,34 @@ def _apply_recording_blocks(html: str) -> str:
 NO_CACHE = {"Cache-Control": "no-cache, must-revalidate", "Pragma": "no-cache"}
 
 
+# ---- the console (frontend/console, React) ----------------------------------
+#
+# Built by `npm run build` into frontend/console/dist and served from here, so
+# the console and its /api calls share one origin and the session cookie needs
+# no CORS. Hash routing means one index.html serves every screen. Development
+# uses Vite's own server instead (`npm run dev`, which forwards /api here).
+
+CONSOLE_DIST = FRONTEND_DIR / "console" / "dist"
+
+if (CONSOLE_DIST / "index.html").is_file():
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/console", StaticFiles(directory=CONSOLE_DIST, html=True), name="console")
+else:
+
+    @app.get("/console", include_in_schema=False)
+    @app.get("/console/{path:path}", include_in_schema=False)
+    async def console_not_built(path: str = "") -> HTMLResponse:
+        return HTMLResponse(
+            "<!doctype html><title>MITRA Console</title>"
+            "<p style='font-family:system-ui;margin:3rem'>The console has not been built. "
+            "Run <code>cd frontend/console &amp;&amp; npm install &amp;&amp; npm run build</code>, "
+            "then restart the server. For development, use <code>npm run dev</code> "
+            "and open http://localhost:5173/console/.</p>",
+            status_code=503,
+        )
+
+
 @app.get("/join", include_in_schema=False)
 async def join_page() -> HTMLResponse:
     """The candidate's entry point.

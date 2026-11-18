@@ -868,6 +868,10 @@ PUBLIC_ROUTES = {
     # out; signing out only clears a cookie.
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/logout"),
+    # Only registered when the console has not been built: a page that says
+    # how to build it. Once built, /console is static files, not a route.
+    ("GET", "/console"),
+    ("GET", "/console/{path:path}"),
     ("GET", "/"),
 }
 

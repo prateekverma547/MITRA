@@ -122,22 +122,30 @@ Tick these in your PRs. Each phase ends with a joint live checkpoint on `dev`.
       writing a `Decision` and an audit entry
 - [x] Register routers once in `app/main.py` (`org`, `hiring`, plus Track I's
       packages) with empty stubs
-- [ ] Console app (`frontend/console/`, React + Vite + TS):
-  - [ ] the shell, with layout, navigation and a home screen per role;
-  - [ ] self-registering feature routes (`import.meta.glob` over
+- [x] Console app (`frontend/console/`, React + Vite + TS):
+  - [x] the shell, with layout, navigation and a home screen per role;
+  - [x] self-registering feature routes (`import.meta.glob` over
         `features/*/routes.tsx`).
 - [x] `scripts/seed_org.py`: one admin, one HR, two BU heads in different BUs,
       sample jobs
-- [ ] The welcome page with three doors, all going to one sign-in
+- [x] The welcome page with three doors, all going to one sign-in
 
 **Checkpoint:** three seeded accounts sign in, and each lands on its own empty
 home scoped to its role. CI is green.
 
-> **Status 2026-11-18:** the backend half is done: contracts with fixtures,
-> migrations, sign-in and scoping (`job_scope` rather than `bu_scope`), the
-> stage machine, router registration and the seed script. The console shell
-> and welcome page are next, and need Node.js. Track I's contract half
-> (`InterviewEvent`, the report types, `TwoLinks`) is theirs to add.
+> **Status 2026-11-18: Track H's phase 0 is done.** Contracts with fixtures,
+> migrations, sign-in and scoping (`job_scope`), the stage machine, router
+> registration, the seed script, and the console shell with the welcome page
+> and a home per role. Track I's contract half (`InterviewEvent`, the report
+> types, `TwoLinks`) is theirs to add.
+>
+> **Run the console:**
+> ```bash
+> cd backend && uv run python scripts/seed_org.py        # demo org, prints sign-ins
+> uv run uvicorn app.main:app --port 8000 --reload
+> cd frontend/console && npm install && npm run dev      # http://localhost:5173/console/
+> ```
+> Or `npm run build` once, and FastAPI serves it at http://localhost:8000/console/.
 
 ### Phase 1: Job to screening (weeks 2–3)
 

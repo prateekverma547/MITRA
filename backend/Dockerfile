@@ -17,6 +17,16 @@
 # directory relative to its own file, so a flattened image would find the UIs
 # locally and 500 in production.
 
+# The console (frontend/console) is a React app that Node builds into static
+# files. It gets its own stage so Node never ends up in the runtime image; only
+# the built `dist/` is copied across below.
+FROM node:26-slim AS console
+WORKDIR /app/frontend/console
+COPY frontend/console/package.json frontend/console/package-lock.json ./
+RUN npm ci
+COPY frontend/console/ ./
+RUN npm run build
+
 FROM python:3.12-slim AS base
 
 # Python 3.12 specifically, not 3.13: pipecat 1.6.0 still imports the stdlib
@@ -46,6 +56,8 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY backend/ ./
 # The candidate and admin UIs, served by FastAPI.
 COPY frontend/ /app/frontend/
+# The built console from the Node stage; FastAPI serves it at /console.
+COPY --from=console /app/frontend/console/dist /app/frontend/console/dist
 RUN uv sync --frozen --no-dev
 
 # Long-lived bot subprocesses must not be killed by an impatient shutdown: a
