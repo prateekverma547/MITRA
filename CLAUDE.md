@@ -8,6 +8,7 @@
 > | | |
 > | --- | --- |
 > | [README.md](README.md) | run it locally |
+> | [docs/TECH_SPEC.md](docs/TECH_SPEC.md) | the whole system on one page; update it when a change alters what it describes |
 > | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how it fits together, and which layer owns which symptom |
 > | [docs/BRAIN.md](docs/BRAIN.md) | the interview brain and its invariants |
 > | [docs/DECISIONS.md](docs/DECISIONS.md) | every decision with its measurement |

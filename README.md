@@ -19,6 +19,7 @@ anyone.**
 | you want to | read |
 |---|---|
 | run it locally, right now | this file |
+| see the whole system on one page | [docs/TECH_SPEC.md](docs/TECH_SPEC.md) |
 | understand how it fits together | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | change interview behaviour | [docs/BRAIN.md](docs/BRAIN.md) |
 | know why something is the way it is | [docs/DECISIONS.md](docs/DECISIONS.md) |
