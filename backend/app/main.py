@@ -8,6 +8,7 @@ blueprint is finished and stored long before anyone joins an interview.
 """
 
 import asyncio
+import importlib
 import re
 import uuid
 from contextlib import asynccontextmanager, suppress
@@ -92,6 +93,15 @@ from app.recordings import router as recordings_router  # noqa: E402
 
 app.include_router(interviews_router)
 app.include_router(recordings_router)
+
+#: The console's API packages, one per area, each exposing `routes.router`.
+#: Registered here once (docs/DEV_PLAN.md section 6) so that adding a route
+#: never means editing this file. Track H: org, hiring. Track I: live,
+#: proctoring, analytics.
+CONSOLE_PACKAGES = ("org", "hiring", "live", "proctoring", "analytics")
+
+for _package in CONSOLE_PACKAGES:
+    app.include_router(importlib.import_module(f"{_package}.routes").router)
 
 
 def _settings() -> Settings:

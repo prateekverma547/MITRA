@@ -864,6 +864,10 @@ PUBLIC_ROUTES = {
     ("GET", "/admin"),  # the login screen has to render before you can log in
     ("GET", "/admin/admin.js"),
     ("GET", "/assets/{filename}"),  # the logo, on the sign-in and join screens
+    # The console's sign-in and sign-out. Signing in has to be possible signed
+    # out; signing out only clears a cookie.
+    ("POST", "/api/auth/login"),
+    ("POST", "/api/auth/logout"),
     ("GET", "/"),
 }
 
@@ -874,24 +878,27 @@ def test_every_route_is_guarded_unless_it_is_deliberately_public():
     Guards were added route by route, which is exactly the pattern where a new
     endpoint gets merged without one. This fails the moment that happens.
     """
-    from fastapi.routing import APIRoute
-
-    from app.auth import require_admin
     from app.main import app
+    from org.auth import is_guard
+    from tests.route_walk import api_routes, guards_of
+
+    routes = api_routes(app.routes)
+    # The walk must reach into included routers, or this test checks nothing:
+    # with FastAPI 0.141 a plain `app.routes` scan never saw /interviews/...
+    assert any(r.path.startswith("/interviews/") for r in routes)
 
     unguarded = []
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
-            continue
+    for route in routes:
         for method in route.methods - {"HEAD", "OPTIONS"}:
             if (method, route.path) in PUBLIC_ROUTES:
                 continue
-            if not any(d.call is require_admin for d in route.dependant.dependencies):
+            if not any(is_guard(call) for call in guards_of(route)):
                 unguarded.append(f"{method} {route.path}")
 
     assert not unguarded, (
-        "These routes are reachable without signing in. Either guard them with "
-        f"Depends(require_admin) or add them to PUBLIC_ROUTES: {sorted(unguarded)}"
+        "These routes are reachable without signing in. Either guard them "
+        "(Depends(require_admin) for the old panel, current_user or require_role "
+        f"for the console) or add them to PUBLIC_ROUTES: {sorted(unguarded)}"
     )
 
 

@@ -1,0 +1,84 @@
+"""Console API for the hiring flow.
+
+Phase 0 has the one route every gate will use: moving a candidate, plus the
+history behind their current stage. Job requests, screening and the HR round
+arrive here in phases 1 and 2 (docs/TRACK_H.md).
+"""
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import select
+
+from app.db import Candidate, Job, get_sessionmaker
+from hiring.models import DecisionRecord
+from hiring.stages import StageError, move
+from org.auth import job_scope, require_role
+from org.models import User
+from shared.stages import Actor, CandidateStage, Role, allowed_next
+
+router = APIRouter(prefix="/api", tags=["console: hiring"])
+
+_hr_or_bu_head = require_role(Role.HR, Role.BU_HEAD)
+_anyone_signed_in = require_role(Role.HR, Role.BU_HEAD, Role.ORG_ADMIN)
+
+
+class MoveRequest(BaseModel):
+    to: CandidateStage
+    reason: str | None = None
+
+
+async def _visible_candidate(session, user: User, candidate_id: str) -> Candidate:
+    candidate = (
+        await session.execute(
+            select(Candidate).join(Job, Candidate.job_id == Job.id)
+            .where(Candidate.id == candidate_id, job_scope(user))
+        )
+    ).scalar_one_or_none()
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="No such candidate.")
+    return candidate
+
+
+@router.post("/candidates/{candidate_id}/move")
+async def move_candidate(
+    candidate_id: str, body: MoveRequest, user: User = Depends(_hr_or_bu_head)
+) -> dict:
+    async with get_sessionmaker()() as session:
+        candidate = await _visible_candidate(session, user, candidate_id)
+        try:
+            record = await move(session, candidate, body.to, by=user, reason=body.reason)
+        except StageError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+        await session.commit()
+        return {"candidate_id": candidate.id, "stage": candidate.stage, "decision_id": record.id}
+
+
+@router.get("/candidates/{candidate_id}/decisions")
+async def candidate_decisions(candidate_id: str, user: User = Depends(_anyone_signed_in)) -> dict:
+    """The candidate's stage, every move that led there, and what this user may do next."""
+    async with get_sessionmaker()() as session:
+        candidate = await _visible_candidate(session, user, candidate_id)
+        rows = (
+            await session.execute(
+                select(DecisionRecord)
+                .where(DecisionRecord.candidate_id == candidate.id)
+                .order_by(DecisionRecord.id)
+            )
+        ).scalars().all()
+
+    role = Role(user.role)
+    actor = {Role.HR: Actor.HR, Role.BU_HEAD: Actor.BU_HEAD}.get(role)
+    return {
+        "candidate_id": candidate.id,
+        "stage": candidate.stage,
+        "next": [s.value for s in allowed_next(CandidateStage(candidate.stage), actor)] if actor else [],
+        "decisions": [
+            {
+                "from": r.from_stage, "to": r.to_stage, "actor": r.actor,
+                "actor_user_id": r.actor_user_id, "reason": r.reason,
+                "model_recommendation": r.model_recommendation,
+                "at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }

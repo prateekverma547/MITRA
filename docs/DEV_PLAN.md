@@ -60,7 +60,8 @@ model's recommendation at that moment, and the reason if one was required.
 new → screened → ready_for_hr → hr_booked → hr_done → ready_for_technical
     → technical_booked → technical_done → with_bu_head → shortlisted | on_hold | rejected
 
-side exits:  rejected (stage, by, reason) · parked ("not now") · withdrew · no_show
+side exits:  rejected (stage, by, reason) · parked ("not now") · withdrew
+            a no-show moves the booking back to ready_* with reason "no_show"
 ```
 
 A screened candidate below the cut-off carries a *below threshold* flag and does
