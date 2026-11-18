@@ -97,7 +97,27 @@ async def run_bot(
     baseline can be measured with the brain wiring as the only variable — the
     STT finalisation tune landed at the same time, and without this the two
     changes are inseparable.
+
+    `INTERVIEW_ENGINE=realtime` hands the whole session to the realtime engine
+    (`bot/run_realtime.py`): one OpenAI Realtime model in place of STT, LLM and
+    TTS. Unset or `pipeline` runs everything below, unchanged.
     """
+    engine = os.environ.get("INTERVIEW_ENGINE", "pipeline").strip().lower()
+    if engine == "realtime":
+        from bot.run_realtime import run_realtime_bot
+
+        await run_realtime_bot(
+            room_url=room_url,
+            token=token,
+            session_id=session_id,
+            blueprint_id=blueprint_id,
+            interview_id=interview_id,
+            timezone=timezone,
+        )
+        return
+    if engine != "pipeline":
+        logger.warning(f"[{session_id}] unknown INTERVIEW_ENGINE={engine!r}; using pipeline")
+
     settings = Settings.load()
 
     # Milestone 1: a static fixture. Milestone 3: the generated blueprint from

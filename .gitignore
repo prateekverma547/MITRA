@@ -31,3 +31,7 @@ jds/
 uploads/
 
 .DS_Store
+
+# The Burj Khalifa kiosk, kept locally for reference. A separate project with
+# its own media library; it does not belong in this repository.
+BURJK-main/
