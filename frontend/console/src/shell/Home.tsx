@@ -2,6 +2,7 @@
 // scoped data from /api/home: the server has already decided what this person
 // may see, so nothing here filters by role for safety, only for layout.
 
+import { Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
@@ -13,6 +14,10 @@ import {
   type HomeBusinessUnit,
   type HomeJob,
 } from "../contracts";
+import { ButtonLink } from "./ui/Button";
+import { CountUp } from "./ui/CountUp";
+import { RowLink } from "./ui/RowLink";
+import { PageSkeleton } from "./ui/Skeleton";
 
 export function StageMarks({ counts }: { counts: HomeJob["candidates_by_stage"] }) {
   const present = CANDIDATE_STAGES.filter((stage) => (counts[stage] ?? 0) > 0);
@@ -41,19 +46,21 @@ function JobTable({ jobs, hr }: { jobs: HomeJob[]; hr: boolean }) {
           <col className="col-job" />
           <col className="col-request" />
           <col />
+          <col className="col-go" />
         </colgroup>
         <thead>
           <tr>
             <th scope="col">Job</th>
             <th scope="col">Request</th>
             <th scope="col">Candidates</th>
+            <th className="row-go-head" aria-hidden="true" />
           </tr>
         </thead>
         <tbody>
           {jobs.map((job) => (
-            <tr key={job.id}>
+            <RowLink key={job.id} to={hr ? `/jobs/${job.id}/candidates` : `/jobs/${job.id}`}>
               <td>
-                <Link className="row-title" to={hr ? `/jobs/${job.id}/candidates` : `/jobs/${job.id}`}>
+                <Link className="row-title" viewTransition to={hr ? `/jobs/${job.id}/candidates` : `/jobs/${job.id}`}>
                   {job.title}
                 </Link>
               </td>
@@ -65,7 +72,7 @@ function JobTable({ jobs, hr }: { jobs: HomeJob[]; hr: boolean }) {
               <td>
                 <StageMarks counts={job.candidates_by_stage} />
               </td>
-            </tr>
+            </RowLink>
           ))}
         </tbody>
       </table>
@@ -110,15 +117,21 @@ function Ledger({ data }: { data: HomeData }) {
     <dl className="ledger">
       <div>
         <dt>{open === 1 ? "Open job request" : "Open job requests"}</dt>
-        <dd>{open}</dd>
+        <dd>
+          <CountUp value={open} />
+        </dd>
       </div>
       <div>
         <dt>{people === 1 ? "Candidate" : "Candidates"}</dt>
-        <dd>{people}</dd>
+        <dd>
+          <CountUp value={people} />
+        </dd>
       </div>
       <div>
         <dt>Waiting for a person</dt>
-        <dd>{waiting}</dd>
+        <dd>
+          <CountUp value={waiting} />
+        </dd>
       </div>
     </dl>
   );
@@ -155,7 +168,7 @@ export function Home() {
       </div>
     );
   }
-  if (!data) return <div className="page muted">Loading…</div>;
+  if (!data) return <PageSkeleton />;
 
   const { me } = data;
   return (
@@ -166,9 +179,9 @@ export function Home() {
           <p className="page-sub">{SUBTITLES[me.role]}</p>
         </div>
         {me.role === "bu_head" && (
-          <Link className="btn btn-primary" to="/jobs/new">
+          <ButtonLink variant="primary" to="/jobs/new" icon={<Plus size={17} />}>
             New job request
-          </Link>
+          </ButtonLink>
         )}
       </header>
       <Ledger data={data} />

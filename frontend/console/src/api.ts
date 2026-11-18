@@ -10,7 +10,28 @@ export class ApiError extends Error {
   }
 }
 
+// In-flight requests, for the progress bar at the top of the page.
+let inFlight = 0;
+const listeners = new Set<(busy: boolean) => void>();
+function track(delta: number) {
+  inFlight += delta;
+  listeners.forEach((fn) => fn(inFlight > 0));
+}
+export function onBusyChange(fn: (busy: boolean) => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  track(1);
+  try {
+    return await send<T>(method, path, body);
+  } finally {
+    track(-1);
+  }
+}
+
+async function send<T>(method: string, path: string, body?: unknown): Promise<T> {
   const isForm = body instanceof FormData;
   const response = await fetch(`/api${path}`, {
     method,

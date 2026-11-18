@@ -1,9 +1,12 @@
 import { useState, type FormEvent } from "react";
+import { LogIn } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ROLE_LABELS, ROLES, type Role } from "../../contracts";
 import { useSession } from "../../session";
 import { Brand } from "../../shell/Brand";
 import { Footer } from "../../shell/Footer";
+import { BackButton } from "../../shell/ui/BackButton";
+import { Button } from "../../shell/ui/Button";
 
 function safeNext(next: string | null): string {
   // Only ever go somewhere inside the console.
@@ -28,7 +31,7 @@ export function SignIn() {
     setError(null);
     try {
       await signIn(email, password);
-      navigate(safeNext(params.get("next")), { replace: true });
+      navigate(safeNext(params.get("next")), { replace: true, viewTransition: true });
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
@@ -38,13 +41,14 @@ export function SignIn() {
   return (
     <div className="public">
       <header className="public-top">
-        <Link to="/" className="brand-link" aria-label="MITRA home">
+        <Link to="/" className="brand-link" aria-label="MITRA home" viewTransition>
           <Brand />
         </Link>
       </header>
 
       <main className="signin-page">
         <form className="signin" onSubmit={submit} noValidate>
+          <BackButton fallback="/" label="Choose a different way in" />
           <h1>{doorRole ? `Sign in as ${ROLE_LABELS[doorRole]}` : "Sign in"}</h1>
           <p className="muted">Use your work email. Your account decides what you can see.</p>
 
@@ -76,12 +80,16 @@ export function SignIn() {
               {error}
             </p>
           )}
-          <button type="submit" className="btn btn-primary btn-block" disabled={busy || !email || !password}>
-            {busy ? "Signing in…" : "Sign in"}
-          </button>
-          <Link to="/" className="quiet-link">
-            Choose a different way in
-          </Link>
+          <Button
+            type="submit"
+            variant="primary"
+            className="btn-block"
+            icon={<LogIn size={17} />}
+            loading={busy}
+            disabled={!email || !password}
+          >
+            {busy ? "Signing in" : "Sign in"}
+          </Button>
         </form>
       </main>
 

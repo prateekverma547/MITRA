@@ -183,9 +183,9 @@ fit score; HR rejects or proceeds, and the decision is in the audit log.
 
 ### Phase 2: HR round (weeks 3–5)
 
-- [ ] `round` field on the interview (`hr` / `technical`); the join path never
+- [x] `round` field on the interview (`hr` / `technical`); the join path never
       spawns a bot for `hr` (a shared PR in `app/interviews.py`)
-- [ ] HR round booking: a room, candidate credentials, and HR's own join from
+- [x] HR round booking: a room, candidate credentials, and HR's own join from
       the console
 - [ ] Recording per participant (Daily raw-tracks), required for the HR round
       regardless of `RECORDING_ENABLED`. Check the current Daily API first
@@ -195,7 +195,7 @@ fit score; HR rejects or proceeds, and the decision is in the audit log.
   - [ ] the raw transcript stored unchanged.
 - [ ] `evaluate_hr_round(transcript, questions, job) -> HRRoundEvaluation`:
       soft-skill rubric, verified quotes, recommendation, findings for MITRA
-- [ ] HR round screen: the credentials to send, the 10 questions as a
+- [x] HR round screen: the credentials to send, the 10 questions as a
       checklist, and a notes box
 - [ ] Evaluation review, then Reject or Proceed to technical
 - [ ] "Book technical" button, calling Track I's `book_technical()` (stub

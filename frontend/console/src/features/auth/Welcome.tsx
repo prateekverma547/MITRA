@@ -1,3 +1,4 @@
+import { ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { Role } from "../../contracts";
 import { Brand } from "../../shell/Brand";
@@ -33,16 +34,18 @@ export function Welcome() {
 
           <nav className="doors" aria-label="Sign in">
             {DOORS.map((door) => (
-              <Link key={door.role} className="door" to={`/sign-in?as=${door.role}`}>
+              <Link key={door.role} className="door" to={`/sign-in?as=${door.role}`} viewTransition>
                 <span className="door-title">{door.title}</span>
                 <span className="door-text">{door.text}</span>
-                <span className="door-go">Sign in</span>
+                <span className="door-go">
+                  Sign in <ArrowRight size={15} aria-hidden="true" />
+                </span>
               </Link>
             ))}
           </nav>
         </section>
 
-        <aside className="evidence" aria-label="An example of how MITRA shows evidence">
+        <aside className="evidence live-border" aria-label="An example of how MITRA shows evidence">
           <p className="evidence-label">How a score appears in a report</p>
           <figure>
             <blockquote>

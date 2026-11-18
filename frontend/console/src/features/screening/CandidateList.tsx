@@ -1,7 +1,12 @@
+import { UserPlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../../api";
 import { STAGE_LABELS, STAGE_TONES, type CandidateSummary, type JobCandidates } from "../../contracts";
+import { BackButton } from "../../shell/ui/BackButton";
+import { ButtonLink } from "../../shell/ui/Button";
+import { RowLink } from "../../shell/ui/RowLink";
+import { PageSkeleton } from "../../shell/ui/Skeleton";
 import { ScoreMeter } from "./ScoreMeter";
 
 type Filter = "all" | "needs_me" | "below";
@@ -48,13 +53,11 @@ export function CandidateList() {
       </div>
     );
   }
-  if (!data) return <div className="page muted">Loading…</div>;
+  if (!data) return <PageSkeleton />;
 
   return (
     <div className="page">
-      <nav className="crumbs" aria-label="Breadcrumb">
-        <Link to={`/jobs/${data.job.id}`}>{data.job.title}</Link>
-      </nav>
+      <BackButton fallback="/jobs" label="Job requests" />
       <header className="page-head">
         <div>
           <h1 className="page-title">Candidates</h1>
@@ -63,9 +66,9 @@ export function CandidateList() {
           </p>
         </div>
         {data.can_add && data.job.accepting && (
-          <Link className="btn btn-primary" to={`/jobs/${data.job.id}/candidates/new`}>
+          <ButtonLink variant="primary" to={`/jobs/${data.job.id}/candidates/new`} icon={<UserPlus size={17} />}>
             Add candidate
-          </Link>
+          </ButtonLink>
         )}
       </header>
 
@@ -96,19 +99,21 @@ export function CandidateList() {
                   <col className="col-job" />
                   <col className="col-stage" />
                   <col />
+                  <col className="col-go" />
                 </colgroup>
                 <thead>
                   <tr>
                     <th scope="col">Candidate</th>
                     <th scope="col">Where they stand</th>
                     <th scope="col">Screening</th>
+                    <th className="row-go-head" aria-hidden="true" />
                   </tr>
                 </thead>
                 <tbody>
                   {shown.map((c) => (
-                    <tr key={c.id}>
+                    <RowLink key={c.id} to={`/candidates/${c.id}`}>
                       <td>
-                        <Link className="row-title" to={`/candidates/${c.id}`}>
+                        <Link className="row-title" viewTransition to={`/candidates/${c.id}`}>
                           {c.name}
                         </Link>
                         {c.created_at && <span className="row-sub">Added {new Date(c.created_at).toLocaleDateString()}</span>}
@@ -117,7 +122,7 @@ export function CandidateList() {
                         <span className={`mark tone-${STAGE_TONES[c.stage]}`}>{STAGE_LABELS[c.stage]}</span>
                       </td>
                       <td>{screeningCell(c)}</td>
-                    </tr>
+                    </RowLink>
                   ))}
                 </tbody>
               </table>

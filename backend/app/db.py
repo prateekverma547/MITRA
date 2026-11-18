@@ -422,6 +422,11 @@ class Interview(Base):
     org_id: Mapped[str | None] = mapped_column(
         ForeignKey("organisations.id"), nullable=True, index=True
     )
+    #: Which round this room is for. `technical` is MITRA's interview (the bot
+    #: joins). `hr` is a person's interview: HR and the candidate only, and the
+    #: join path never starts a bot for it. Every interview before the
+    #: organisation platform was technical, hence the default.
+    round: Mapped[str] = mapped_column(String(16), default="technical", server_default="technical")
 
     candidate: Mapped[Candidate] = relationship(back_populates="interviews")
 

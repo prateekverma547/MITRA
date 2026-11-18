@@ -1,18 +1,31 @@
-import { HashRouter, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import {
+  createHashRouter,
+  createRoutesFromElements,
+  Navigate,
+  Outlet,
+  Route,
+  RouterProvider,
+  useLocation,
+} from "react-router-dom";
 import type { ReactNode } from "react";
 import type { Role } from "./contracts";
 import { SessionProvider, useSession } from "./session";
 import { Home } from "./shell/Home";
 import { Shell } from "./shell/Shell";
 import { featureRoutes } from "./shell/registry";
+import { Spinner } from "./shell/ui/Spinner";
+import { ToastProvider } from "./shell/ui/Toast";
+import { TopProgress } from "./shell/ui/TopProgress";
 
 // Hash routing: every screen has its own URL, so back, forward, refresh and
-// bookmarks work, and FastAPI only ever has to serve one index.html.
+// bookmarks work, and FastAPI only ever has to serve one index.html. It is a
+// data router (createHashRouter) because page transitions (`viewTransition`)
+// only run under one.
 
 function Loading() {
   return (
-    <div className="loading-screen" role="status">
-      <span className="muted">Loading…</span>
+    <div className="loading-screen" role="status" aria-label="Loading">
+      <Spinner size={28} />
     </div>
   );
 }
@@ -50,29 +63,40 @@ function RoleGate({ roles, children }: { roles?: Role[]; children: ReactNode }) 
   return <>{children}</>;
 }
 
-export function App() {
+function Frame() {
   return (
-    <HashRouter>
-      <SessionProvider>
-        <Routes>
-          {featureRoutes
-            .filter((r) => r.public)
-            .map((r) => (
-              <Route key={r.path} path={r.path} element={<PublicOnly>{r.element}</PublicOnly>} />
-            ))}
-          <Route element={<RequireSession />}>
-            <Route element={<Shell />}>
-              <Route path="/home" element={<Home />} />
-              {featureRoutes
-                .filter((r) => !r.public)
-                .map((r) => (
-                  <Route key={r.path} path={r.path} element={<RoleGate roles={r.roles}>{r.element}</RoleGate>} />
-                ))}
-            </Route>
-          </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </SessionProvider>
-    </HashRouter>
+    <SessionProvider>
+      <ToastProvider>
+        <TopProgress />
+        <Outlet />
+      </ToastProvider>
+    </SessionProvider>
   );
+}
+
+const router = createHashRouter(
+  createRoutesFromElements(
+    <Route element={<Frame />}>
+      {featureRoutes
+        .filter((r) => r.public)
+        .map((r) => (
+          <Route key={r.path} path={r.path} element={<PublicOnly>{r.element}</PublicOnly>} />
+        ))}
+      <Route element={<RequireSession />}>
+        <Route element={<Shell />}>
+          <Route path="/home" element={<Home />} />
+          {featureRoutes
+            .filter((r) => !r.public)
+            .map((r) => (
+              <Route key={r.path} path={r.path} element={<RoleGate roles={r.roles}>{r.element}</RoleGate>} />
+            ))}
+        </Route>
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Route>,
+  ),
+);
+
+export function App() {
+  return <RouterProvider router={router} />;
 }

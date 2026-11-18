@@ -87,3 +87,29 @@ class Screening(Base):
     hr_questions: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class HRRound(Base):
+    """HR's working record of one HR round: what was asked and what they noted.
+
+    The room, credentials and status live on the shared `interviews` row
+    (`round = "hr"`); this holds what only Track H needs, so the HR round never
+    adds columns to that table. The transcript and evaluation arrive in the
+    next step of phase 2.
+    """
+
+    __tablename__ = "hr_rounds"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    interview_id: Mapped[str] = mapped_column(
+        ForeignKey("interviews.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    candidate_id: Mapped[str] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE"), index=True
+    )
+    booked_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    #: HRQuestion ids HR ticked as asked, in the order they ticked them.
+    questions_asked: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hr_joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

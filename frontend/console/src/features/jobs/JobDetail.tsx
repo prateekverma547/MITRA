@@ -3,15 +3,22 @@
 // from the server (`can_chat`, `can_edit`, `can_approve`), so HR and admins
 // see the same page read-only.
 
+import { CheckCheck, PencilLine, SendHorizontal, Users, X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api } from "../../api";
 import { requestPhase, type JobRequest, type Understanding } from "../../contracts";
+import { BackButton } from "../../shell/ui/BackButton";
+import { Button, ButtonLink } from "../../shell/ui/Button";
+import { PageSkeleton } from "../../shell/ui/Skeleton";
+import { useToast } from "../../shell/ui/Toast";
 
 function Conversation({ job, onUpdate }: { job: JobRequest; onUpdate: (job: JobRequest) => void }) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
+  const firstCount = useRef(job.chat.length);
   const endRef = useRef<HTMLLIElement>(null);
 
   useEffect(() => {
@@ -24,12 +31,16 @@ function Conversation({ job, onUpdate }: { job: JobRequest; onUpdate: (job: JobR
     if (!text) return;
     setBusy(true);
     setError(null);
+    // Show their reply at once, while MITRA thinks about it.
+    setPending(text);
+    setMessage("");
     try {
       onUpdate(await api.post<JobRequest>(`/jobs/${job.id}/chat`, { message: text }));
-      setMessage("");
     } catch (e) {
       setError((e as Error).message);
+      setMessage(text);
     } finally {
+      setPending(null);
       setBusy(false);
     }
   }
@@ -38,15 +49,25 @@ function Conversation({ job, onUpdate }: { job: JobRequest; onUpdate: (job: JobR
     <section className="conversation" aria-label="Conversation with MITRA">
       <ol className="transcript">
         {job.chat.map((turn, i) => (
-          <li key={i} className={`line line-${turn.from}`}>
+          <li key={i} className={`line line-${turn.from}${i >= firstCount.current ? " line-enter" : ""}`}>
             <span className="line-who">{turn.from === "mitra" ? "MITRA" : "You"}</span>
             <p>{turn.text}</p>
           </li>
         ))}
+        {pending && (
+          <li className="line line-you line-enter">
+            <span className="line-who">You</span>
+            <p>{pending}</p>
+          </li>
+        )}
         {busy && (
-          <li className="line line-mitra" aria-live="polite">
+          <li className="line line-mitra line-enter" aria-live="polite">
             <span className="line-who">MITRA</span>
-            <p className="thinking">Thinking about your answer</p>
+            <span className="dots" aria-label="MITRA is thinking">
+              <span />
+              <span />
+              <span />
+            </span>
           </li>
         )}
         <li ref={endRef} aria-hidden="true" className="transcript-end" />
@@ -72,9 +93,9 @@ function Conversation({ job, onUpdate }: { job: JobRequest; onUpdate: (job: JobR
           />
           <div className="composer-foot">
             <span className="muted small">Enter sends. Shift and Enter starts a new line.</span>
-            <button type="submit" className="btn btn-primary" disabled={busy || !message.trim()}>
+            <Button type="submit" variant="primary" icon={<SendHorizontal size={16} />} loading={busy} disabled={!message.trim()}>
               Send
-            </button>
+            </Button>
           </div>
           {error && (
             <p className="error" role="alert">
@@ -87,10 +108,10 @@ function Conversation({ job, onUpdate }: { job: JobRequest; onUpdate: (job: JobR
   );
 }
 
-function Brief({ u, inferred }: { u: Understanding; inferred: string[] }) {
+function Brief({ u, inferred, live }: { u: Understanding; inferred: string[]; live: boolean }) {
   const sum = u.competencies.reduce((s, c) => s + c.weight, 0) || 1;
   return (
-    <article className="brief" aria-labelledby="understood">
+    <article className={live ? "brief live-border" : "brief"} aria-labelledby="understood">
       <h2 id="understood" className="brief-title">
         What MITRA understood
       </h2>
@@ -165,7 +186,8 @@ export function JobDetail() {
   const [job, setJob] = useState<JobRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"edit" | "approve" | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     api
@@ -176,23 +198,20 @@ export function JobDetail() {
 
   async function act(path: "edit" | "approve") {
     if (!job) return;
-    setBusy(true);
+    setBusy(path);
     setError(null);
     try {
       setJob(await api.post<JobRequest>(`/jobs/${job.id}/${path}`));
       setConfirming(false);
+      toast(path === "approve" ? `Sent “${job.title}” to HR` : "Reopened the conversation with MITRA");
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
-  const crumbs = (
-    <nav className="crumbs" aria-label="Breadcrumb">
-      <Link to="/jobs">Job requests</Link>
-    </nav>
-  );
+  const crumbs = <BackButton fallback="/jobs" label="Job requests" />;
 
   if (error && !job) {
     return (
@@ -202,7 +221,7 @@ export function JobDetail() {
       </div>
     );
   }
-  if (!job) return <div className="page muted">Loading…</div>;
+  if (!job) return <PageSkeleton rows={3} />;
 
   const phase = requestPhase(job);
   const describing = job.spec_status !== "ready";
@@ -224,13 +243,12 @@ export function JobDetail() {
 
       {error && <p className="error">{error}</p>}
       {job.request_status === "open" && !describing && (
-        <p className="notice notice-good">
-          This request is with HR.{" "}
-          <Link to={`/jobs/${job.id}/candidates`}>
-            {job.candidates === 0 ? "No candidates yet" : `See its ${job.candidates} ${job.candidates === 1 ? "candidate" : "candidates"}`}
-          </Link>
-          .
-        </p>
+        <div className="notice notice-good notice-row">
+          <span>This request is with HR. {job.candidates === 0 ? "No candidates yet." : ""}</span>
+          <ButtonLink size="sm" to={`/jobs/${job.id}/candidates`} icon={<Users size={15} />}>
+            {job.candidates === 0 ? "Open candidates" : `See ${job.candidates} ${job.candidates === 1 ? "candidate" : "candidates"}`}
+          </ButtonLink>
+        </div>
       )}
       {job.request_status === "open" && describing && (
         <p className="notice notice-attention">
@@ -250,7 +268,7 @@ export function JobDetail() {
         </div>
       ) : (
         <div className="understood">
-          {job.understanding && <Brief u={job.understanding} inferred={job.inferred} />}
+          {job.understanding && <Brief u={job.understanding} inferred={job.inferred} live={job.can_approve} />}
           <details className="conversation-record">
             <summary>The conversation ({job.chat.length} messages)</summary>
             <Conversation job={job} onUpdate={setJob} />
@@ -263,24 +281,24 @@ export function JobDetail() {
           {confirming ? (
             <>
               <span className="decision-q">Send “{job.title}” to HR?</span>
-              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => act("approve")}>
+              <Button variant="primary" icon={<CheckCheck size={17} />} loading={busy === "approve"} onClick={() => act("approve")}>
                 Send to HR
-              </button>
-              <button type="button" className="btn" disabled={busy} onClick={() => setConfirming(false)}>
+              </Button>
+              <Button variant="ghost" icon={<X size={16} />} disabled={busy !== null} onClick={() => setConfirming(false)}>
                 Not yet
-              </button>
+              </Button>
             </>
           ) : (
             <>
               {job.can_approve && (
-                <button type="button" className="btn btn-primary" disabled={busy} onClick={() => setConfirming(true)}>
+                <Button variant="primary" icon={<CheckCheck size={17} />} disabled={busy !== null} onClick={() => setConfirming(true)}>
                   Approve and send to HR
-                </button>
+                </Button>
               )}
               {job.can_edit && (
-                <button type="button" className="btn" disabled={busy} onClick={() => act("edit")}>
+                <Button icon={<PencilLine size={16} />} loading={busy === "edit"} onClick={() => act("edit")}>
                   Edit with MITRA
-                </button>
+                </Button>
               )}
             </>
           )}

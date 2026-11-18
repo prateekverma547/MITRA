@@ -3,8 +3,19 @@
 // ready (the fit, the questions and the decision). What this person may do
 // comes from the server (`next`, `can_proceed`, `can_reupload`).
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import {
+  ArrowRightCircle,
+  CalendarPlus,
+  Clock3,
+  ScanSearch,
+  Undo2,
+  Upload,
+  UserCheck,
+  Video,
+  XCircle,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
 import {
   STAGE_LABELS,
@@ -16,6 +27,11 @@ import {
   type FitAnalysis,
   type HRQuestion,
 } from "../../contracts";
+import { BackButton } from "../../shell/ui/BackButton";
+import { Button, ButtonLink } from "../../shell/ui/Button";
+import { PageSkeleton } from "../../shell/ui/Skeleton";
+import { Spinner } from "../../shell/ui/Spinner";
+import { useToast } from "../../shell/ui/Toast";
 import { ScoreMeter } from "./ScoreMeter";
 
 const POLL_MS = 2500;
@@ -24,31 +40,33 @@ const POLL_MS = 2500;
 
 function CheckCv({ c, onUpdate }: { c: CandidateDetail; onUpdate: (c: CandidateDetail) => void }) {
   const input = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"replace" | "proceed" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   async function replace(file: File) {
-    setBusy(true);
+    setBusy("replace");
     setError(null);
     const form = new FormData();
     form.append("file", file);
     try {
       onUpdate(await api.postForm<CandidateDetail>(`/candidates/${c.id}/cv`, form));
+      toast(`Replaced the CV with ${file.name}`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
   async function proceed() {
-    setBusy(true);
+    setBusy("proceed");
     setError(null);
     try {
       onUpdate(await api.post<CandidateDetail>(`/candidates/${c.id}/proceed`));
     } catch (e) {
       setError((e as Error).message);
-      setBusy(false);
+      setBusy(null);
     }
   }
 
@@ -75,15 +93,15 @@ function CheckCv({ c, onUpdate }: { c: CandidateDetail; onUpdate: (c: CandidateD
       {(c.can_proceed || c.can_reupload) && (
         <div className="decision-bar">
           {c.can_proceed && (
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={proceed}>
+            <Button variant="primary" icon={<ScanSearch size={17} />} loading={busy === "proceed"} disabled={busy !== null} onClick={proceed}>
               {c.screening_status === "failed" ? "Try screening again" : "Proceed to screening"}
-            </button>
+            </Button>
           )}
           {c.can_reupload && (
             <>
-              <button type="button" className="btn" disabled={busy} onClick={() => input.current?.click()}>
+              <Button icon={<Upload size={16} />} loading={busy === "replace"} disabled={busy !== null} onClick={() => input.current?.click()}>
                 Re-upload CV
-              </button>
+              </Button>
               <input
                 ref={input}
                 type="file"
@@ -105,14 +123,19 @@ function CheckCv({ c, onUpdate }: { c: CandidateDetail; onUpdate: (c: CandidateD
 function Screening() {
   return (
     <section className="screening-now" aria-live="polite">
-      <h2 className="section-title">MITRA is screening the CV</h2>
-      <p className="muted">This usually takes under a minute. You can leave this page; the result will be here.</p>
-      <ol className="steps">
+      <div className="screening-head">
+        <Spinner size={34} />
+        <div>
+          <h2 className="section-title">MITRA is screening the CV</h2>
+          <p className="muted">This usually takes under a minute. You can leave this page; the result will be here.</p>
+        </div>
+      </div>
+      <ul className="steps-static">
         <li>Removing the name, contact details and institutions</li>
         <li>Rating the CV against each thing the job asks for</li>
         <li>Checking every quoted line is really in the CV</li>
         <li>Writing ten questions for the HR round</li>
-      </ol>
+      </ul>
     </section>
   );
 }
@@ -156,7 +179,7 @@ function Fit({ fit, minAssessed }: { fit: FitAnalysis; minAssessed: number }) {
   const below = fit.score_percent < fit.threshold_percent;
   const enough = fit.assessed_weight_percent >= minAssessed;
   return (
-    <article className="fit">
+    <article className="fit live-border">
       <div className="fit-score">
         <ScoreMeter score={fit.score_percent} threshold={fit.threshold_percent} enoughEvidence={enough} />
         {enough ? (
@@ -213,6 +236,7 @@ function Questions({ questions }: { questions: HRQuestion[] }) {
 interface Choice {
   to: CandidateStage;
   label: string;
+  icon: ReactNode;
   primary?: boolean;
   danger?: boolean;
   needsReason: boolean;
@@ -223,10 +247,10 @@ function choicesFor(c: CandidateDetail): Choice[] {
   const below = c.below_threshold;
   const all: Record<string, Choice> = {
     ready_for_hr: below
-      ? { to: "ready_for_hr", label: "Proceed anyway", needsReason: true, prompt: "Why should they go ahead despite the score?" }
-      : { to: "ready_for_hr", label: "Begin HR round", primary: true, needsReason: false },
-    parked: { to: "parked", label: "Not now", needsReason: true, prompt: "Why not now? HR and the BU head will read this." },
-    rejected: { to: "rejected", label: "Reject", danger: true, needsReason: true, prompt: "Why reject? This is kept on their record." },
+      ? { to: "ready_for_hr", label: "Proceed anyway", icon: <ArrowRightCircle size={17} />, needsReason: true, prompt: "Why should they go ahead despite the score?" }
+      : { to: "ready_for_hr", label: "Begin HR round", icon: <UserCheck size={17} />, primary: true, needsReason: false },
+    parked: { to: "parked", label: "Not now", icon: <Clock3 size={16} />, needsReason: true, prompt: "Why not now? HR and the BU head will read this." },
+    rejected: { to: "rejected", label: "Reject", icon: <XCircle size={17} />, danger: true, needsReason: true, prompt: "Why reject? This is kept on their record." },
   };
   const order: CandidateStage[] = below ? ["rejected", "ready_for_hr"] : ["ready_for_hr", "parked"];
   return order.filter((s) => c.next.includes(s)).map((s) => all[s]);
@@ -237,6 +261,7 @@ function Decide({ c, onDone }: { c: CandidateDetail; onDone: () => void }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
   const choices = choicesFor(c);
   if (choices.length === 0) return null;
 
@@ -245,6 +270,7 @@ function Decide({ c, onDone }: { c: CandidateDetail; onDone: () => void }) {
     setError(null);
     try {
       await api.post(`/candidates/${c.id}/move`, { to: choice.to, reason: reason.trim() || undefined });
+      toast(`${c.name}: ${STAGE_LABELS[choice.to]}`);
       setPicked(null);
       setReason("");
       onDone();
@@ -268,12 +294,12 @@ function Decide({ c, onDone }: { c: CandidateDetail; onDone: () => void }) {
           <label htmlFor="reason">{picked.prompt}</label>
           <textarea id="reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
           <div className="actions">
-            <button type="submit" className={picked.danger ? "btn btn-danger" : "btn btn-primary"} disabled={busy || !reason.trim()}>
+            <Button type="submit" variant={picked.danger ? "danger" : "primary"} icon={picked.icon} loading={busy} disabled={!reason.trim()}>
               {picked.label}
-            </button>
-            <button type="button" className="btn" disabled={busy} onClick={() => setPicked(null)}>
+            </Button>
+            <Button variant="ghost" icon={<Undo2 size={16} />} disabled={busy} onClick={() => setPicked(null)}>
               Back
-            </button>
+            </Button>
           </div>
         </form>
       ) : (
@@ -284,15 +310,16 @@ function Decide({ c, onDone }: { c: CandidateDetail; onDone: () => void }) {
             </span>
           )}
           {choices.map((choice) => (
-            <button
+            <Button
               key={choice.to}
-              type="button"
-              className={choice.danger ? "btn btn-danger" : choice.primary ? "btn btn-primary" : "btn"}
+              variant={choice.danger ? "danger" : choice.primary ? "primary" : "secondary"}
+              icon={choice.icon}
+              loading={busy && !choice.needsReason}
               disabled={busy}
               onClick={() => (choice.needsReason ? setPicked(choice) : commit(choice))}
             >
               {choice.label}
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -328,6 +355,63 @@ function History({ entries }: { entries: DecisionEntry[] }) {
       </ol>
     </section>
   );
+}
+
+// ---- the HR round ---------------------------------------------------------------------------
+
+const AFTER_BOOKING: CandidateStage[] = ["hr_booked", "hr_done", "ready_for_technical", "technical_booked", "technical_done", "with_bu_head", "shortlisted", "on_hold"];
+
+function HRRoundEntry({ c, onBooked }: { c: CandidateDetail; onBooked: () => void }) {
+  const navigate = useNavigate();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isHR = c.next.length > 0 || c.can_proceed;
+
+  async function book() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/candidates/${c.id}/hr-round`);
+      toast(`HR round booked for ${c.name}`);
+      navigate(`/candidates/${c.id}/hr-round`, { viewTransition: true });
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+      onBooked();
+    }
+  }
+
+  if (c.stage === "ready_for_hr") {
+    return (
+      <section className="hr-entry live-border">
+        <div>
+          <h2 className="section-title">Ready for the HR round</h2>
+          <p className="muted">Booking creates a private room and the meeting ID and password to send {c.name}.</p>
+          {error && <p className="error">{error}</p>}
+        </div>
+        {isHR && (
+          <Button variant="primary" icon={<CalendarPlus size={17} />} loading={busy} onClick={book}>
+            Book the HR round
+          </Button>
+        )}
+      </section>
+    );
+  }
+  if (AFTER_BOOKING.includes(c.stage)) {
+    return (
+      <section className="hr-entry">
+        <div>
+          <h2 className="section-title">HR round</h2>
+          <p className="muted">{c.stage === "hr_booked" ? "Booked. Send the credentials, then join from here." : "The HR round has happened."}</p>
+        </div>
+        <ButtonLink variant={c.stage === "hr_booked" ? "primary" : "secondary"} to={`/candidates/${c.id}/hr-round`} icon={<Video size={17} />}>
+          Open the HR round
+        </ButtonLink>
+      </section>
+    );
+  }
+  return null;
 }
 
 // ---- the page ---------------------------------------------------------------------------------
@@ -368,13 +452,11 @@ export function CandidatePage() {
       </div>
     );
   }
-  if (!c) return <div className="page muted">Loading…</div>;
+  if (!c) return <PageSkeleton />;
 
   return (
     <div className="page page-wide">
-      <nav className="crumbs" aria-label="Breadcrumb">
-        <Link to={`/jobs/${c.job.id}/candidates`}>{c.job.title}</Link>
-      </nav>
+      <BackButton fallback={`/jobs/${c.job.id}/candidates`} label={c.job.title} />
       <header className="page-head">
         <div>
           <h1 className="page-title">{c.name}</h1>
@@ -393,6 +475,7 @@ export function CandidatePage() {
           {c.hr_questions && <Questions questions={c.hr_questions.questions} />}
         </div>
       )}
+      <HRRoundEntry c={c} onBooked={load} />
       <History entries={history} />
       {c.screening_status === "ready" && <Decide c={c} onDone={load} />}
     </div>

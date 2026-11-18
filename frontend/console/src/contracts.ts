@@ -233,3 +233,30 @@ export interface DecisionEntry {
   model_recommendation: string | null;
   at: string | null;
 }
+
+// ---- the HR round (backend/hiring/hr_round.py) --------------------------------------------
+
+export interface HRRoundState {
+  interview_id: string;
+  status: "scheduled" | "in_progress" | "completed" | "expired" | "failed";
+  meeting_id: string | null;
+  password: string | null;
+  join_url: string | null;
+  expires_at: string | null;
+  asked: string[];
+  notes: string;
+  started_at: string | null;
+  ended_at: string | null;
+  can_join: boolean;
+  can_end: boolean;
+  can_cancel: boolean;
+  can_edit_notes: boolean;
+}
+
+export interface HRRoundView {
+  candidate: { id: string; name: string; stage: CandidateStage };
+  job: { id: string; title: string; bu_name: string | null };
+  questions: HRQuestion[];
+  can_book: boolean;
+  round: HRRoundState | null;
+}

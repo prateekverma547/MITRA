@@ -34,6 +34,7 @@ from app.db import (
     FeedbackStatus,
     Interview,
     InterviewStatus,
+    Job,
     get_sessionmaker,
 )
 from app.meeting import (
@@ -132,6 +133,10 @@ class JoinResponse(BaseModel):
     token: str
     candidate_name: str | None
     role_title: str
+    #: `technical` (MITRA interviews) or `hr` (a person does, and no bot joins).
+    #: Track I's candidate app reads this to pick its mode (docs/DEV_PLAN.md
+    #: section 5).
+    round: str = "technical"
 
 
 class InterviewView(BaseModel):
@@ -354,11 +359,18 @@ async def join_interview(request: JoinRequest) -> JoinResponse:
 
         candidate = await session.get(Candidate, interview.candidate_id)
         already_running = interview.status == InterviewStatus.IN_PROGRESS
+        # An HR round is two people in a room: no bot, so no bot slot to claim
+        # and nothing to spawn. The interview is simply under way once someone
+        # is in it.
+        is_hr_round = interview.round == "hr"
+        if is_hr_round and interview.status == InterviewStatus.SCHEDULED:
+            interview.status = InterviewStatus.IN_PROGRESS
+            interview.started_at = datetime.now(UTC)
 
         # Checked before minting tokens or recording consent. Turning a
         # candidate away is bad; taking their consent and their Daily token and
         # then failing to seat them is worse.
-        if not already_running:
+        if not already_running and not is_hr_round:
             try:
                 registry.claim()
             except AtCapacity as exc:
@@ -383,7 +395,14 @@ async def join_interview(request: JoinRequest) -> JoinResponse:
         room_name = interview.daily_room_name
 
     blueprint = (candidate.blueprint or {}) if candidate else {}
-    role_title = (blueprint.get("evaluation_spec") or {}).get("role_title", "this role")
+    role_title = (blueprint.get("evaluation_spec") or {}).get("role_title")
+    if not role_title and candidate is not None:
+        # Candidates added through the console have no blueprint until their
+        # technical round is booked; the job's own title is the right label.
+        async with get_sessionmaker()() as session:
+            job = await session.get(Job, candidate.job_id)
+            role_title = job.title if job else None
+    role_title = role_title or "this role"
 
     settings = _settings()
     candidate_token = await create_meeting_token(
@@ -394,8 +413,9 @@ async def join_interview(request: JoinRequest) -> JoinResponse:
         user_name=candidate.name if candidate else None,
     )
 
-    # A candidate refreshing the page must not start a second bot in the room.
-    if not already_running:
+    # A candidate refreshing the page must not start a second bot in the room,
+    # and an HR round never gets one.
+    if not already_running and not is_hr_round:
         await _start_bot(interview_id=interview_id, candidate_id=interview.candidate_id,
                         room_url=room_url, room_name=room_name, settings=settings,
                         timezone=request.timezone)
@@ -406,6 +426,7 @@ async def join_interview(request: JoinRequest) -> JoinResponse:
         token=candidate_token,
         candidate_name=candidate.name if candidate else None,
         role_title=role_title,
+        round=interview.round,
     )
 
 
