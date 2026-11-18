@@ -78,6 +78,10 @@ def _required(name: str) -> str:
     return value
 
 
+def _optional(name: str) -> str:
+    return os.environ.get(name) or ""
+
+
 # Model tiering (CLAUDE.md). Three roles, never collapsed into one.
 #
 # Live conversation must never use a reasoning model: it sits on the
@@ -105,10 +109,14 @@ class Settings:
 
     @classmethod
     def load(cls) -> "Settings":
+        # ElevenLabs is the pipeline engine's voice. The realtime engine speaks
+        # with OpenAI's own voice and never calls it, so demanding the keys
+        # there only stops people running the default engine.
+        tts = _required if interview_engine() == PIPELINE_ENGINE else _optional
         return cls(
             openai_api_key=_required("OPENAI_API_KEY"),
-            elevenlabs_api_key=_required("ELEVENLABS_API_KEY"),
-            elevenlabs_voice_id=_required("ELEVENLABS_VOICE_ID"),
+            elevenlabs_api_key=tts("ELEVENLABS_API_KEY"),
+            elevenlabs_voice_id=tts("ELEVENLABS_VOICE_ID"),
             daily_api_key=_required("DAILY_API_KEY"),
             llm_model=os.environ.get("OPENAI_LLM_MODEL") or DEFAULT_LLM_MODEL,
             blueprint_model=os.environ.get("OPENAI_BLUEPRINT_MODEL") or DEFAULT_BLUEPRINT_MODEL,

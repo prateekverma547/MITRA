@@ -287,3 +287,32 @@ async def test_the_realtime_session_wires_up_and_saves_its_artifacts(monkeypatch
     # not recorded as a dropped call.
     assert built["presence"].interview_over is not None
     assert (tmp_path / "wire-test.json").exists()
+
+
+def test_realtime_engine_runs_without_elevenlabs_keys(monkeypatch):
+    """The realtime engine never calls ElevenLabs, so its keys must not block it."""
+    from bot.config import Settings
+
+    monkeypatch.delenv("INTERVIEW_ENGINE", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("DAILY_API_KEY", "daily-test")
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+
+    settings = Settings.load()
+    assert settings.elevenlabs_api_key == ""
+    assert settings.elevenlabs_voice_id == ""
+
+
+def test_pipeline_engine_still_requires_elevenlabs_keys(monkeypatch):
+    """The fallback speaks through ElevenLabs: fail at startup, never mid-interview."""
+    from bot.config import MissingConfig, Settings
+
+    monkeypatch.setenv("INTERVIEW_ENGINE", "pipeline")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("DAILY_API_KEY", "daily-test")
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+
+    with pytest.raises(MissingConfig, match="ELEVENLABS_API_KEY"):
+        Settings.load()
