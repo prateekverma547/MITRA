@@ -13,7 +13,7 @@
 > | [docs/BRAIN.md](docs/BRAIN.md) | the interview brain and its invariants |
 > | [docs/DECISIONS.md](docs/DECISIONS.md) | every decision with its measurement |
 > | [docs/OPERATIONS.md](docs/OPERATIONS.md) | running the deployed system |
-> | [docs/DEV_PLAN.md](docs/DEV_PLAN.md) | **the current plan**: two tracks, their seam, how they merge |
+> | [docs/DEV_PLAN.md](docs/DEV_PLAN.md) | **the current plan**: the organisation platform, its workflow, the two tracks, how they merge |
 > | [docs/REALTIME_ARCHITECTURE.md](docs/REALTIME_ARCHITECTURE.md) | the realtime engine, Director, proctoring design |
 >
 > The milestone plan below is now **history rather than instruction**, all six
@@ -32,17 +32,43 @@ this file, **these win**; the later sections are kept for their reasoning.
   interrupting, never fabricating, verified quotes and humans deciding all
   still hold, and the Director (brain + judge over an independent Deepgram
   transcript) is how they are enforced on the realtime engine.
+- **MITRA is an organisation's hiring platform, not a single-employer tool.**
+  One organisation per deployment (an `org_id` on every table from day one),
+  three signed-in roles: **BU head** (raises job requests for their own BU
+  only), **HR** (screens CVs, runs the HR round, books the technical round) and
+  **org admin** (sees everything, plus system, business and transparency
+  analytics). This supersedes "Single admin, no multi-tenancy" below. The
+  candidate's path is: CV fit screening, then a **human HR round** (inside
+  MITRA's own room, no AI voice in it, recorded and evaluated afterwards by a
+  text model), then the **proctored MITRA technical round**, then the BU head.
+  The full workflow is [docs/DEV_PLAN.md](docs/DEV_PLAN.md).
+- **People decide at every gate, and the gate says who.** HR rejects at
+  screening and after the HR round. After the technical round HR can only send
+  the result to the BU head, and the BU head decides. A model recommends; it
+  never moves a candidate. The CV screening cut-off (50% to start) only changes
+  which buttons are offered; "Proceed anyway" needs a written reason.
 - **Proctoring and live watching are in scope.** This supersedes their "out of
-  scope" entries below. The employer who planned an interview can watch it live
-  from the console: booking returns two links, the candidate's join link and a
-  live view link for that interview behind the console login. Notes only: the
-  employer never speaks into the call. Proctoring is evidence for a person,
-  never a score, never in Mitra's context.
-- **React + Vite + TypeScript** for the new console (planning, live view,
-  reports) and the new candidate app. The old plain-JS `/admin` and `/join`
-  stay until cutover.
+  scope" entries below. Booking the technical round returns two links, the
+  candidate's join link and a live view link behind the console login, usable
+  by HR and by the BU head of that job's BU. Notes only: nobody speaks into the
+  call. Proctoring is evidence for a person in its own **Integrity** section of
+  the report, never part of a competency score, never in Mitra's context.
+  Mid-interview reminders are on-screen captions only, at most three per kind.
+- **Withdrawal always gets one confirmation.** Even "just end the interview"
+  is answered with one short "do you want to stop here?"; any yes, or a second
+  request, ends it. This supersedes the two-tier rule under Milestone 3.
+- **Off-call text work runs on one configurable text model.** Understanding the
+  job and the BU head's chat, CV screening, the HR questions, evaluating the HR
+  round, blueprint generation, report scoring and log analysis each keep their
+  own env slot, all defaulting to `OPENAI_TEXT_MODEL` (a reasoning-tier model;
+  the product wants GPT-6.2 Sol once OpenAI lists it). The live conversation
+  stays on the realtime model. Never put a reasoning model on the live path.
+- **Candidates are in India.** Consent and retention follow the DPDP Act 2023.
+  No emotion, tone-of-voice or personality inference, anywhere.
+- **React + Vite + TypeScript** for the new console and the new candidate app.
+  The old plain-JS `/admin` and `/join` stay until cutover.
 - **Two tracks, two engineers, two Claude accounts.** Track C (candidate and
-  interview intelligence) and Track E (employer console). Ownership, shared
+  intelligence) and Track E (organisation and console). Ownership, shared
   files, branching and the merge rules are in
   [docs/DEV_PLAN.md](docs/DEV_PLAN.md). Work on `c/*` or `e/*` branches off
   `dev`; never push to `stg` (it auto-deploys) or `main` directly.

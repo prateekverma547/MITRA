@@ -408,9 +408,16 @@ recordings should have the shortest retention period of anything we keep.
    "tell me about a decision you regret". A single glance is normal behaviour.
    Only sustained or repeated events are reported, with the threshold set from
    real sessions, not guessed.
-4. **No mid-interview warnings about integrity.** Telling a candidate "your
-   reviewer will see this" raises anxiety and changes the interview being
-   measured. Technical prompts are fine ("your camera seems to be off").
+4. **Mid-interview reminders are captions, capped, and never accusations.**
+   *Changed 2026-11-18 by product decision; see docs/DEV_PLAN.md section 6.*
+   The original rule forbade them, because telling a candidate "your reviewer
+   will see this" raises anxiety and changes the interview being measured. The
+   decision now is: a neutral on-screen caption ("please keep your eyes on the
+   screen", "please sit back a little", "please return to the interview tab"),
+   never spoken, never in Mitra's context, **at most three per kind** with a
+   cooldown between them, then silence and recording only. The wording asks for
+   a behaviour; it never says what will be reported. Technical prompts ("your
+   camera seems to be off") are uncapped as before.
 5. **Recordings are stored durably** (Daily cloud or object storage) with a
    stated retention period, never on the container disk, which a redeploy
    erases. (`stg` makes this mistake.)
