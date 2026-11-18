@@ -89,6 +89,14 @@ These override the matching lines in CLAUDE.md, which says so at its top.
 | 15 | React + Vite + TypeScript for the console and the candidate app |
 | 16 | **Every feature in the catalogue below is in scope**, including the ones added during planning |
 | 17 | **Vertical split.** Each engineer owns whole features (model, backend, screens, tests), so both do deep technical work and UI work, and each tests alone |
+| 18 | **Only the realtime model sits between the candidate and Mitra's reply.** No brain model and no per-turn call to any other model (section 3) |
+| 19 | **The realtime session's own transcript is the record. Deepgram is removed from the new platform**, subject to the accuracy check in section 8. The HR round uses OpenAI file transcription |
+| 20 | **Transcripts are stored raw and cleaned.** The raw transcript is never changed; a text model writes a cleaned version beside it |
+| 21 | **The auditor records only.** It never steers Mitra. The coordinator's time notes and the ending logic stay |
+| 22 | **Plan-bound questioning:** every question is a plan question or a follow-up on the last answer; at most 3 follow-ups per question |
+| 23 | **No captions** on the candidate's screen, neither Mitra's nor their own. On-screen integrity reminders are separate and stay |
+| 24 | **Check Intelligence** tab in the admin panel: one interview turn by turn in phase 2; trends across interviews in phase 4 |
+| 25 | **UI polish is the last phase.** Live tracking and Check Intelligence are built properly early |
 
 ## 2. Feature catalogue
 
@@ -134,7 +142,7 @@ the phase (section 10).
 | --- | --- | --- |
 | Booking a room with no bot; candidate credentials; HR's own join from the console | H | 2 |
 | HR round screen: credentials to send, question checklist, notes box *(added)* | H | 2 |
-| Per-participant recording; Deepgram transcription after the call; merged transcript | H | 2 |
+| Per-participant recording; OpenAI file transcription of each voice after the call; one transcript in spoken order | H | 2 |
 | Evaluation by the text model: soft-skill rubric, verified quotes, recommendation | H | 2 |
 | Evaluation review; Reject or Proceed to technical | H | 2 |
 | HR findings handed to MITRA's technical plan *(added)* | H produces, I consumes | 3 |
@@ -147,7 +155,7 @@ the phase (section 10).
 | Consent covering AI, recording, proctoring, live watching, retention; accommodation option *(added)* | I | 1 |
 | Device check: camera, mic level, speaker *(added)*, lighting *(added)*, 50–80 cm band, "show both hands" *(added)*, whole-screen share, single monitor *(added)*, supported browser *(added)*. Each item passes or says how to fix it | I | 1 |
 | 30-second warm-up that also calibrates gaze *(added)* | I | 1 |
-| In-call screen: Mitra's captions, timer and progress, reminder captions | I | 1 |
+| In-call screen with **no captions** (decision 23): Mitra's presence, timer and progress, on-screen integrity reminders | I | 1 |
 | Rejoin after a dropped call; thank-you page with next steps | I | 3 |
 
 ### MITRA technical round
@@ -157,8 +165,11 @@ the phase (section 10).
 | Blueprint built from JD + spec + CV + HR findings | I | 3 |
 | Duration set per booking, default from the job | I | 2 |
 | Withdrawal: one confirmation, then a graceful end | I | 1 |
-| Deepgram as the independent transcript on realtime | I | 3 |
-| Director: claims, coverage, depth, contradictions, fabrication check | I | 3 |
+| Plan-bound questioning: numbered question bank, "plan or follow-up only", current area in full, follow-up cap of 3 | I | 1 |
+| Transcript record: raw turns ordered by spoken time, Mitra's interrupted replies cut to what was heard | I | 1 |
+| Cleaned transcript beside the raw one, written by the text model after the call | I | 2 |
+| Transcript accuracy check: 5 recorded sessions against offline transcription | I | 2 |
+| Auditor (record only): labels each question as plan, follow-up or off-plan; area coverage, claims, contradictions; feeds Check Intelligence and the report's per-area outcomes | I | 2 |
 | Event stream for the live view and analytics | I | 2 |
 | Session hand-over past 55 minutes, or a booking cap | I | 5 |
 
@@ -195,6 +206,8 @@ the phase (section 10).
 | --- | --- | --- |
 | Org dashboard: every BU's jobs and candidates, read-only | H | 4 |
 | System analytics: turn latency (median, p95), timeouts, provider errors, cost per interview and trend, concurrency, failed sessions | I | 4 |
+| **Check Intelligence, one interview:** turn by turn, live or after: what was said, reply wait and its parts, plan / follow-up / off-plan label, coverage, time notes, tools, cost | I | 2 |
+| **Check Intelligence, across interviews:** reply-time trend, off-plan rate by job and area, overruns, failed sessions, cost | I | 4 |
 | Business analytics: jobs by BU, stage conversion, time in stage, completion, no-show and error rates, score spread, "Proceed anyway" outcomes *(added)* | I | 4 |
 | Transparency: searchable transcripts, recordings and reports; audit log of every decision beside the model's recommendation *(added)* | H | 4 |
 | AI usage register: model and prompt version behind every score *(added)* | H records, I records for its models | 4 |
@@ -213,12 +226,14 @@ the phase (section 10).
 | Feature flags, so the old flow keeps running until cutover *(added)* | both | 0 |
 | Railway `dev` environment *(added)* | whoever has Railway access | 0 |
 
-## 3. Models
+## 3. Models and the live interview
 
 | Role | Env slot | Default | Owner |
 | --- | --- | --- | --- |
 | Live conversation (technical round) | `REALTIME_MODEL` | `gpt-realtime-2.1` | I |
-| Live judge for the Director | `OPENAI_LLM_MODEL` | `gpt-4.1-mini` | I. On the call's timeline, never a reasoning model |
+| Candidate transcript, technical round | `REALTIME_TRANSCRIPTION_MODEL` | `gpt-realtime-whisper`, inside the realtime session | I. Accuracy-leaning `delay`; off the reply path |
+| Auditor | `OPENAI_AUDITOR_MODEL` | `gpt-4.1-mini` | I. Runs during the call but off the reply path; never a reasoning model |
+| HR round transcript | `OPENAI_TRANSCRIBE_MODEL` | OpenAI file transcription (`gpt-4o-transcribe`) | H. After the call, one file per voice |
 | Job understanding + BU head chat | `OPENAI_CLARIFY_MODEL` | `OPENAI_TEXT_MODEL` | H |
 | CV screening + HR questions | `OPENAI_SCREENING_MODEL` | `OPENAI_TEXT_MODEL` | H |
 | HR round evaluation | `OPENAI_HR_EVAL_MODEL` | `OPENAI_TEXT_MODEL` | H |
@@ -242,6 +257,75 @@ Phase 0 adds one helper for request arguments (as `bot/brain/drivers.py`
 already does) and moves the calls to structured outputs. After that, re-run
 the clarify attribution test, judge precision and quote verification.
 
+### The live interview (decided 2026-11-18)
+
+```
+candidate audio ──► OpenAI Realtime (hears, decides, speaks) ──► Mitra's voice
+        │                         ▲
+        │                         └── coordinator: time notes between turns, ending
+        └──► realtime transcriber (same session, in parallel) ──► raw transcript
+                                                                     │
+                       auditor (record only, off the reply path) ◄──┘
+                                   │
+                         Check Intelligence, the live view, the report
+```
+
+- **Only the realtime model is in the reply path.** Nothing of ours runs
+  between the candidate finishing and Mitra speaking, so nothing of ours adds
+  latency. OpenAI starts the reply itself (`create_response: true`).
+- **The transcriber runs in parallel.** It does not delay Mitra; its text may
+  arrive before or after Mitra's reply. Its accuracy setting can lean towards
+  accuracy because it is off the reply path.
+- **The plan bounds the questions.**
+  - It arrives as a numbered question bank per area, with the rule "a plan
+    question or a follow-up on the last answer; there is no third kind", and
+    a cap of 3 follow-ups per question.
+  - Only the current area is shown in full, swapped at each area change. Week
+    1 checks that a mid-session instructions update takes effect; if not, a
+    time note does the same job.
+- **No tool calls in normal turns.** A tool call costs a round trip before
+  Mitra can speak. Tools are only for ending the interview.
+- **The coordinator** (plain code, no model) sends time notes at area
+  boundaries and handles withdrawal and the goodbye. It is the only thing that
+  writes into the session during the call, apart from watchers' notes once the
+  Arbiter exists.
+- **The auditor records only.** After each Mitra turn a small text model
+  labels the question (plan question with its ID, follow-up on what, or
+  off-plan) and updates coverage, claims and contradictions per area. It never
+  sends Mitra anything. If Check Intelligence later shows a real off-plan
+  problem, steering is a new decision taken with those numbers.
+- **No captions on the candidate's screen.**
+
+### Transcripts: raw and cleaned
+
+1. **The raw transcript is never changed.** Mitra's side is the model's own
+   text of what it spoke; the candidate's side is the realtime transcriber's.
+2. **Turns are ordered by when they were spoken, not when the text arrived.**
+   Each turn stores its audio start and end time, because the candidate's text
+   can arrive after Mitra has started replying.
+3. **An interrupted Mitra reply is cut to what the candidate actually heard.**
+4. **After the call, a text model writes a cleaned version beside the raw
+   one:** readable, obvious slips fixed, each cleaned turn linked to its raw
+   turn. It never replaces the raw text.
+5. **Report quotes are verified against the raw transcript.** A cleaned
+   version is never evidence on its own. Where the raw text is unclear, the
+   report says so and links to that moment in the recording instead of
+   guessing.
+
+### Check Intelligence
+
+A tab in the org admin panel, built by Track I on the same event stream as the
+live view.
+
+- **One interview (phase 2), live or after:** each turn's text, the reply wait
+  and its parts (end-of-speech detection, model to first sound), the plan /
+  follow-up / off-plan label, area and coverage, time notes, tools and cost.
+- **Across interviews (phase 4):** reply-time trend, off-plan rate by job and
+  area, follow-ups per question, overruns, failed sessions, cost per interview.
+- **It cannot show the realtime model's private reasoning; OpenAI does not
+  expose it.** Any "why it asked this" text is the auditor's reading after the
+  fact and is labelled that way on screen.
+
 ## 4. The split: two vertical tracks
 
 Each engineer owns **whole features, from the model to the screen**. Both do
@@ -261,7 +345,7 @@ The line follows the journey:
 | Layer | Work |
 | --- | --- |
 | **Models** | Job understanding chat on the text model; CV screening (`analyse_fit`: identity hidden, 0–4 ratings, CV quotes checked in code, % computed in code); `hr_questions`; `evaluate_hr_round` |
-| **Backend** | Auth, users, roles, BUs, scoping, Alembic; the stage machine, `Decision` and the audit log; job request API; screening as a background task at upload; HR round rooms without a bot, HR join, per-track recording, Deepgram post-call transcription; Send to BU head; consent records, retention, AI usage register |
+| **Backend** | Auth, users, roles, BUs, scoping, Alembic; the stage machine, `Decision` and the audit log; job request API; screening as a background task at upload; HR round rooms without a bot, HR join, per-track recording, OpenAI file transcription after the call; Send to BU head; consent records, retention, AI usage register |
 | **UI** | Welcome and sign-in; console shell and role homes; BU head job request, chat, understanding, Edit and Approve; HR home with BU, job and candidate lists and filters; CV upload; fit analysis with charts and gates; HR round screen with checklist and notes; evaluation review; BU head results, comparison, decision; org dashboard; transparency; user and BU management; badges |
 | **Directories** | `backend/org/`, `backend/hiring/`, `backend/blueprint/clarify.py` + `documents.py`, `frontend/console/src/features/{auth,jobs,screening,hr-round,results,org,transparency,admin-users}/`, `frontend/console/src/shell/`, `backend/tests/{org,hiring}/` |
 
@@ -269,10 +353,10 @@ The line follows the journey:
 
 | Layer | Work |
 | --- | --- |
-| **Models** | MITRA realtime (withdrawal confirmation, HR findings into the blueprint, Director, Deepgram independent transcript); the Arbiter for notes; report scoring with the Integrity section; screen-frame vision; second-voice check; log analysis; text-model slots and `check_models.py` |
+| **Models** | MITRA realtime (plan-bound questioning, withdrawal confirmation, HR findings into the blueprint); the transcript record, raw and cleaned; the auditor (record only); the Arbiter for watchers' notes; report scoring with the Integrity section; screen-frame vision; second-voice check; log analysis; text-model slots and `check_models.py` |
 | **Backend** | Technical booking and two links; the event stream, relay and store; live view hidden join; proctoring event intake and after-call analysis jobs; recording to durable storage; analytics aggregation over telemetry, stages and decisions |
 | **In the browser** | MediaPipe face and iris landmarks for distance and gaze; tab, focus, share, monitor, full-screen and paste signals; capped reminder captions |
-| **UI** | Candidate app (join, consent, device check, warm-up, in-call, rejoin, thank-you); live view; report component with evidence jumps and Integrity; system and business analytics dashboards; the design system |
+| **UI** | Candidate app (join, consent, device check, warm-up, in-call without captions, rejoin, thank-you); live view; Check Intelligence; report component with evidence jumps and Integrity; system and business analytics dashboards; the design system |
 | **Directories** | `backend/bot/`, `backend/blueprint/generate.py` + `refine.py`, `backend/feedback/`, `backend/proctoring/`, `backend/live/`, `backend/analytics/`, `frontend/candidate-app/`, `frontend/ui/`, `frontend/console/src/features/{live,report,analytics}/`, `backend/tests/{bot,proctoring,live,analytics}/` |
 
 ### Why this split is the faster one
@@ -283,8 +367,8 @@ The line follows the journey:
   section 5, and each has a fixture from day one.
 - **Both get hard technical work.** H takes auth and scoping, the stage
   machine, screening quality and fairness, and HR round recording and
-  transcription. I takes realtime voice, in-browser vision, the Director and
-  Arbiter, and event streaming.
+  transcription. I takes realtime voice, the transcript record, the auditor and
+  Check Intelligence, in-browser vision, and event streaming.
 - **Both get UI.** H builds the console screens people use every day. I builds
   the candidate app, live view, report and dashboards.
 - **Each tests alone** (section 8).
@@ -439,7 +523,7 @@ rate limit never stalls the other.
 
 - The new apps live at `/console` and `/interview`, beside `/admin` and `/join`.
 - New behaviour sits behind flags that default off: `CONSOLE_ENABLED`,
-  `LIVE_VIEW_ENABLED`, `PROCTORING_ENABLED`, `DEEPGRAM_RECORD_TRANSCRIPT`.
+  `LIVE_VIEW_ENABLED`, `PROCTORING_ENABLED`, `AUDITOR_ENABLED`.
 - Until the cutover in phase 3, the original interview runs end to end on any
   branch.
 
@@ -464,7 +548,9 @@ rate limit never stalls the other.
 | The live view without a call | `scripts/replay_events.py` through the real relay; `scripts/fake_bot.py` for notes |
 | The report component | A dev route `/console/#/dev/report/<fixture>` rendering every fixture report |
 | Analytics | Seeded telemetry and decisions |
-| Behaviour | Text-mode scripted candidates against the realtime model: withdrawal confirmation, stacking, fabrication |
+| Behaviour | Text-mode scripted candidates against the realtime model: off-plan rate, follow-up cap, withdrawal confirmation, stacking, fabrication |
+| Transcript accuracy | 5 recorded sessions with Indian-English speakers: realtime transcript against an offline transcription of the same recording. Report quotes depend on this |
+| Reply time | Every live turn records the wait and its parts (end-of-speech detection, model to first sound); read in Check Intelligence |
 
 ### Together
 
@@ -502,11 +588,11 @@ then `main`, **only when no interview is live.**
 | Phase | Track H | Track I | Checkpoint |
 | --- | --- | --- | --- |
 | **0. Foundation** (week 1) | Auth, users, roles, BUs, scoping, route sweep; Alembic; stage machine and `move()`; console shell with self-registering routes; `seed_org.py` | Contracts and fixtures, written together; text-model slots, request helper, `check_models.py`; design system and `<InterviewReport>` on fixtures; candidate-app scaffold; CI; `seed_candidate.py` | Three seeded accounts sign in to role-scoped homes; the fixture report renders; CI green |
-| **1. Front doors** (weeks 2–3) | Job request, chat, understanding, Approve; HR lists; CV upload; screening with identity hidden and checked quotes; fit screen, charts, gates; 10 questions with reasons | Candidate app: join, consent with accommodation, the full device check, warm-up; proctoring capture in the browser and capped reminders; withdrawal confirmation | A BU head raises a job and HR sees an evidenced fit score. Separately, a candidate passes the device check and a staged session raises the right reminders |
-| **2. Rounds** (weeks 3–5) | HR round rooms, HR join, per-track recording, transcription, evaluation, review, decisions, audit log; Send to BU head; badges | Technical booking with two links; event stream and relay; live view v1; Integrity section; report component with evidence jumps; duration per booking | A real HR round is evaluated and moves the candidate on. Separately, a real technical round is watched live and its report opens with working evidence links |
-| **3. Joined up** (weeks 5–7) | BU head results embedding the report; comparison; decision; HR findings handed to I | HR findings into the blueprint; Deepgram independent transcript; Director; Arbiter and notes; after-call screen and voice analysis; rejoin; thank-you | **One candidate from CV to a BU head decision on the new apps, proctored, with no API calls by hand.** Cutover from `/admin` and `/join` |
-| **4. Org view** (weeks 7–8) | Org dashboard; transparency and audit log; AI usage register; consent records, retention, deletion; user and BU management | System and business analytics dashboards; log analysis | An org admin can answer "what happened, what did it cost, who decided" for any candidate |
-| **5. Production** (week 9) | Accessibility pass on the console; load of realistic org data | Session hand-over past 55 minutes; bot workers separate from the web process; load at the concurrency cap | Pilot with one real BU on the deployed URL |
+| **1. Front doors** (weeks 2–3) | Job request, chat, understanding, Approve; HR lists; CV upload; screening with identity hidden and checked quotes; fit screen, charts, gates; 10 questions with reasons | Candidate app: join, consent with accommodation, the full device check, warm-up, no captions; proctoring capture in the browser and capped reminders; withdrawal confirmation; plan-bound questioning; raw transcript in spoken order | A BU head raises a job and HR sees an evidenced fit score. Separately, a candidate passes the device check and a staged session raises the right reminders |
+| **2. Rounds** (weeks 3–5) | HR round rooms, HR join, per-track recording, transcription, evaluation, review, decisions, audit log; Send to BU head; badges | Technical booking with two links; event stream and relay; live view v1; auditor (record only); Check Intelligence for one interview; cleaned transcript; transcript accuracy check; Integrity section; report component with evidence jumps; duration per booking | A real HR round is evaluated and moves the candidate on. Separately, a real technical round is watched live and its report opens with working evidence links |
+| **3. Joined up** (weeks 5–7) | BU head results embedding the report; comparison; decision; HR findings handed to I | HR findings into the blueprint; Arbiter and watchers' notes; after-call screen and voice analysis; rejoin; thank-you | **One candidate from CV to a BU head decision on the new apps, proctored, with no API calls by hand.** Cutover from `/admin` and `/join` |
+| **4. Org view** (weeks 7–8) | Org dashboard; transparency and audit log; AI usage register; consent records, retention, deletion; user and BU management | Check Intelligence across interviews; system and business analytics dashboards; log analysis | An org admin can answer "what happened, what did it cost, who decided" for any candidate |
+| **5. Production and polish** (weeks 9–10) | Full UI polish of the console; accessibility; realistic org data | UI polish of the candidate app, live view and dashboards; session hand-over past 55 minutes; bot workers separate from the web process; load at the concurrency cap | Pilot with one real BU on the deployed URL |
 
 Weeks are a rough guide. The phases overlap: either engineer can start the next
 phase's work while the other closes the checkpoint.

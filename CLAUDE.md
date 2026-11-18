@@ -14,7 +14,7 @@
 > | [docs/DECISIONS.md](docs/DECISIONS.md) | every decision with its measurement |
 > | [docs/OPERATIONS.md](docs/OPERATIONS.md) | running the deployed system |
 > | [docs/DEV_PLAN.md](docs/DEV_PLAN.md) | **the current plan**: the organisation platform, its workflow, the two tracks, how they merge |
-> | [docs/REALTIME_ARCHITECTURE.md](docs/REALTIME_ARCHITECTURE.md) | the realtime engine, Director, proctoring design |
+> | [docs/REALTIME_ARCHITECTURE.md](docs/REALTIME_ARCHITECTURE.md) | the realtime engine and proctoring design (its Director section is superseded by DEV_PLAN.md section 3) |
 >
 > The milestone plan below is now **history rather than instruction**, all six
 > are delivered. It is kept because the Definition of Done for each records what
@@ -26,12 +26,22 @@ Product decisions taken on 2026-11-18. Where they contradict a later section of
 this file, **these win**; the later sections are kept for their reasoning.
 
 - **The realtime engine is the main engine** (`bot/run_realtime.py`, OpenAI
-  Realtime speech-to-speech). This supersedes "Pipecat pipeline, NOT OpenAI
-  Realtime" below. The pipeline engine (Deepgram -> gpt-4.1-mini -> ElevenLabs)
-  stays as the fallback: `INTERVIEW_ENGINE=pipeline`. The rules about not
-  interrupting, never fabricating, verified quotes and humans deciding all
-  still hold, and the Director (brain + judge over an independent Deepgram
-  transcript) is how they are enforced on the realtime engine.
+  Realtime speech-to-speech), and **only the realtime model sits between the
+  candidate and Mitra's reply**: no brain model, no per-turn call to another
+  model. This supersedes "Pipecat pipeline, NOT OpenAI Realtime" and the
+  sectioned brain driving generation below. The pipeline engine stays as the
+  fallback: `INTERVIEW_ENGINE=pipeline`. The rules about not interrupting,
+  never fabricating, verified quotes and humans deciding all still hold. On
+  realtime they are held by the prompt (plan-bound questioning: a plan
+  question or a follow-up on the last answer, at most 3 follow-ups), by the
+  coordinator's time notes, and by quote verification after the call.
+- **The realtime transcript is the record; Deepgram leaves the new platform.**
+  The raw transcript is never changed, turns are ordered by spoken time, and
+  Mitra's interrupted replies are cut to what was heard. A text model writes a
+  cleaned version beside it after the call; report quotes are verified against
+  the raw one. The auditor (a small model off the reply path) labels questions
+  and coverage and **records only, never steers**. No captions on the
+  candidate's screen. Details: docs/DEV_PLAN.md section 3.
 - **MITRA is an organisation's hiring platform, not a single-employer tool.**
   One organisation per deployment (an `org_id` on every table from day one),
   three signed-in roles: **BU head** (raises job requests for their own BU
