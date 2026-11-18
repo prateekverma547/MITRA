@@ -24,8 +24,11 @@ fixed; the intelligence gets deeper later.
 - `docs/DEV_PLAN.md`: rewritten. It covers:
   - roles, the journey and the candidate status machine;
   - 15 recorded decisions and the model slots;
-  - Track C (candidate and intelligence) and Track E (organisation and
-    console), and the contracts between them;
+  - a feature catalogue with an owner and phase for every feature, including
+    the ones added during planning;
+  - a vertical split: Track H (hiring flow) and Track I (interview), each
+    owning its features from the model to the screen, and the seams between
+    them;
   - conflict rules, proctoring, the HR round, live testing, and phases with
     checkpoints.
 - `CLAUDE.md` "Current direction" now records:

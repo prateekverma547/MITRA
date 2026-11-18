@@ -67,10 +67,12 @@ this file, **these win**; the later sections are kept for their reasoning.
   No emotion, tone-of-voice or personality inference, anywhere.
 - **React + Vite + TypeScript** for the new console and the new candidate app.
   The old plain-JS `/admin` and `/join` stay until cutover.
-- **Two tracks, two engineers, two Claude accounts.** Track C (candidate and
-  intelligence) and Track E (organisation and console). Ownership, shared
-  files, branching and the merge rules are in
-  [docs/DEV_PLAN.md](docs/DEV_PLAN.md). Work on `c/*` or `e/*` branches off
+- **Two vertical tracks, two engineers, two Claude accounts.** Track H (hiring
+  flow: organisation, job requests, screening, the HR round, results) and
+  Track I (interview: candidate app, MITRA, proctoring, live view, report,
+  analytics). Each owns its features from the model to the screen. Ownership,
+  seams, shared files and merge rules are in
+  [docs/DEV_PLAN.md](docs/DEV_PLAN.md). Work on `h/*` or `i/*` branches off
   `dev`; never push to `stg` (it auto-deploys) or `main` directly.
 - **New changes add `changes/<date>-<slug>.md`** rather than editing
   `CHANGELOG.md`, which both tracks would otherwise conflict on.

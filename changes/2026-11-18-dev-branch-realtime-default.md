@@ -32,7 +32,7 @@ everything, and `docs/DEV_PLAN.md` is the plan built on it.
 
 - Not heard in a live call: no API keys were available when this was built.
 - The realtime transcript is still OpenAI's own; Deepgram as the independent
-  record is Track C phase 1.
+  record is Track I phase 3.
 - Section ids on realtime transcript turns, and the Director: phase 2.
 
 **Confirm**

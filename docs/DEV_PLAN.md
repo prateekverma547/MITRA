@@ -5,21 +5,17 @@
 > is not shared, so **anything both sides must know lives here or in CLAUDE.md,
 > never only in one person's memory.** Update this file in the same PR as any
 > change that alters what it says.
->
-> This replaces the earlier single-employer version of this plan. The realtime
-> engine, the event stream, the Director and the live view from that version are
-> all still here; they now sit inside a larger product.
 
 ## 1. What we are building
 
 An organisation's end-to-end hiring platform for proctored interviews. One
-organisation per deployment. Three kinds of signed-in user, one candidate.
+organisation per deployment. Three kinds of signed-in user, plus the candidate.
 
 | Who | Sees | Does |
 | --- | --- | --- |
-| **BU head** (Business, Finance, Software, Data Science, ...) | Their own BU only | Raises job requests; reads results for their candidates; makes the final decision after the technical round; may watch a technical round live |
+| **BU head** (Business, Finance, Software, Data Science, ...) | Their own BU only | Raises job requests; reads results for their candidates and compares them; makes the final decision after the technical round; may watch a technical round live |
 | **HR** | Every BU's job requests, grouped by BU | Uploads CVs, runs screening, conducts the HR round, books the technical round, sends results to the BU head; may watch a technical round live |
-| **Org admin** | Everything, read-only, plus admin sections | System analytics, business analytics, transparency (transcripts, audit log), users and BUs |
+| **Org admin** | Everything, read-only, plus admin sections | System analytics, business analytics, transparency, users and BUs |
 | **Candidate** | Their own join page | Joins the HR round and the technical round with a meeting ID and password |
 
 ### The journey
@@ -31,22 +27,24 @@ New job request              BU list → job request
   title (required)             Upload CV → Re-upload | Proceed
   JD file (optional)                 │
   chat with the model          Fit analysis: score %, chart, reasoning,
-  "what MITRA understood"        10 HR-round questions
+  "what MITRA understood"        10 HR-round questions with reasons
   Edit ↺ | Approve ───────►          │
                                score < 50% → [Reject] | Proceed anyway (reason)
                                score ≥ 50% → Not now | Begin HR round
                                      │
-                               HR round: meeting ID + password, questions
+                               HR round: meeting ID + password, checklist, notes
                                (HR and candidate only; recorded, no AI voice)
                                      │
                                Evaluation updates the rubric and recommends
                                → HR: [Reject] | Proceed to technical
                                      │
                                Book technical: duration → two links ──► Proctored technical
-                                 candidate link + live view link         interview
+                                 candidate link + live view link         interview, built on
+                                                                         JD + CV + HR findings
                                                                               │
                                Review result ◄─────────────────────── report + integrity
-                               Send to BU head ───────────────────────────────────────► Results
+                               Send to BU head ───────────────────────────────────────► Results,
+                                                                                        comparison:
                                                                                         Shortlist |
                                                                                         On hold |
                                                                                         Reject
@@ -55,8 +53,8 @@ New job request              BU list → job request
 ### Candidate status
 
 One field, one state machine, defined in `shared/` and read by every screen.
-Only the listed moves are allowed, and every move records who made it, when,
-the model's recommendation at that moment, and the reason if one was required.
+Only the listed moves are allowed. Every move records who made it, when, the
+model's recommendation at that moment, and the reason if one was required.
 
 ```
 new → screened → ready_for_hr → hr_booked → hr_done → ready_for_technical
@@ -77,199 +75,287 @@ These override the matching lines in CLAUDE.md, which says so at its top.
 | 1 | The realtime engine is the main engine; `INTERVIEW_ENGINE=pipeline` is the fallback. Done on `dev` |
 | 2 | One organisation per deployment, with `org_id` on every table from day one |
 | 3 | One sign-in; the account decides the role, never a button on the welcome screen. BU scoping is enforced in server queries |
-| 4 | Who rejects: **HR** at screening and after the HR round. After the technical round HR can only **send to the BU head**, and the **BU head** decides. A model only recommends |
-| 5 | CV screening cut-off **50%**, one setting (org level now, per job later). It changes which buttons are offered; "Proceed anyway" needs a reason |
-| 6 | **The HR round is held inside MITRA**, in our own room with the same join page and credentials. No AI participant joins. It is recorded, transcribed after the call, and evaluated by a text model |
-| 7 | **Live view and notes** for the technical round, open to HR and to the BU head of that job's BU. Notes only; nobody speaks into the call |
-| 8 | **Proctoring goes in its own Integrity section** of the report, with timestamps and clips. It never changes a competency score |
-| 9 | **Distance band 50–80 cm**, measured in the browser from iris size, plus a "show both hands" step before the interview starts |
-| 10 | Integrity reminders are **on-screen captions only, at most three per kind**, then record silently. Never spoken, never in Mitra's context |
-| 11 | **Withdrawal always gets one confirmation**, even after "just end the interview". Any yes, or a second request, ends it |
-| 12 | Candidates are in **India**: DPDP Act 2023 consent and retention. No emotion or tone inference anywhere |
-| 13 | **No email notifications** in the first version; in-app badges only |
-| 14 | Off-call text work uses **one configurable text model** (section 2) |
+| 4 | **HR** rejects at screening and after the HR round. After the technical round HR can only **send to the BU head**, and the **BU head** decides. A model only recommends |
+| 5 | CV screening cut-off is **50%**, one setting (org level now, per job later). It changes which buttons are offered; "Proceed anyway" needs a reason |
+| 6 | **The HR round is held inside MITRA**, with the same join page and credentials. No AI participant joins; it is recorded, transcribed after the call, and evaluated by a text model |
+| 7 | **Live view and notes** for the technical round, for HR and the BU head of that BU. Notes only |
+| 8 | **Proctoring goes in its own Integrity section** of the report; never in a competency score |
+| 9 | **Distance band 50–80 cm**, measured from iris size, plus a "show both hands" step |
+| 10 | Integrity reminders are **on-screen captions only, at most three per kind**, then silent recording |
+| 11 | **Withdrawal always gets one confirmation**; any yes, or a second request, ends it |
+| 12 | Candidates are in **India**: DPDP Act 2023 consent and retention. No emotion or tone inference |
+| 13 | **No email** in the first version; in-app badges only |
+| 14 | Off-call text work uses **one configurable text model** (section 3) |
 | 15 | React + Vite + TypeScript for the console and the candidate app |
+| 16 | **Every feature in the catalogue below is in scope**, including the ones added during planning |
+| 17 | **Vertical split.** Each engineer owns whole features (model, backend, screens, tests), so both do deep technical work and UI work, and each tests alone |
 
-## 2. Models
+## 2. Feature catalogue
 
-| Role | Env slot | Default | Notes |
+Everything we are building. *Added* marks features proposed during planning and
+accepted into scope on 2026-11-18. **Owner** is the track (section 4); **Ph** is
+the phase (section 10).
+
+### Organisation and access
+
+| Feature | Owner | Ph |
+| --- | --- | --- |
+| Welcome page with three doors; one sign-in, role from the account | H | 0 |
+| Users, roles, BU membership, `org_id` everywhere, BU scoping in queries | H | 0 |
+| Route-guard sweep test for every route and role | H | 0 |
+| Versioned database changes (Alembic) | H | 0 |
+| User and BU management for the org admin *(added)* | H | 4 |
+| In-app badges: "N waiting for you" | H | 2 |
+
+### Job requests (BU head)
+
+| Feature | Owner | Ph |
+| --- | --- | --- |
+| New job request: title (required), JD file (optional: PDF, Word, text) | H | 1 |
+| Chat with the model to describe the role; works with or without a JD | H | 1 |
+| "What MITRA understood", with marked assumptions, Edit (back to chat) and Approve | H | 1 |
+| Job request list and status; published to HR under the BU | H | 1 |
+
+### Screening (HR)
+
+| Feature | Owner | Ph |
+| --- | --- | --- |
+| BU → job → candidate lists, status chips, filters ("needs me", "below threshold", "this week") | H | 1 |
+| CV upload, Re-upload or Proceed | H | 1 |
+| Fit analysis: per-competency 0–4 ratings, CV quotes checked in code, % computed in code from the BU head's weights *(added)*, reasoning, chart | H | 1 |
+| Identity hidden from the scorer (name, photo, gender, age, address) *(added)* | H | 1 |
+| "No evidence" shown apart from a low score *(added)* | H | 1 |
+| 10 HR-round questions, each with a "why we're asking" line *(added)* | H | 1 |
+| Threshold gates: Reject or Proceed anyway (reason required) *(added)*; Not now or Begin HR round | H | 1 |
+
+### HR round
+
+| Feature | Owner | Ph |
+| --- | --- | --- |
+| Booking a room with no bot; candidate credentials; HR's own join from the console | H | 2 |
+| HR round screen: credentials to send, question checklist, notes box *(added)* | H | 2 |
+| Per-participant recording; Deepgram transcription after the call; merged transcript | H | 2 |
+| Evaluation by the text model: soft-skill rubric, verified quotes, recommendation | H | 2 |
+| Evaluation review; Reject or Proceed to technical | H | 2 |
+| HR findings handed to MITRA's technical plan *(added)* | H produces, I consumes | 3 |
+
+### Candidate app
+
+| Feature | Owner | Ph |
+| --- | --- | --- |
+| Join (meeting ID + password) for both rounds; the HR round in a lighter mode | I | 1 |
+| Consent covering AI, recording, proctoring, live watching, retention; accommodation option *(added)* | I | 1 |
+| Device check: camera, mic level, speaker *(added)*, lighting *(added)*, 50–80 cm band, "show both hands" *(added)*, whole-screen share, single monitor *(added)*, supported browser *(added)*. Each item passes or says how to fix it | I | 1 |
+| 30-second warm-up that also calibrates gaze *(added)* | I | 1 |
+| In-call screen: Mitra's captions, timer and progress, reminder captions | I | 1 |
+| Rejoin after a dropped call; thank-you page with next steps | I | 3 |
+
+### MITRA technical round
+
+| Feature | Owner | Ph |
+| --- | --- | --- |
+| Blueprint built from JD + spec + CV + HR findings | I | 3 |
+| Duration set per booking, default from the job | I | 2 |
+| Withdrawal: one confirmation, then a graceful end | I | 1 |
+| Deepgram as the independent transcript on realtime | I | 3 |
+| Director: claims, coverage, depth, contradictions, fabrication check | I | 3 |
+| Event stream for the live view and analytics | I | 2 |
+| Session hand-over past 55 minutes, or a booking cap | I | 5 |
+
+### Proctoring
+
+| Feature | Owner | Ph |
+| --- | --- | --- |
+| In the browser: distance, gaze away from the screen, face missing or second face *(added)*, tab hidden, share stopped or not the whole screen, second monitor *(added)*, full-screen exit and paste *(added)* | I | 1 |
+| Reminder captions: max 3 per kind, 2-minute cooldown *(added)*, then record only | I | 1 |
+| After the call: screen frames classified by a vision model *(added)*, second voice on the candidate's track *(added)*, gaze patterns re-checked | I | 3 |
+| Integrity section: summary, each event with timestamp, clip or thumbnail, and whether a reminder was shown | I | 2 |
+
+### Technical round booking, live view, report
+
+| Feature | Owner | Ph |
+| --- | --- | --- |
+| Book technical: duration, two links (candidate + live view) | I | 2 |
+| Live view for HR and the BU head: video, screen, transcript, plan, Mitra's reading, logs, integrity tiles | I | 2 |
+| Notes box and the Arbiter that triages notes | I | 3 |
+| Report component: scores, every score opens its quote, every quote jumps to its moment in the recording *(added)*, transcript, Integrity section | I | 2 |
+
+### Results (BU head)
+
+| Feature | Owner | Ph |
+| --- | --- | --- |
+| Send to BU head (HR) | H | 2 |
+| Candidate results: rubric chart, summary, strengths and gaps, JD match; embeds I's report component | H | 3 |
+| Side-by-side comparison of all candidates for one job *(added)* | H | 3 |
+| Decision: Shortlist, On hold or Reject, with reason *(added)* | H | 3 |
+
+### Org dashboard and admin
+
+| Feature | Owner | Ph |
+| --- | --- | --- |
+| Org dashboard: every BU's jobs and candidates, read-only | H | 4 |
+| System analytics: turn latency (median, p95), timeouts, provider errors, cost per interview and trend, concurrency, failed sessions | I | 4 |
+| Business analytics: jobs by BU, stage conversion, time in stage, completion, no-show and error rates, score spread, "Proceed anyway" outcomes *(added)* | I | 4 |
+| Transparency: searchable transcripts, recordings and reports; audit log of every decision beside the model's recommendation *(added)* | H | 4 |
+| AI usage register: model and prompt version behind every score *(added)* | H records, I records for its models | 4 |
+| Consent records, retention periods, deletion requests *(added)* | H | 4 |
+
+### Engineering
+
+| Feature | Owner | Ph |
+| --- | --- | --- |
+| Text-model slots, request helper for reasoning models, `check_models.py` *(added)* | I | 0 |
+| Shared contracts with fixtures | both | 0 |
+| Console shell (layout, nav, role homes, auth guard) | H | 0 |
+| Design system `frontend/ui/` | I | 0 |
+| CI on every PR into `dev` *(added)* | I | 0 |
+| Seed and fixture scripts: `seed_org.py` (H), `seed_candidate.py`, `replay_events.py`, `fake_bot.py` (I) *(added)* | | 0–2 |
+| Feature flags, so the old flow keeps running until cutover *(added)* | both | 0 |
+| Railway `dev` environment *(added)* | whoever has Railway access | 0 |
+
+## 3. Models
+
+| Role | Env slot | Default | Owner |
 | --- | --- | --- | --- |
-| Live conversation (technical round) | `REALTIME_MODEL` | `gpt-realtime-2.1` | Unchanged |
-| Live judge for the Director | `OPENAI_LLM_MODEL` | `gpt-4.1-mini` | On the call's timeline: never a reasoning model |
-| Job understanding + BU head chat | `OPENAI_CLARIFY_MODEL` | `OPENAI_TEXT_MODEL` | New slot; `blueprint/clarify.py` |
-| CV fit screening + 10 HR questions | `OPENAI_SCREENING_MODEL` | `OPENAI_TEXT_MODEL` | New |
-| HR round evaluation | `OPENAI_HR_EVAL_MODEL` | `OPENAI_TEXT_MODEL` | New |
-| Technical blueprint | `OPENAI_BLUEPRINT_MODEL` | `OPENAI_TEXT_MODEL` | Exists; default changes |
-| Technical report + log analysis | `OPENAI_FEEDBACK_MODEL` | `OPENAI_TEXT_MODEL` | Exists; default changes |
+| Live conversation (technical round) | `REALTIME_MODEL` | `gpt-realtime-2.1` | I |
+| Live judge for the Director | `OPENAI_LLM_MODEL` | `gpt-4.1-mini` | I. On the call's timeline, never a reasoning model |
+| Job understanding + BU head chat | `OPENAI_CLARIFY_MODEL` | `OPENAI_TEXT_MODEL` | H |
+| CV screening + HR questions | `OPENAI_SCREENING_MODEL` | `OPENAI_TEXT_MODEL` | H |
+| HR round evaluation | `OPENAI_HR_EVAL_MODEL` | `OPENAI_TEXT_MODEL` | H |
+| Technical blueprint | `OPENAI_BLUEPRINT_MODEL` | `OPENAI_TEXT_MODEL` | I |
+| Technical report, log analysis | `OPENAI_FEEDBACK_MODEL` | `OPENAI_TEXT_MODEL` | I |
+| Screen-frame classification | `OPENAI_VISION_MODEL` | `OPENAI_TEXT_MODEL` | I |
 
-Each role keeps its own slot so any one can be moved or measured alone, which is
-the existing rule in CLAUDE.md. `OPENAI_TEXT_MODEL` sets them all at once.
-
-**GPT-6.2 Sol is the intended text model, but it is not confirmed yet.** On
+**The target text model is GPT-6.2 Sol, but it is not listed yet.** On
 2026-11-18, OpenAI's API docs list `gpt-6-sol` and point to `gpt-6.1-sol` as the
-newer Sol model. `gpt-6.2-sol` appears only in third-party reports. So:
+newer model; `gpt-6.2-sol` appears only in third-party reports.
 
-- The code default is `gpt-6.1-sol`, and `OPENAI_TEXT_MODEL=gpt-6.2-sol` switches
-  once it appears in the account's model list.
-- `scripts/check_models.py` (Track C, phase 0) lists what the key can actually
-  call, so this is a check rather than a guess.
+- The code default is `gpt-6.1-sol`.
+- Once the key can call it, setting `OPENAI_TEXT_MODEL=gpt-6.2-sol` moves every
+  off-call role at once.
+- `scripts/check_models.py` lists what the key can actually call.
 
-**Switching these calls to a reasoning model is a code change, not only a
-setting.** Today `clarify.py`, `generate.py`, `refine.py` and `score.py` pass
-`temperature`, which reasoning models reject, and use `json_object` rather than
-a JSON schema. Phase 0 adds one helper for the request arguments, the way
-`bot/brain/drivers.py` already handles it, and moves each call to structured
-outputs. Re-run the existing quality checks after the switch: the clarify
-attribution test, judge precision, and quote verification.
+Switching to a reasoning model is a code change as well as a setting. Today
+`clarify.py`, `generate.py`, `refine.py` and `score.py` pass `temperature`,
+which reasoning models reject, and use `json_object` instead of a JSON schema.
+Phase 0 adds one helper for request arguments (as `bot/brain/drivers.py`
+already does) and moves the calls to structured outputs. After that, re-run
+the clarify attribution test, judge precision and quote verification.
 
-## 3. The split
+## 4. The split: two vertical tracks
 
-Two tracks, divided by **who the code serves**: models and the candidate on one
-side, the organisation's people on the other. Each track is development plus
-its own research.
+Each engineer owns **whole features, from the model to the screen**. Both do
+deep technical work, both build UI, and each can run and test their own
+features end to end without the other.
 
-### Track C: candidate and intelligence
+The line follows the journey:
 
-Everything a model produces and everything the candidate touches.
+- **Track H, Hiring flow**, owns everything **around** the AI interview: the
+  organisation, job requests, screening, the HR round, and the decision.
+- **Track I, Interview**, owns the **AI interview itself** and what measures
+  it: the candidate app, MITRA, proctoring, the live view, the report, and
+  system and business analytics.
 
-- **Screening** (`backend/screening/`, new):
-  - `analyse_fit(job, cv) -> FitAnalysis`. Identity is removed before scoring.
-    The model rates each competency 0–4, and must quote the CV for every rating;
-    the quotes are checked against the CV in code. The percentage is computed in
-    code from the ratings and the BU head's weights. "No evidence" is a separate
-    outcome from a low score.
-  - `hr_questions(job, cv, fit) -> HRQuestionSet`: 10 questions, each with a
-    one-line reason for asking it.
-- **Job understanding** (`backend/blueprint/clarify.py`): the BU head's chat,
-  which already works. It moves to the new text model, and the optional JD file
-  becomes a starting point rather than a requirement.
-- **HR round intelligence**:
-  - Transcription after the call, per participant track (section 7).
-  - `evaluate_hr_round(transcript, questions, job) -> HRRoundEvaluation`, using
-    verified quotes as feedback scoring does today.
-- **MITRA technical round** (`backend/bot/`):
-  - The HR round's findings go into the blueprint.
-  - Withdrawal confirms once.
-  - The Director, the Deepgram independent transcript, event emission, and note
-    delivery from the earlier plan.
-- **Technical report** (`backend/feedback/`): an Integrity section beside the
-  competency scores, and log analysis.
-- **Candidate app** (`frontend/candidate-app/`, new):
-  - join, consent, device check (camera, mic, speaker, lighting, the 50–80 cm
-    band, hands, whole-screen share, single monitor, browser), a warm-up, the
-    in-call screen with captions, and thank-you;
-  - the same app for both rounds.
-- **Proctoring capture** (`backend/proctoring/` + the candidate app): the
-  browser signals, gaze estimation, the capped reminders, and post-call
-  analysis of the recording (section 6).
-- **Research:** screening fairness and accuracy on real CVs; evaluating the HR
-  round; confusion scenarios on realtime; gaze thresholds from staged sessions.
+### Track H: Hiring flow
 
-### Track E: organisation and console
+| Layer | Work |
+| --- | --- |
+| **Models** | Job understanding chat on the text model; CV screening (`analyse_fit`: identity hidden, 0–4 ratings, CV quotes checked in code, % computed in code); `hr_questions`; `evaluate_hr_round` |
+| **Backend** | Auth, users, roles, BUs, scoping, Alembic; the stage machine, `Decision` and the audit log; job request API; screening as a background task at upload; HR round rooms without a bot, HR join, per-track recording, Deepgram post-call transcription; Send to BU head; consent records, retention, AI usage register |
+| **UI** | Welcome and sign-in; console shell and role homes; BU head job request, chat, understanding, Edit and Approve; HR home with BU, job and candidate lists and filters; CV upload; fit analysis with charts and gates; HR round screen with checklist and notes; evaluation review; BU head results, comparison, decision; org dashboard; transparency; user and BU management; badges |
+| **Directories** | `backend/org/`, `backend/hiring/`, `backend/blueprint/clarify.py` + `documents.py`, `frontend/console/src/features/{auth,jobs,screening,hr-round,results,org,transparency,admin-users}/`, `frontend/console/src/shell/`, `backend/tests/{org,hiring}/` |
 
-Everything a BU head, HR or an org admin sees or does.
+### Track I: Interview
 
-- **Identity and access** (`backend/console/auth.py`):
-  - users with roles, BU membership and `org_id`;
-  - password sign-in with hashed passwords and httpOnly session cookies;
-  - BU scoping in every query;
-  - a route sweep test that replaces today's admin-only one.
-- **Organisation data** (`backend/console/models.py`): `Organisation`,
-  `BusinessUnit`, `User`, job request fields on `Job` (BU, creator, status),
-  candidate stage, `Decision`, and the audit log. **Versioned database changes
-  with Alembic**: today tables are only ever created, never altered, which
-  cannot carry this scope.
-- **Console** (`frontend/console/`, new), one app with role-based home screens:
-  - **Welcome and sign-in.**
-  - **BU head:** job requests and their status, a new request with the chat
-    UI, "what MITRA understood" with Edit and Approve, candidate results, a
-    comparison across candidates, and the detailed report.
-  - **HR:** BUs → job requests → candidates with status chips and filters; CV
-    upload with Re-upload or Proceed; the fit analysis screen and its gates; the
-    HR round screen (credentials to send, the question checklist, notes);
-    reviewing the HR round evaluation; booking the technical round with its two
-    links; Send to BU head.
-  - **Org dashboard and admin:** the system, business and transparency
-    sections, and user and BU management.
-- **Live view** (`backend/live/`, from the earlier plan): event relay and store,
-  the Arbiter for notes, the hidden join, and the screen itself, open to HR and
-  the BU head.
-- **Analytics** (`backend/console/analytics.py`): aggregates over interview
-  telemetry, decisions and stages.
-- **Proctoring review UI:** the Integrity section on the report, with event
-  timeline, clips and thumbnails.
-- **Design system** (`frontend/ui/`): tokens and components used by both apps.
-  E builds it; C uses it.
-- **Research:** what each role needs on its home screen; Arbiter quality; how
-  the comparison and evidence views read to a real BU head.
+| Layer | Work |
+| --- | --- |
+| **Models** | MITRA realtime (withdrawal confirmation, HR findings into the blueprint, Director, Deepgram independent transcript); the Arbiter for notes; report scoring with the Integrity section; screen-frame vision; second-voice check; log analysis; text-model slots and `check_models.py` |
+| **Backend** | Technical booking and two links; the event stream, relay and store; live view hidden join; proctoring event intake and after-call analysis jobs; recording to durable storage; analytics aggregation over telemetry, stages and decisions |
+| **In the browser** | MediaPipe face and iris landmarks for distance and gaze; tab, focus, share, monitor, full-screen and paste signals; capped reminder captions |
+| **UI** | Candidate app (join, consent, device check, warm-up, in-call, rejoin, thank-you); live view; report component with evidence jumps and Integrity; system and business analytics dashboards; the design system |
+| **Directories** | `backend/bot/`, `backend/blueprint/generate.py` + `refine.py`, `backend/feedback/`, `backend/proctoring/`, `backend/live/`, `backend/analytics/`, `frontend/candidate-app/`, `frontend/ui/`, `frontend/console/src/features/{live,report,analytics}/`, `backend/tests/{bot,proctoring,live,analytics}/` |
+
+### Why this split is the faster one
+
+- **No waiting on the other person.** In a model/UI split, every screen waits
+  for a model and every model waits for a screen. Here one person carries a
+  feature from the prompt to the button. The only hand-offs are the seams in
+  section 5, and each has a fixture from day one.
+- **Both get hard technical work.** H takes auth and scoping, the stage
+  machine, screening quality and fairness, and HR round recording and
+  transcription. I takes realtime voice, in-browser vision, the Director and
+  Arbiter, and event streaming.
+- **Both get UI.** H builds the console screens people use every day. I builds
+  the candidate app, live view, report and dashboards.
+- **Each tests alone** (section 8).
 
 ### Shared, change-controlled
 
-Touched by one PR at a time, reviewed by both engineers:
+These are touched by one PR at a time and reviewed by both engineers:
 
-`backend/shared/` (contracts, events, stage machine), `backend/app/main.py`,
-`backend/app/db.py`, `backend/app/interviews.py` (booking is E's, joining and
-spawning are C's), `backend/migrations/`, `backend/pyproject.toml` + `uv.lock`,
-`backend/Dockerfile`, `frontend/ui/`, consent copy, `CLAUDE.md`, this file,
-`docs/TECH_SPEC.md`.
+- `backend/shared/` (contracts, events, stage machine)
+- `backend/app/main.py`, `backend/app/db.py`, `backend/app/interviews.py`,
+  `backend/app/meeting.py`
+- `backend/migrations/`
+- `backend/pyproject.toml` + `uv.lock`
+- `backend/Dockerfile`
+- consent copy
+- `CLAUDE.md`, this file, `docs/TECH_SPEC.md`
 
-## 4. The seam: contracts
+## 5. The seams between the tracks
 
-All in `backend/shared/`, written together in phase 0 with a fixture for each,
-before anyone builds on them. E builds every screen against the fixtures; C
-replaces fixtures with real output. Neither waits for the other.
+These are written together in phase 0 in `backend/shared/` (Python) and
+`frontend/ui/contracts/` (TypeScript types generated from it). Each comes with a
+fixture, and each side builds against the fixture until the real thing lands.
 
-| Contract | Written by | Read by |
-| --- | --- | --- |
-| `CandidateStage` + allowed moves | E | C (to know what to trigger), every screen |
-| `FitAnalysis`: per-competency rating, CV quotes, computed %, assessed share of weight, reasoning, "no evidence" items | C | E: fit screen, HR home, comparison |
-| `HRQuestionSet` | C | E: HR round screen |
-| `HRRoundEvaluation`: soft-skill rubric, verified quotes, recommendation | C | E; C's blueprint |
-| `FeedbackReport` + `IntegrityReport` | C | E: BU head report |
-| `InterviewEvent` stream (transcript, plan, Director, notes, health, proctoring, logs) | C | E: live view, system analytics |
-| `EmployerNote` → `NoteInstruction` | E | C delivers into the live session |
-| `Decision`: who, stage, outcome, reason, model recommendation | E | Org analytics, audit log |
+| Seam | Provided by | Used by | Fixture until then |
+| --- | --- | --- | --- |
+| `current_user()`, role guard, `bu_scope()` | H | I's routes (live view, report, analytics) | Phase 0 deliverable, so no fixture needed |
+| `CandidateStage` + `move(candidate, to, by, reason)` | H | I moves `technical_booked`, `technical_done` | Phase 0 deliverable |
+| `HRRoundEvaluation` | H | I's blueprint | A JSON fixture per sample CV |
+| `book_technical(candidate, duration) -> TwoLinks` | I | H's HR screen ("Book technical") | Stub returning fake links |
+| `FeedbackReport` + `IntegrityReport` and `<InterviewReport>` | I | H's BU head results page embeds it | A fixture report; the component renders it |
+| `InterviewEvent` stream | I | I's own live view and analytics | `replay_events.py` |
+| `Decision` table | H | I's business analytics | Seeded decisions |
+| `JoinResponse.round` (`hr` or `technical`) | H sets it at booking | I's candidate app picks its mode | Both values in fixtures |
 
-Rules for every contract:
+Rules for every seam:
 
 - **Additive only.** A new optional field is a normal PR. Renaming or removing
   a field bumps `schema_version`, and both engineers must agree.
-- **Every model-produced claim about a person carries its evidence.** Quotes
-  are verified in code against the source (CV or transcript). Anything
-  unverifiable is dropped, and a score left with no evidence becomes
-  "insufficient evidence". This is the existing quote rule, extended to
-  screening and the HR round.
+- **Every model claim about a person carries its evidence.** Quotes are checked
+  in code against the CV or transcript; anything unverifiable is dropped, and a
+  score left with no evidence becomes "insufficient evidence".
 - **Emission never blocks the call.** `emit()` is non-blocking, with a bounded
   queue that drops on overflow and counts the drops; a test asserts this.
 
-## 5. How merge conflicts are avoided
+## 6. How merge conflicts are avoided
 
-| Rule | Why it prevents conflicts |
+| Rule | Why |
 | --- | --- |
-| **New code goes in new directories.** C: `screening/`, `proctoring/`, `frontend/candidate-app/`, plus its existing `bot/`, `blueprint/`, `feedback/`. E: `console/`, `live/`, `frontend/console/`, `frontend/ui/` | Each side's files are disjoint |
-| **Routes register once.** Phase 0 adds `include_router` lines for `console`, `live`, `screening` and `candidate` to `main.py`, each with a stub. After that nobody edits `main.py` to add a route | `main.py` is the most likely collision point |
-| **C exposes functions; E wires them.** C writes `analyse_fit()`, `hr_questions()`, `evaluate_hr_round()`. E calls them from routes and background tasks. C never edits a console route; E never edits a prompt | Removes the reason to cross over |
-| **Tables live with their track; migrations are one chain.** Models sit in each track's `models.py` on the shared `Base`. Alembic revisions are generated only on a branch freshly rebased on `dev`, one migration PR at a time, merged alone | Two parallel migrations make two heads, which cannot be merged mechanically |
-| **Contracts change first, alone.** A `shared/` change is its own PR, merged before the feature that needs it | The seam never moves inside a large diff |
-| **No shared append-only files.** Each PR adds `changes/<date>-<slug>.md` instead of editing `CHANGELOG.md` | The one file both would touch daily |
-| **Dependencies in their own PR.** On rebase, resolve a `uv.lock` conflict by running `uv lock`, never by hand | Lockfile conflicts stay mechanical |
-| **Separate frontend apps, separate lockfiles.** `frontend/ui/` is imported by path, not published | One workspace lock would conflict on every install |
-| **Tests live with their track.** `tests/console/`, `tests/live/`, `tests/screening/`, `tests/candidate/`, `tests/proctoring/` | New test files never collide |
-| **Short branches, daily rebase.** `c/<topic>` and `e/<topic>`, one to three days | Drift turns small conflicts into large ones |
+| **Directories are owned** (section 4). Each feature folder belongs to one track | Each side's files are disjoint |
+| **Routes register themselves.** Backend: phase 0 adds one `include_router` per package (`org`, `hiring`, `live`, `proctoring`, `analytics`, `candidate`), then nobody edits `main.py` for routes. Console: each feature folder exports `routes.tsx` and `nav.ts`, collected with `import.meta.glob`, so adding a screen never touches a shared file | Removes the two most likely collision points |
+| **The console shell is H's; the design system is I's.** A new component goes in its own file in `frontend/ui/`, in a small PR the other engineer reviews | Two people editing one component file collide |
+| **One migration chain.** Each track's models live in its own `models.py` on the shared `Base`. Alembic revisions are generated only on a branch freshly rebased on `dev`, one migration PR at a time, merged alone | Two parallel migrations make two heads |
+| **Contracts change first, alone.** A `shared/` PR merges before the feature that needs it | The seam never moves inside a large diff |
+| **No shared append-only files.** `changes/<date>-<slug>.md` instead of `CHANGELOG.md` | The one file both would touch daily |
+| **Dependencies in their own PR.** Resolve a `uv.lock` conflict by running `uv lock`; resolve an npm lockfile conflict by reinstalling | Lockfile conflicts stay mechanical |
+| **Two frontend apps, two lockfiles.** `frontend/ui/` is imported by path | One workspace lock would conflict on every install |
+| **Tests live with their track** (directories in section 4) | New test files never collide |
+| **Short branches, daily rebase.** `h/<topic>` and `i/<topic>`, one to three days | Drift turns small conflicts into large ones |
 
 Files that can still collide:
 
 | File | Owner | How the other side changes it |
 | --- | --- | --- |
-| `app/interviews.py` | shared | Booking, two links and HR's own join token are E's; candidate join and bot spawn are C's |
-| `app/db.py` | shared | Phase 0 makes it import each track's model module; after that, rarely touched |
-| `bot/presence.py` | C | E needs it to ignore the live view's hidden join. Agreed in phase 0 |
-| `bot/realtime_coordinator.py` | C | E never edits it; notes arrive through the inbox |
-| Consent copy | C | Changed only in the PR of the feature it describes; E reviews |
-| `frontend/ui/` | E | C asks for a component, or adds one in a small PR |
-| Old `frontend/admin/` (E), old `frontend/candidate/` (C) | | Frozen except for fixes until cutover |
+| `app/interviews.py` | shared | H adds the `round` field and skips spawning a bot for `hr`; I owns technical booking and spawning |
+| `app/meeting.py` (Daily rooms, tokens) | shared | Both call it; changes in a small PR |
+| `bot/presence.py` | I | Ignores the live view's hidden join; agreed in phase 0 |
+| `blueprint/` | split by file | `clarify.py` and `documents.py` are H's; `generate.py` and `refine.py` are I's |
+| Consent copy | I | Changed in the PR of the feature it describes. H reviews the HR round wording |
+| Old `frontend/admin/` (H), old `frontend/candidate/` (I) | | Frozen except for fixes until cutover |
 
-## 6. Proctoring
+## 7. Proctoring
 
 The principle is to measure behaviour, never emotion. Evidence goes to a person
 in its own report section. Reminders are captions the candidate sees; Mitra
@@ -277,54 +363,51 @@ never knows about them.
 
 ### During the technical round (in the candidate's browser)
 
-| Signal | How | Reminder caption (max 3 per kind, 2 min cooldown) |
+| Signal | How | Reminder caption (max 3 per kind, 2-minute cooldown) |
 | --- | --- | --- |
-| Distance outside 50–80 cm | MediaPipe Face Landmarker: iris diameter (~11.7 mm) in pixels → cm, with a per-session check against a known face width | "Please sit back a little" / "Please come a little closer" |
-| Looking away from the screen | Iris and head pose relative to a baseline set during the warm-up; only sustained or repeated look-aways count | "Please keep your eyes on the screen" |
+| Distance outside 50–80 cm | MediaPipe Face Landmarker: iris diameter (~11.7 mm) in pixels → cm | "Please sit back a little" / "Please come a little closer" |
+| Looking away from the screen | Iris and head pose against the warm-up baseline; sustained or repeated only | "Please keep your eyes on the screen" |
 | Face missing or a second face | Face count | "We can't see you clearly" |
 | Interview tab hidden or unfocused | `visibilitychange`, `blur` | "Please return to the interview tab" |
-| Screen share stopped or not the whole screen | Track `ended`; `displaySurface !== "monitor"` | Technical prompt, uncapped |
+| Share stopped or not the whole screen | Track `ended`; `displaySurface !== "monitor"` | Technical prompt, uncapped |
 | Second monitor attached | `screen.isExtended` (Chrome, Edge) | Checked at device check; logged if it changes |
 | Left full screen; paste | `fullscreenchange`; `paste` | Logged only |
 
-- Gaze and distance run **in the candidate's browser**, which costs the
-  server nothing.
-- Events stream to the server timestamped against the interview clock, and
-  each counts as `nudged` or `recorded_only`.
-- After the third reminder of a kind, the browser keeps recording that kind
-  silently.
+Gaze and distance run in the candidate's browser, so they cost the server
+nothing. Events stream to the server timestamped against the interview clock,
+each marked `nudged` or `recorded_only`. Once a kind has had its three
+reminders, the browser keeps recording that kind silently.
 
-### Device check (before consent is complete, blocking)
+### Device check (blocking, before the interview starts)
 
-The check covers camera, mic level, speaker, lighting, distance band, "show both
-hands", whole-screen share, a single monitor, and a supported desktop browser.
-Each check either passes or says how to fix it. An **accommodation option** at
+The check covers camera, mic level, speaker, lighting, the distance band, "show
+both hands", whole-screen share, a single monitor, and a supported desktop
+browser. Each item passes or says how to fix it. An **accommodation option** at
 consent turns off gaze reminders; it is recorded and shown on the report.
 
 ### After the call (from the recording)
 
-Analysis is scheduled the moment the recording is ready, the same pattern as
-feedback scoring:
+Scheduled the moment the recording is ready, the same pattern as feedback
+scoring:
 
-- **Screen frames** go to a vision model, which labels other apps, chat or AI
+- Screen frames go to the vision model, which labels other apps, chat or AI
   assistant windows, and notes.
-- **The candidate's own audio track** is checked for a second voice.
-- **Gaze patterns** are re-checked against the browser's live events.
-- **The Integrity section** gets a summary line, then each event with its
+- The candidate's own audio track is checked for a second voice.
+- Gaze patterns are re-checked against the browser's events.
+- The Integrity section gets a summary line, then each event with its
   timestamp, clip or thumbnail, and whether a reminder was shown.
 
 ### Limits
 
-- A phone on the desk and overlay copilots built to hide from screen share are
-  invisible to all of this.
-- Conversation-based signals (answers that sound read out, pauses before
-  polished answers) come later, as evidence only.
+- A phone on the desk is invisible to all of this, and so are overlay copilots
+  built to hide from screen share.
+- Signals from the conversation itself come later, as evidence only.
 - Glasses, lighting, webcams and neurodivergent traits produce false signals,
-  which is why no event is ever an accusation and nothing reaches a score.
+  which is why no event is ever an accusation.
 
 ### Pass bar (staged sessions)
 
-These must each be caught at the right time:
+Each of these must be caught at the right time:
 
 - a phone glance held for 10 seconds;
 - leaning in to 30 cm;
@@ -335,33 +418,13 @@ These must each be caught at the right time:
 A normal session with ordinary thinking glances must produce at most one
 reminder.
 
-## 7. The HR round
+## 8. Testing
 
-- **Booking** creates a room with candidate credentials, exactly as today, plus
-  an HR join from the console (a signed-in, owner-level token). No bot is
-  spawned.
-- **Recording** uses Daily raw-tracks, one file per participant. This makes
-  speaker attribution exact without diarisation.
-  - Recording is required for the HR round regardless of `RECORDING_ENABLED`,
-    and the consent notice says so.
-  - Verify the current Daily recording and transcription API before building.
-    Daily's own Deepgram-backed transcription is the alternative if per-track
-    files are awkward.
-- **After the call:** each track is transcribed with Deepgram's pre-recorded
-  API and merged into one `Transcript` with real timestamps. Then
-  `evaluate_hr_round()` runs, the rubric updates, and the candidate moves to
-  `hr_done`.
-- **During the call,** HR's screen shows the credentials, the 10 questions as a
-  checklist HR ticks, and a notes box. A live transcript there is a later
-  option (Daily live transcription); it is not needed for the evaluation.
-- **No proctoring** in the HR round beyond the recording.
-
-## 8. Testing live, before and during the split
-
-### Baseline, before anyone branches
+### The baseline, before anyone branches
 
 Both engineers run `dev` as it is and hold one real interview each. This is the
-original code both tracks compare against.
+original code both tracks compare against, and it proves each machine's setup.
+The steps are in the README; in short:
 
 ```bash
 git switch dev && cd backend && uv sync && uv run pytest -q   # 782 pass
@@ -374,116 +437,120 @@ rate limit never stalls the other.
 
 ### The old flow stays runnable throughout
 
-- The new apps live at **new paths**, `/console` and `/interview`, beside
-  `/admin` and `/join`.
+- The new apps live at `/console` and `/interview`, beside `/admin` and `/join`.
 - New behaviour sits behind flags that default off: `CONSOLE_ENABLED`,
   `LIVE_VIEW_ENABLED`, `PROCTORING_ENABLED`, `DEEPGRAM_RECORD_TRANSCRIPT`.
-- On any branch, the original interview runs end to end until the cutover in
-  phase 3.
+- Until the cutover in phase 3, the original interview runs end to end on any
+  branch.
 
-### Track C
-
-| Need | How |
-| --- | --- |
-| Screening quality | `scripts/screen_cv.py <jd> <cv>` prints the `FitAnalysis` and every quote that failed verification; a labelled set of JD/CV pairs scored offline |
-| HR round evaluation without holding one | A recorded or scripted two-speaker transcript fixture through `evaluate_hr_round()` |
-| A real voice call | `/admin` and the candidate link, or `scripts/dev_interview.py` |
-| What the bot emits | `JsonlSink`: `sessions/<id>.events.jsonl`, `scripts/watch_events.py` |
-| Proctoring | The candidate app against a local server, with the staged sessions in section 6 |
-| Notes before the Arbiter exists | `scripts/send_note.py <session> "text"` |
-
-### Track E
+### Track H tests alone
 
 | Need | How |
 | --- | --- |
-| Every screen before C's models exist | The phase 0 fixtures for each contract |
-| Roles and scoping | Seeded org: one admin, one HR, two BU heads in different BUs (`scripts/seed_org.py`) |
-| The live view with no calls | `scripts/replay_events.py <file.jsonl>` through the real relay; `scripts/fake_bot.py` for the note round trip |
-| A real interview in the console | `dev`'s real bot, from the E branch rebased daily |
+| Roles and scoping | `scripts/seed_org.py`: one admin, one HR, two BU heads in different BUs, sample jobs. The route sweep checks every role against every route |
+| Job chat and screening quality | `scripts/screen_cv.py <jd> <cv>` prints the `FitAnalysis` and every failed quote. A labelled set of JD/CV pairs is scored offline. A fairness check runs the same CV with names and genders swapped and must produce the same score |
+| A real HR round | Two browsers: HR signed in to the console, the candidate in a private window on the old `/join` page (no bot joins `hr` rooms) until I's app has its HR mode |
+| HR evaluation without holding a round | A two-speaker transcript fixture through `evaluate_hr_round()` |
+| Results pages before I's report exists | The fixture `FeedbackReport` + `IntegrityReport`, rendered by `<InterviewReport>` from phase 0 |
+| Booking before I's booking exists | The `book_technical` stub |
+
+### Track I tests alone
+
+| Need | How |
+| --- | --- |
+| A candidate ready for the technical round, without H's flow | `scripts/seed_candidate.py`: a candidate at `ready_for_technical` with a sample blueprint and an `HRRoundEvaluation` fixture, plus join credentials |
+| Real interviews | The candidate app against a local server; the old `/admin` booking or the seed script |
+| Proctoring | The staged sessions in section 7, recorded once and replayed against the analysis jobs |
+| The live view without a call | `scripts/replay_events.py` through the real relay; `scripts/fake_bot.py` for notes |
+| The report component | A dev route `/console/#/dev/report/<fixture>` rendering every fixture report |
+| Analytics | Seeded telemetry and decisions |
+| Behaviour | Text-mode scripted candidates against the realtime model: withdrawal confirmation, stacking, fabrication |
 
 ### Together
 
-- **A Railway `dev` environment** deployed from the `dev` branch, with its own
-  Postgres, so both tracks see the integrated build on a real URL. *Someone
-  with Railway access has to create it.*
-- **CI on every PR into `dev`** (GitHub Actions, `uv run pytest -q`, plus each
-  frontend's typecheck and build).
+- **Railway `dev` environment**, deployed from the `dev` branch with its own
+  Postgres: the integrated build on a real URL.
+- **CI** on every PR into `dev`: `uv run pytest -q`, plus the typecheck and
+  build for each frontend.
+- **Integration checkpoint** at the end of each phase, with both engineers on
+  one live run.
 
 ## 9. Where the tracks affect each other
 
 | Interaction | Risk | Handled by |
 | --- | --- | --- |
-| Contract shapes | A screen shows a field that was renamed | Additive-only rule; a contract test both suites run |
-| Stage machine | C triggers a move E's screen does not expect | One definition in `shared/`; every move goes through one function that checks it |
+| Seam shapes | A screen shows a field that was renamed | Additive-only rule; a contract test both suites run |
+| Stage machine | A move the other screen does not expect | One definition; every move goes through `move()`, which checks it |
 | Database | Two migration heads | One chain, migration PRs merged alone |
-| Live view hidden join | Presence counts the watcher as a second participant | Token `user_id` prefix plus hidden presence; C's presence ignores it |
+| The report inside H's results page | Layout or data mismatch | `<InterviewReport>` takes only the contract types; fixtures render from phase 0 |
+| Live view hidden join | Presence counts the watcher as a participant | Token `user_id` prefix plus hidden presence; presence ignores it |
+| `hr` rooms | A bot spawns into the HR round | `round` field checked in the join path; a test for each round |
 | Event volume | A slow relay stalls the call | Non-blocking emit, asserted in a test |
-| Notes | A badly worded note derails Mitra | E triages, C wraps the final wording |
-| Consent copy | Says more or less than the product does | Changed in the same PR as the feature |
 | CPU | Video analysis next to live bots | Gaze runs in the browser; recording analysis runs after the call |
 
 ## 10. Phases
 
 ```
-main (production) ◄── stg (staging, auto-deploys) ◄── dev (integration) ◄── c/*  e/*
+main (production) ◄── stg (staging, auto-deploys) ◄── dev (integration) ◄── h/*  i/*
 ```
 
 Feature PRs merge into `dev` when CI is green and the other engineer has looked
-at anything in the shared list. Each phase closes with a live checkpoint on the
-`dev` environment with both engineers present. After a checkpoint passes, `dev`
-is promoted to `stg`, then to `main`, **only when no interview is live.**
+at anything in the shared list. Each phase ends with a live checkpoint on the
+`dev` environment. After a checkpoint passes, `dev` is promoted to `stg` and
+then `main`, **only when no interview is live.**
 
-| Phase | Track C | Track E | Checkpoint |
+| Phase | Track H | Track I | Checkpoint |
 | --- | --- | --- | --- |
-| **0. Foundation** (week 1, together) | Contracts and fixtures; the text-model slots and request helper; `check_models.py`; screening prototype on sample CVs | Users, roles and sign-in; org, BU and stage tables; Alembic; router stubs; design tokens; CI; seed script | Three seeded accounts sign in and each sees an empty home scoped to its role; CI green |
-| **1. Job to screening** (weeks 2–3) | `analyse_fit`, `hr_questions`; job chat on the text model with optional JD | BU head job request, chat UI, "what MITRA understood", approve; HR BU and job lists, CV upload, fit screen, threshold gates, decisions and audit log | A BU head raises a job; HR uploads a CV and sees a real, evidenced fit score, and rejects or proceeds |
-| **2. HR round** (weeks 3–5) | Per-track transcription, `evaluate_hr_round`, HR findings into the blueprint | HR round booking and screen, HR join, evaluation review, the HR round decision | A real HR round is held in MITRA, transcribed, evaluated, and the candidate moves on or is rejected |
-| **3. Technical round** (weeks 5–7) | Candidate app with device check and warm-up; proctoring capture and capped reminders; withdrawal confirmation; Integrity section | Technical booking with two links; live view for HR and the BU head; Send to BU head; BU head results, comparison and decision; cutover from `/admin` and `/join` | One candidate goes from CV to a BU head decision on the new apps, proctored, with no API calls made by hand |
-| **4. Org view and depth** (weeks 7–8) | Post-call screen and voice analysis; Deepgram independent transcript; Director | Org dashboard: system, business, transparency; user and BU management; Arbiter and notes | An org admin can answer "what happened, what did it cost, who decided" for any candidate |
-| **5. Production** | Session hand-over past 55 minutes; accessibility; rejoin | Bot workers separate from the web process; Railway config migration | Pilot with one real BU on the deployed URL |
+| **0. Foundation** (week 1) | Auth, users, roles, BUs, scoping, route sweep; Alembic; stage machine and `move()`; console shell with self-registering routes; `seed_org.py` | Contracts and fixtures, written together; text-model slots, request helper, `check_models.py`; design system and `<InterviewReport>` on fixtures; candidate-app scaffold; CI; `seed_candidate.py` | Three seeded accounts sign in to role-scoped homes; the fixture report renders; CI green |
+| **1. Front doors** (weeks 2–3) | Job request, chat, understanding, Approve; HR lists; CV upload; screening with identity hidden and checked quotes; fit screen, charts, gates; 10 questions with reasons | Candidate app: join, consent with accommodation, the full device check, warm-up; proctoring capture in the browser and capped reminders; withdrawal confirmation | A BU head raises a job and HR sees an evidenced fit score. Separately, a candidate passes the device check and a staged session raises the right reminders |
+| **2. Rounds** (weeks 3–5) | HR round rooms, HR join, per-track recording, transcription, evaluation, review, decisions, audit log; Send to BU head; badges | Technical booking with two links; event stream and relay; live view v1; Integrity section; report component with evidence jumps; duration per booking | A real HR round is evaluated and moves the candidate on. Separately, a real technical round is watched live and its report opens with working evidence links |
+| **3. Joined up** (weeks 5–7) | BU head results embedding the report; comparison; decision; HR findings handed to I | HR findings into the blueprint; Deepgram independent transcript; Director; Arbiter and notes; after-call screen and voice analysis; rejoin; thank-you | **One candidate from CV to a BU head decision on the new apps, proctored, with no API calls by hand.** Cutover from `/admin` and `/join` |
+| **4. Org view** (weeks 7–8) | Org dashboard; transparency and audit log; AI usage register; consent records, retention, deletion; user and BU management | System and business analytics dashboards; log analysis | An org admin can answer "what happened, what did it cost, who decided" for any candidate |
+| **5. Production** (week 9) | Accessibility pass on the console; load of realistic org data | Session hand-over past 55 minutes; bot workers separate from the web process; load at the concurrency cap | Pilot with one real BU on the deployed URL |
 
-Weeks are a rough guide for two engineers working in parallel.
+Weeks are a rough guide. The phases overlap: either engineer can start the next
+phase's work while the other closes the checkpoint.
 
 ## 11. Working with two Claude accounts
 
 - **Shared knowledge lives in the repo:** CLAUDE.md for rules, this file for
-  the plan. A decision made in one engineer's chat is unknown to the other's
-  Claude until it is written here.
+  the plan. A decision made in one chat is unknown to the other's Claude until
+  it is written here.
 - **Each engineer keeps a personal `CLAUDE.local.md`** at the repo root
-  (gitignored):
+  (gitignored). Track H's:
 
   ```markdown
-  # Track E (organisation and console). Read docs/DEV_PLAN.md first.
-  - I own backend/console/, backend/live/, frontend/console/, frontend/ui/,
-    backend/tests/console/ and backend/tests/live/.
-  - Do not edit backend/bot/, backend/blueprint/, backend/screening/,
-    backend/feedback/, backend/proctoring/ or frontend/candidate-app/.
-    Need a change there? Write it up for the other engineer instead.
-  - Call Track C's functions (analyse_fit, hr_questions, evaluate_hr_round);
-    never edit a prompt.
-  - backend/shared/, migrations and the shared list in DEV_PLAN.md section 3
-    are their own PR, reviewed by the other engineer, merged before the feature.
-  - Branch from dev as e/<topic>. Rebase on dev before starting work.
+  # Track H (hiring flow). Read docs/DEV_PLAN.md first.
+  - I own backend/org/, backend/hiring/, blueprint/clarify.py and documents.py,
+    frontend/console/src/shell/ and the console feature folders auth, jobs,
+    screening, hr-round, results, org, transparency, admin-users, and
+    backend/tests/org/ and backend/tests/hiring/.
+  - Do not edit backend/bot/, backend/feedback/, backend/proctoring/,
+    backend/live/, backend/analytics/, frontend/candidate-app/ or frontend/ui/.
+    Need a change there? Write it up for the other engineer.
+  - Use I's seams through their fixtures until the real ones land:
+    book_technical stub, <InterviewReport> with fixture reports.
+  - backend/shared/, migrations and the shared list in DEV_PLAN.md section 4 are
+    their own PR, reviewed by the other engineer, merged before the feature.
+  - Branch from dev as h/<topic>. Rebase on dev before starting work.
   - Add changes/<date>-<slug>.md instead of editing CHANGELOG.md.
   ```
 
-  Track C's is the mirror image.
+  Track I's is the mirror image.
 - **Start each session the same way:** `git fetch && git rebase origin/dev`,
-  read this file, then run the suite.
+  read this file, run the suite.
 - **Cross-track requests** go in an issue or a PR note, never as a cross-track
   edit.
 
 ## 12. Open items
 
-1. **Assign the tracks.** Who takes C and who takes E, with their GitHub
-   usernames. Then write `CODEOWNERS` and each engineer's `CLAUDE.local.md`.
-2. **Push `dev`** and create `c/foundation` and `e/foundation`, after the live
-   test of `dev` passes.
-3. **Create the Railway `dev` environment.**
-4. **Confirm the text model.** Confirm `gpt-6.2-sol` is callable with the
-   project's key; until then the default is `gpt-6.1-sol`.
-5. **Retention periods** for recordings, transcripts and screen thumbnails
-   under the DPDP Act, and a legal read of the consent copy before the first
-   real candidate.
-6. **Interviews over 55 minutes:** cap the booking, or build the session
-   hand-over (phase 5).
+1. **Assign tracks.** Decide who takes H and who takes I, with GitHub
+   usernames; then add `CODEOWNERS` and each engineer's `CLAUDE.local.md`.
+2. **Push and branch.** After the live test, push `dev` and create
+   `h/foundation` and `i/foundation`.
+3. **Railway `dev` environment.** Create it.
+4. **Text model.** Confirm `gpt-6.2-sol` is callable; until then the default is
+   `gpt-6.1-sol`.
+5. **Retention.** Set retention periods for recordings, transcripts and
+   thumbnails, and get a legal read of the consent copy before the first real
+   candidate.
