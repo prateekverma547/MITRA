@@ -807,7 +807,17 @@ CONSOLE_DIST = FRONTEND_DIR / "console" / "dist"
 if (CONSOLE_DIST / "index.html").is_file():
     from fastapi.staticfiles import StaticFiles
 
-    app.mount("/console", StaticFiles(directory=CONSOLE_DIST, html=True), name="console")
+    class ConsoleFiles(StaticFiles):
+        """The console's files. index.html is always re-checked, so a new build
+        shows on the next load; the hashed bundles under assets/ may be cached."""
+
+        async def get_response(self, path, scope):
+            response = await super().get_response(path, scope)
+            if not path.startswith("assets/"):
+                response.headers["Cache-Control"] = "no-cache"
+            return response
+
+    app.mount("/console", ConsoleFiles(directory=CONSOLE_DIST, html=True), name="console")
 else:
 
     @app.get("/console", include_in_schema=False)

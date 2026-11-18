@@ -868,6 +868,8 @@ PUBLIC_ROUTES = {
     # out; signing out only clears a cookie.
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/logout"),
+    # Demo accounts for the sign-in screen: always empty when deployed.
+    ("GET", "/api/auth/demo"),
     # Only registered when the console has not been built: a page that says
     # how to build it. Once built, /console is static files, not a route.
     ("GET", "/console"),
