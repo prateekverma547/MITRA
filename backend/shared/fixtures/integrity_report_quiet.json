@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "interview_id": "int_9f8e7d6c5b4a",
+  "generated_at": "2026-11-18T10:00:00Z",
+  "analysed_after_call": false,
+  "accommodation": {
+    "gaze_reminders_off": true,
+    "note": "gaze reminders switched off at consent"
+  },
+  "events": [],
+  "summary": {
+    "events_by_kind": {},
+    "reminders_by_kind": {},
+    "technical_prompts_by_kind": {}
+  },
+  "after_call_status": null,
+  "second_voice": null
+}

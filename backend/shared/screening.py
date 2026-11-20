@@ -209,9 +209,10 @@ class SoftSkillRating(BaseModel):
 class HRRoundEvaluation(BaseModel):
     """What the HR round showed. HR decides; this recommends.
 
-    `findings_for_technical` is the part Track I reads: things the technical
-    interview should probe or need not repeat. Each one is phrased as a topic,
-    never as a conclusion about the candidate, because it goes into MITRA's plan.
+    `findings_for_technical` is the part Track I reads: gaps the MITRA
+    interview round should probe. Each becomes one neutral probe question in
+    MITRA's plan (blueprint/refine.py), so each is phrased as a gap in the
+    evidence, never as a conclusion about the candidate.
     """
 
     schema_version: Literal[1] = SCHEMA_VERSION

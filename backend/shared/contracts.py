@@ -12,8 +12,9 @@ brain is the real consumer. Milestone 2's generator adapts to them, not the
 reverse.
 """
 
+from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
@@ -24,6 +25,11 @@ SCHEMA_VERSION = 1
 MIN_DURATION_MINUTES = 20
 MAX_DURATION_MINUTES = 90
 DEFAULT_DURATION_MINUTES = 40
+#: The longest interview that may be booked or planned now (decision of
+#: 2026-11-19): 60 minutes, on both engines. MAX_DURATION_MINUTES stays 90 so
+#: stored specs and plans up to 90 still load; tightening the contract itself
+#: is a later decision (it needs frontend/ui/contracts regenerated).
+MAX_INTERVIEW_MINUTES = 60
 
 #: How long an interview recording is kept before it is deleted.
 #:
@@ -137,6 +143,76 @@ class CompetencyPlan(BaseModel):
     )
     time_budget_minutes: float
 
+    #: Stable ids for `seed_questions`, one per question in the same order:
+    #: "Q2.1" is area 2, question 1 (`plan_question_id`). Numbered in code, never
+    #: by a model. Empty in blueprints written before ids existed;
+    #: `InterviewBlueprint` fills them on load the same way, so old data needs no
+    #: migration. The auditor's `QuestionLabelled.question_id` refers to these.
+    question_ids: list[str] = Field(default_factory=list)
+
+    #: C-A21 (Session A, A-99): what each plan question is meant to find out, in plain
+    #: words written at plan time, so Mitra is handed the goal rather than the plan's
+    #: own wording. One per question in `seed_questions` order, None for a question
+    #: without one; EMPTY in every plan written before goals existed (old plans load and
+    #: run unchanged). Additive (C-168).
+    question_goals: list[str | None] = Field(default_factory=list)
+
+    #: Track H, 2026-11-20 (MITRA as a pre-screener): a short briefing for the live
+    #: interviewer's own thinking in this area, written at plan time so the realtime
+    #: model has the field's knowledge to hand without a call mid-conversation. Never
+    #: read out. EMPTY in every plan written before it existed (old plans load and run
+    #: unchanged). Additive.
+    key_ideas: list[str] = Field(
+        default_factory=list,
+        description="The few ideas of the field a good answer in this area rests on, so the "
+        "interviewer can tell a correct basic answer from a vague one.",
+    )
+    level_signals: str | None = Field(
+        default=None,
+        description="How an answer sounds from someone newer to this compared with someone "
+        "experienced, so the interviewer can pitch the next question.",
+    )
+    analytical_angles: list[str] = Field(
+        default_factory=list,
+        description="One or two light 'how would you think about it' directions, grounded in "
+        "the candidate's own work, answerable in about a minute.",
+    )
+
+    @model_validator(mode="after")
+    def _goals_line_up_with_questions(self) -> "CompetencyPlan":
+        if self.question_goals and len(self.question_goals) != len(self.seed_questions):
+            raise ValueError(
+                f"question_goals has {len(self.question_goals)} entries for {len(self.seed_questions)} "
+                "questions; give one per question (None for none) or leave it empty")
+        return self
+
+    def numbered_questions(self) -> list[tuple[str, str]]:
+        """(question_id, question) pairs, in plan order."""
+        return list(zip(self.question_ids, self.seed_questions, strict=True))
+
+    def goal_of(self, index: int) -> str | None:
+        """The goal of question `index` (0-based), or None (no goal, or an older plan)."""
+        return self.question_goals[index] if index < len(self.question_goals) else None
+
+
+#: The realtime prompt numbers the plan 1. Opening, 2. the first competency, ...
+#: (`bot/realtime_prompt.py` `_render_plan`). Question ids use the same area
+#: numbers, so "Q2.1" means the same area to the model, the auditor and a reader.
+FIRST_COMPETENCY_AREA = 2
+
+
+def plan_question_id(area: int, question: int) -> str:
+    """The id of question `question` (1-based) in plan area `area`: "Q2.1"."""
+    if area < 1 or question < 1:
+        raise ValueError(f"area and question are 1-based, got {area} and {question}")
+    return f"Q{area}.{question}"
+
+
+def question_ids_for(plan_index: int, question_count: int) -> list[str]:
+    """Ids for the competency at `plan_index` (0-based) in `competency_plans`."""
+    area = FIRST_COMPETENCY_AREA + plan_index
+    return [plan_question_id(area, n) for n in range(1, question_count + 1)]
+
 
 class ClaimToVerify(BaseModel):
     """Something the CV asserts that the interview should test."""
@@ -167,6 +243,74 @@ class InterviewRegister(BaseModel):
     vocabulary: list[str] = Field(default_factory=list)
 
 
+class QuestionCut(BaseModel):
+    """A two-part seed question the generator's safety net cut to its first ask
+    (blueprint/generate.py `first_ask`, A-34). Kept on the plan so a changed
+    question is visible to whoever reads the plan, not only in a log."""
+
+    competency_id: str
+    question_id: str = Field(description='The cut question\'s number, e.g. "Q2.1".')
+    original: str
+    cut_to: str
+
+
+#: Track H's HRRoundEvaluation.findings_for_technical (origin/track_h f69a473,
+#: shared/screening.py:209-228): plain sentences, phrased as topics, never as
+#: conclusions. NOT capped (C-A13, decided: Track H does not cap them). The name
+#: stays, as None, so code that imported it still loads; the only guard against
+#: absurd input is the booking hook's total length (live/hr_hook.py).
+MAX_HR_FINDINGS = None
+
+
+class HRFindingsForTechnical(BaseModel):
+    """What the technical plan is refined with at booking (wave 1): Track H's
+    findings for the technical round, as they are today. Mitra probes them
+    neutrally and never mentions HR; none means the plan is unchanged."""
+
+    schema_version: Literal[1] = SCHEMA_VERSION
+    candidate_id: str
+    findings_for_technical: list[Annotated[str, Field(min_length=1)]] = Field(default_factory=list)
+
+
+class HRFindingUse(BaseModel):
+    """What the refinement did with one finding."""
+
+    finding: str = Field(description="The finding, verbatim.")
+    outcome: Literal["probed", "not_technical"] = Field(
+        description='"probed": mapped to an area and a probe question; "not_technical": left out.')
+    area_id: str | None = Field(default=None, description="CompetencyPlan.competency_id it mapped to.")
+    question_id: str | None = Field(default=None, description='The probe question\'s number, e.g. "Q3.2".')
+
+    @model_validator(mode="after")
+    def _shape(self) -> "HRFindingUse":
+        if self.outcome == "probed" and not (self.area_id and self.question_id):
+            raise ValueError("a probed finding names its area and its probe question")
+        if self.outcome == "not_technical" and (self.area_id or self.question_id):
+            raise ValueError("a finding left out maps to no area and no question")
+        return self
+
+
+class HRFindingsRefinement(BaseModel):
+    """How the plan was refined with the HR findings, for the report and Check
+    Intelligence. Never shown to Mitra: the probe questions are in the plan,
+    worded neutrally; this record of where they came from is not."""
+
+    schema_version: Literal[1] = SCHEMA_VERSION
+    findings: list[HRFindingUse] = Field(default_factory=list)
+    refined_at: datetime | None = None
+
+
+class NotPlannedArea(BaseModel):
+    """A spec competency deliberately left out of this plan (C-A22, Session A round 16):
+    the booking is too short for every area, so the plan is sized to the length and
+    this one is not asked about. The report can then say "not planned for this length"
+    rather than "not covered"."""
+
+    competency_id: str = Field(description="EvaluationSpec competency id (CompetencyPlan.competency_id).")
+    name: str
+    reason: Literal["booked_length"]
+
+
 class InterviewBlueprint(BaseModel):
     """The candidate-specific interview plan the bot executes.
 
@@ -193,10 +337,31 @@ class InterviewBlueprint(BaseModel):
     suggested_opening: str
     interviewing_guidance: list[str] = Field(default_factory=list)
 
+    #: Track H, 2026-11-20: what the opening sets out to learn, written for this
+    #: candidate at plan time: broad, exploratory goals about their work and what they
+    #: know, so the interview starts as a conversation and the interviewer learns their
+    #: level before the plan's areas. Never scored. EMPTY in older plans, which open as
+    #: before. Additive.
+    opening_goals: list[str] = Field(default_factory=list)
+
     #: The vocabulary of the field, borrowed from the JD and the CV. Optional:
     #: an interview with none of it just speaks plainly, which is never wrong.
     #: Not named `register`, which shadows a Pydantic attribute.
     domain_language: InterviewRegister | None = None
+
+    #: Questions the safety net cut, with the original. Empty when none were,
+    #: and on plans generated before this existed.
+    question_cuts: list[QuestionCut] = Field(default_factory=list)
+
+    #: How the plan was refined with Track H's findings at booking (wave 1).
+    #: None: no refinement ran (every plan before wave 1). Empty `findings`:
+    #: it ran and there were none, so the plan is unchanged.
+    hr_findings: HRFindingsRefinement | None = None
+
+    #: Spec competencies left out on purpose because the booked length is too short
+    #: for every area (C-A22). Empty in every plan before it, and whenever every
+    #: competency is planned. Additive (C-172).
+    not_planned: list[NotPlannedArea] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _budgets_fit_configured_duration(self) -> "InterviewBlueprint":
@@ -215,13 +380,49 @@ class InterviewBlueprint(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _questions_are_numbered(self) -> "InterviewBlueprint":
+        """Fill question ids for old blueprints; reject ids that are not the code's.
+
+        Ids follow position (`question_ids_for`), so they are the same whether
+        generate.py wrote them or they are derived here on load. A stored list
+        that differs (a model's own numbering, a stale copy after an edit) is
+        refused rather than silently renumbered, because an auditor label
+        pointing at the wrong question is worse than no label.
+        """
+        for index, plan in enumerate(self.competency_plans):
+            expected = question_ids_for(index, len(plan.seed_questions))
+            if not plan.question_ids:
+                plan.question_ids = expected
+            elif plan.question_ids != expected:
+                raise ValueError(
+                    f"Competency '{plan.competency_id}' has question ids "
+                    f"{plan.question_ids}; they are numbered in code and must be "
+                    f"{expected} (one per seed question, in order)."
+                )
+        return self
+
+    @model_validator(mode="after")
     def _every_competency_has_a_plan(self) -> "InterviewBlueprint":
+        """Every spec competency is planned, or listed in `not_planned` (C-A22): never
+        silently dropped, never both, and nothing planned or listed outside the spec."""
         declared = {c.id for c in self.evaluation_spec.competencies}
         planned = {p.competency_id for p in self.competency_plans}
-        if declared != planned:
+        listed = [n.competency_id for n in self.not_planned]
+        if len(listed) != len(set(listed)):
+            raise ValueError(f"Blueprint '{self.blueprint_id}' lists a competency as not planned twice: {listed}.")
+        if set(listed) & planned:
+            raise ValueError(
+                f"Blueprint '{self.blueprint_id}' both plans and lists as not planned: "
+                f"{sorted(set(listed) & planned)}.")
+        if set(listed) - declared:
+            raise ValueError(
+                f"Blueprint '{self.blueprint_id}' lists as not planned what is not in the spec: "
+                f"{sorted(set(listed) - declared)}.")
+        unplanned = declared - planned - set(listed)
+        if unplanned or planned - declared:
             raise ValueError(
                 f"Blueprint '{self.blueprint_id}' competency mismatch. "
-                f"In spec but unplanned: {sorted(declared - planned)}. "
+                f"In spec but unplanned: {sorted(unplanned)}. "
                 f"Planned but not in spec: {sorted(planned - declared)}."
             )
         return self
@@ -358,6 +559,17 @@ class SectionOutcome(BaseModel):
     #: things about a person, and only one of them is about their ability.
     declined_turns: int = 0
 
+    # The auditor's reading of the section (C-A5). Defaults keep outcomes
+    # stored before these existed loadable: they read as "nothing recorded".
+    #: Plan question ids asked in this section (e.g. "Q2.1"), in id order.
+    questions_asked: list[str] = Field(default_factory=list)
+    #: Plan questions Mitra moved past. None where the question is not known.
+    skipped_question_ids: list[str | None] = Field(default_factory=list)
+    #: Plan questions the candidate declined. None where the question is not known.
+    declined_question_ids: list[str | None] = Field(default_factory=list)
+    #: Easier questions asked after a decline (auditor label "easier_variant").
+    easier_variants: int = Field(default=0, ge=0)
+
 
 # --------------------------------------------------------------------------
 # Transcript — the auditable ground truth
@@ -369,20 +581,73 @@ class Speaker(StrEnum):
     INTERVIEWER = "interviewer"
 
 
+#: Where a turn's audio times came from (task 19, F-064 to F-068).
+#: openai_window: OpenAI's speech window (padded, F-066); silero: Silero's
+#: edges inside that window; playback: when Mitra's audio actually played;
+#: arrival: when the text arrived (the pipeline engine, and old records).
+TimingSource = Literal["openai_window", "silero", "playback", "arrival"]
+
+
 class TranscriptTurn(BaseModel):
     """One utterance, anchored in time.
 
     Timestamps are not decoration. Every score in a FeedbackReport must cite
     evidence, and a quote a human cannot locate in the recording is not
     evidence.
+
+    Two kinds of time, both on the interview clock (seconds from the start of
+    the interview): `at_seconds` is when the TEXT arrived and keeps that meaning
+    for every record ever stored; `audio_start_seconds`/`audio_end_seconds` are
+    when the words were SPOKEN, where they are known (realtime engine, task 19).
+    Anything that seeks the recording uses `spoken_start`, which prefers the
+    spoken time and falls back to arrival for old interviews.
     """
 
     index: int
     speaker: Speaker
     text: str
-    #: Seconds from the start of the interview.
+    #: Seconds from the start of the interview at which the text arrived.
     at_seconds: float
     section_id: str | None = None
+
+    #: When the words were spoken, on the interview clock. None when not known.
+    audio_start_seconds: float | None = None
+    #: For a cut turn, the end of what the candidate actually heard.
+    audio_end_seconds: float | None = None
+    #: Mitra's reply was interrupted; `text` is what was heard, not what was generated.
+    cut: bool = False
+    #: Mitra's full generated text when the reply was cut, kept for audit only.
+    generated_text: str | None = None
+    #: OpenAI's conversation item id (realtime). None on the pipeline engine.
+    item_id: str | None = None
+    timing_source: TimingSource = "arrival"
+    #: Not part of the interview proper: kept in the record, flagged, and left out
+    #: of every reading of it (scoring, health, reports). Two cases:
+    #: - audio heard before the interviewer first spoke. It may be someone else in
+    #:   the room, so it is never treated as the candidate's;
+    #: - on the realtime engine, the small talk before Mitra's first plan question
+    #:   (both speakers' turns, before she starts the plan with move_on; Session A,
+    #:   round 14, `bot/persistence.py`). C-A19.
+    pre_interview: bool = False
+
+    @model_validator(mode="after")
+    def _times_are_consistent(self) -> "TranscriptTurn":
+        if (
+            self.audio_start_seconds is not None
+            and self.audio_end_seconds is not None
+            and self.audio_end_seconds < self.audio_start_seconds
+        ):
+            raise ValueError(f"Turn {self.index}: audio ends before it starts")
+        if self.generated_text is not None and not self.cut:
+            raise ValueError(f"Turn {self.index}: generated_text is kept only for a cut reply")
+        if self.cut and self.speaker is not Speaker.INTERVIEWER:
+            raise ValueError(f"Turn {self.index}: only the interviewer's replies are cut")
+        return self
+
+    @property
+    def spoken_start(self) -> float:
+        """Where this turn is in the recording's timeline: spoken start, else arrival."""
+        return self.audio_start_seconds if self.audio_start_seconds is not None else self.at_seconds
 
 
 class Transcript(BaseModel):
@@ -401,6 +666,10 @@ class Transcript(BaseModel):
     def for_section(self, section_id: str) -> list[TranscriptTurn]:
         return [t for t in self.turns if t.section_id == section_id]
 
+    def interview_turns(self) -> list[TranscriptTurn]:
+        """Every turn except pre-interview audio: what any reading of the record uses."""
+        return [t for t in self.turns if not t.pre_interview]
+
     def quote(self, index: int) -> TranscriptTurn | None:
         return next((t for t in self.turns if t.index == index), None)
 
@@ -410,6 +679,35 @@ class Transcript(BaseModel):
 # --------------------------------------------------------------------------
 
 
+class QuoteMatch(StrEnum):
+    """How a kept quote was found in the raw transcript (`feedback/score.py`).
+
+    Verification tries four rules in order (`feedback/score.py`, A-54):
+    exact; normalised (lowercase, only letters, digits and spaces, compared as
+    whole words); number value (only for a quote containing a number); a name
+    fix declared for that turn. A quote that fails every rule is dropped, so
+    only these can reach a report:
+    """
+
+    #: The quote, trimmed, appears character for character in the turn.
+    EXACT = "exact"
+    #: It appears only after case and punctuation are set aside.
+    NORMALISED = "normalised"
+    #: It matches once every number is compared by its value, written in
+    #: digits or in words ("38 percent" against "thirty-eight percent"); every
+    #: other word the same, negations unchanged (C-A7, A-54).
+    NUMBER_VALUE = "number_value"
+    #: It matches once a name fix that the cleaned transcript declared for
+    #: that same turn is applied ("Razorpay" where the raw text has
+    #: "Razapay"); negations unchanged (C-A7, A-54).
+    DECLARED_FIX = "declared_fix"
+    #: Reserved. Today's verification never keeps an approximate match: it
+    #: drops anything that is not a whole substring. Defined so the report
+    #: already has a rule for it ("raw text unclear, listen instead") if a
+    #: looser match is ever added. Nothing produces it yet.
+    APPROXIMATE = "approximate"
+
+
 class EvidenceQuote(BaseModel):
     """A verbatim quote with the anchor needed to verify it."""
 
@@ -417,6 +715,13 @@ class EvidenceQuote(BaseModel):
     turn_index: int
     at_seconds: float
     speaker: Speaker = Speaker.CANDIDATE
+    #: How verification matched it. None on quotes stored before this existed;
+    #: those passed the same check, so they match at least after normalising.
+    match: QuoteMatch | None = None
+    #: The quoted turn's spoken window (TranscriptTurn.audio_*), copied when the
+    #: quote is verified, so a link seeks the recording to when it was said.
+    audio_start_seconds: float | None = None
+    audio_end_seconds: float | None = None
 
 
 class CompetencyScore(BaseModel):
@@ -457,6 +762,22 @@ class ObservedRedFlag(BaseModel):
 
     description: str
     evidence: list[EvidenceQuote] = Field(default_factory=list)
+
+
+class ObservedStrength(BaseModel):
+    """Something the transcript shows the candidate doing well, in one area.
+
+    Shaped like `ObservedRedFlag` and held to the same standard in the other
+    direction: a compliment in a hiring record is a claim about a person too.
+    Every quote is verified against the raw transcript like any other, and a
+    strength with no quote left is not a strength: it is rejected here, and
+    `feedback/score.py` drops it before it gets this far.
+    """
+
+    #: Which area it belongs to; must be one of the report's competency_scores.
+    competency_id: str
+    description: str
+    evidence: list[EvidenceQuote] = Field(min_length=1)
 
 
 class DealbreakerState(StrEnum):
@@ -896,6 +1217,71 @@ class QuestioningHealth(BaseModel):
         )
 
 
+#: Rejoin rules (wave 1, decided). Here so the report, the bot and the console
+#: read the same numbers.
+REJOIN_GRACE_SECONDS = 90
+REJOIN_COUNTS_FROM_SECONDS = 10
+REJOIN_LIMIT = 3
+
+
+class DropDetection(StrEnum):
+    """How a drop was noticed (D-30, D-27, D-28)."""
+
+    #: The candidate's browser stopped sending status readings (3 missed, about 2-5 s).
+    STATUS_READINGS = "status_readings"
+    #: Daily reported participant-left (34-38 s after a silent cut).
+    DAILY_LEFT = "daily_left"
+    #: Daily reported a fatal error on the candidate's side.
+    DAILY_ERROR = "daily_error"
+
+
+class DropRecord(BaseModel):
+    """One time the candidate's connection dropped. Evidence about the
+    connection, never about the candidate."""
+
+    started_seconds: float = Field(ge=0, description="Interview clock.")
+    #: When they came back; None if they never did (the interview ended).
+    ended_seconds: float | None = Field(default=None, ge=0)
+    gap_seconds: float | None = Field(default=None, ge=0)
+    detected_by: DropDetection
+    #: The same Daily participant came back (a reconnect), or a new one (a reload).
+    same_participant: bool | None = None
+    #: Counted as a rejoin: they came back after REJOIN_COUNTS_FROM_SECONDS or more.
+    counted: bool = False
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "DropRecord":
+        if self.ended_seconds is None:
+            if self.gap_seconds is not None or self.counted or self.same_participant is not None:
+                raise ValueError("a drop with no return has no gap, no participant and is not counted")
+            return self
+        if self.ended_seconds < self.started_seconds:
+            raise ValueError("a drop ends before it starts")
+        if self.gap_seconds is None or abs(self.gap_seconds - (self.ended_seconds - self.started_seconds)) > 0.05:
+            raise ValueError("gap_seconds is ended_seconds - started_seconds")
+        if self.counted != (self.gap_seconds >= REJOIN_COUNTS_FROM_SECONDS):
+            raise ValueError(f"a return counts as a rejoin exactly when the gap is {REJOIN_COUNTS_FROM_SECONDS} s or more")
+        return self
+
+
+class ConnectionRecord(BaseModel):
+    """Every drop and return in one interview, and the rejoin count (wave 1)."""
+
+    schema_version: Literal[1] = SCHEMA_VERSION
+    drops: list[DropRecord] = Field(default_factory=list)
+    rejoin_count: int = Field(default=0, ge=0)
+    rejoin_limit: int = REJOIN_LIMIT
+    grace_seconds: float = REJOIN_GRACE_SECONDS
+    #: A counted drop beyond the limit ended the interview.
+    limit_reached: bool = False
+
+    @model_validator(mode="after")
+    def _counts(self) -> "ConnectionRecord":
+        if self.rejoin_count != sum(1 for d in self.drops if d.counted):
+            raise ValueError("rejoin_count is the number of counted drops")
+        return self
+
+
 class FeedbackReport(BaseModel):
     """Structured evidence for a human decision-maker.
 
@@ -910,6 +1296,9 @@ class FeedbackReport(BaseModel):
 
     competency_scores: list[CompetencyScore]
     red_flags_observed: list[ObservedRedFlag] = Field(default_factory=list)
+    #: What the transcript shows the candidate doing well, each with verified
+    #: quotes. Empty in reports written before this existed.
+    strengths_observed: list[ObservedStrength] = Field(default_factory=list)
     contradictions: list[Contradiction] = Field(default_factory=list)
 
     #: Every dealbreaker in the spec, and which of three the interview could
@@ -939,7 +1328,19 @@ class FeedbackReport(BaseModel):
     #: thing repeatedly gathered less than its length suggests.
     questioning_health: QuestioningHealth | None = None
 
+    #: Every drop and return, and the rejoin count (wave 1). About the
+    #: connection, never about the candidate. None on reports from before it.
+    connection: ConnectionRecord | None = None
+
     interview_duration_seconds: float = 0.0
+
+    @model_validator(mode="after")
+    def _strengths_name_a_scored_area(self) -> "FeedbackReport":
+        areas = {s.competency_id for s in self.competency_scores}
+        stray = [s.competency_id for s in self.strengths_observed if s.competency_id not in areas]
+        if stray:
+            raise ValueError(f"Strengths name areas that are not in this report: {stray}")
+        return self
 
     @property
     def is_decision(self) -> bool:

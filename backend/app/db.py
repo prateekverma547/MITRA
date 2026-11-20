@@ -103,6 +103,10 @@ class InterviewStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     EXPIRED = "expired"
+    #: Phase 4 data (D-41.4): booked, nobody joined, and the room expired. Written
+    #: by the recording sweep's loop; before it, such interviews stayed
+    #: "scheduled" forever. `expired` keeps its meaning: someone came too late.
+    NO_SHOW = "no_show"
 
 
 class FeedbackStatus(StrEnum):
@@ -236,6 +240,11 @@ class Candidate(Base):
     cv_text: Mapped[str] = mapped_column(Text)
 
     blueprint: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: The plan's text-model costs (C-A14): one `UsageRecord.to_dict()` per call
+    #: (job, model, tokens, latency, cost_usd, price_known, price_source,
+    #: attempts, outcome), for generation and for refinement with HR findings,
+    #: failed calls included. Null on candidates from before. Phase 4 reads it.
+    text_model_calls: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     blueprint_status: Mapped[str] = mapped_column(
         String(32), default=BlueprintStatus.PENDING
     )
@@ -371,10 +380,14 @@ class Interview(Base):
 
     # -- the recording ------------------------------------------------------
     #
-    # Video and audio of the call, for a person to watch afterwards. Nothing
-    # reads it but a human: it is never scored, never analysed, and never sent
-    # to a model (CLAUDE.md keeps proctoring out of scope, and this does not
-    # reopen it).
+    # Video and audio of the call, for a person to watch afterwards. This
+    # combined recording is only ever watched by a person: it is never scored
+    # and never analysed. Separately, when the after-call checks are switched on
+    # (AFTERCALL_ENABLED, OFF by default until the consent wording covers it),
+    # the bot also saves the candidate's own audio track, and a local
+    # speaker-embedding model (backend/aftercall, no hosted service) looks for a
+    # second voice in it. The result is a signal for a person to review in the
+    # Integrity section, never part of a score. Both are kept 10 days.
     #
     # Daily records into its own storage, so the file arrives in two steps: the
     # bot starts it, and a sweep downloads it once Daily has finished
@@ -394,12 +407,16 @@ class Interview(Base):
     recording_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    #: Seconds between the transcript's zero and the video's zero. Transcript
-    #: turns carry `at_seconds` from when the bot process started; the recording
-    #: begins a moment later, once the bot is actually in the room. Subtracting
-    #: this is what lets a click on a transcript line seek the video. Measured by
-    #: the bot rather than derived from Daily's timestamps, so it is good to
-    #: about a second: enough to find a moment, not enough to quote from.
+    #: Seconds between the transcript's zero and the video's zero:
+    #: file_second = at_seconds - recording_offset_seconds. The recording
+    #: begins once the bot is in the room and Daily acknowledges the start, so
+    #: the bot measures this as (acknowledgement time - transcript zero). Daily's
+    #: own `start_ts` is NOT used: it is whole seconds and was 2.3 s early.
+    #: Measured: a sound lands in the file 0.08 to 0.09 s LATER than
+    #: at_seconds - offset predicts (D-05: about 0.08 s over five beeps; C-90:
+    #: +0.085 to +0.089 s over five beeps, a second room and run). Stored to
+    #: 0.01 s. Good enough to seek to a moment and to line up a quote; the
+    #: sweep never changes it.
     recording_offset_seconds: Mapped[float | None] = mapped_column(nullable=True)
     #: Where the file sits, relative to `backend/sessions/`. Relative so the
     #: record survives the directory moving, and so nothing in the database is a
@@ -418,6 +435,43 @@ class Interview(Base):
     #: Why there is no recording, in words a reviewer can read. The panel shows
     #: this instead of a player.
     recording_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Downloads from Daily that failed in a row (the sweep's attempts, C-103).
+    #: Reset to 0 when one succeeds. Null on rows from before it existed (= 0).
+    #: At `recordings.DOWNLOAD_FAILING_AFTER` the reason goes in
+    #: `recording_error` and the console shows "download_failing"; the status
+    #: stays "recording" because Daily still has the file and it is retried.
+    recording_download_failures: Mapped[int | None] = mapped_column(nullable=True)
+    #: The bot's process id (wave 1, D-43 option A): written when it is spawned,
+    #: so a restarted web process can tell a live bot (adopted) from a dead one
+    #: (the interview is ended as interrupted). Null on rows from before.
+    bot_pid: Mapped[int | None] = mapped_column(nullable=True)
+    #: The sweep collecting this recording right now, and until when (C-125): a
+    #: second sweep at the same time sees the claim and skips, so the file is
+    #: downloaded once. Null when nobody is collecting; expires by itself if
+    #: its holder dies.
+    recording_collect_by: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    recording_collect_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    #: The duration booked for this interview (task 20): what HR chose and
+    #: sees, 20-60 minutes. Null for interviews booked before it existed.
+    booked_duration_minutes: Mapped[int | None] = mapped_column(nullable=True)
+    #: What the bot must run to (live/booking.py): on the realtime engine the
+    #: planned minutes and the grace are trimmed so the hard stop lands by 58
+    #: minutes of session time. The bot does not read these yet: it still takes
+    #: the plan's duration from the blueprint (joint A + C).
+    planned_duration_minutes: Mapped[int | None] = mapped_column(nullable=True)
+    planned_grace_minutes: Mapped[int | None] = mapped_column(nullable=True)
+    #: UTC wall time of the bot's transcript zero: every TranscriptTurn.at_seconds
+    #: counts from it. The server's interview clock reads it (live/clock.py).
+    #: Written by the bot (joint A + C step); null until then.
+    transcript_zero_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: The cleaned transcript (C-A6), a `CleanedTranscript` as JSON
+    #: (shared/interview_contracts.py), written by the bot after the call beside
+    #: the raw `transcript`, which is never changed. Null for interviews before
+    #: it existed or when cleaning has not run: readers use the raw transcript.
+    cleaned_transcript: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     org_id: Mapped[str | None] = mapped_column(
         ForeignKey("organisations.id"), nullable=True, index=True
@@ -435,7 +489,7 @@ class Interview(Base):
 #: keeps its tables in its own `models.py` (docs/DEV_PLAN.md section 6), so
 #: they are listed here once rather than imported ad hoc: anything that needs
 #: the whole schema (migrations, `create_all`) calls `load_models()` first.
-MODEL_MODULES: tuple[str, ...] = ("org.models", "hiring.models")
+MODEL_MODULES: tuple[str, ...] = ("org.models", "hiring.models", "live.models", "proctoring.models")
 
 
 def load_models() -> None:
@@ -511,7 +565,15 @@ def _upgrade_to_head(connection) -> None:
     config.attributes["connection"] = connection
     tables = set(inspect(connection).get_table_names())
     if "alembic_version" not in tables and "jobs" in tables:
-        command.stamp(config, BASELINE_REVISION)
+        # Built by `create_all`, never migrated. If it already holds every
+        # table this code defines, `create_all` made it from today's models
+        # (Track I's tests and scripts still do): it is at head. Otherwise it
+        # is the schema stg was left with before migrations: the baseline.
+        complete = set(Base.metadata.tables) <= tables
+        command.stamp(config, "head" if complete else BASELINE_REVISION)
+        if complete:
+            # As `create_all` itself would: a nullable column added since is filled in.
+            _add_missing_columns(connection)
     command.upgrade(config, "head")
 
 

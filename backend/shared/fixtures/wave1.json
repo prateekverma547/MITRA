@@ -1,0 +1,145 @@
+{
+  "_about": "Wave 1 examples, one per new shape (constructed). Session C, 2026-11-19. Validated by tests/test_contracts_wave1.py.",
+  "connection_record": {
+    "schema_version": 1,
+    "drops": [
+      {
+        "started_seconds": 1300.0,
+        "ended_seconds": 1314.0,
+        "gap_seconds": 14.0,
+        "detected_by": "status_readings",
+        "same_participant": true,
+        "counted": true
+      },
+      {
+        "started_seconds": 1520.0,
+        "ended_seconds": 1524.5,
+        "gap_seconds": 4.5,
+        "detected_by": "status_readings",
+        "same_participant": true,
+        "counted": false
+      },
+      {
+        "started_seconds": 1700.0,
+        "ended_seconds": null,
+        "gap_seconds": null,
+        "detected_by": "daily_left",
+        "same_participant": null,
+        "counted": false
+      }
+    ],
+    "rejoin_count": 1,
+    "rejoin_limit": 3,
+    "grace_seconds": 90.0,
+    "limit_reached": false
+  },
+  "hr_findings_for_technical": {
+    "schema_version": 1,
+    "candidate_id": "cand_0a1b",
+    "findings_for_technical": [
+      "Ownership of the 2024 checkout migration: how much was theirs.",
+      "Depth with experiment design beyond A/B splits.",
+      "Prefers written communication; was brief in spoken answers."
+    ]
+  },
+  "hr_findings_refinement": {
+    "schema_version": 1,
+    "findings": [
+      {
+        "finding": "Ownership of the 2024 checkout migration: how much was theirs.",
+        "outcome": "probed",
+        "area_id": "execution",
+        "question_id": "Q6.2"
+      },
+      {
+        "finding": "Depth with experiment design beyond A/B splits.",
+        "outcome": "probed",
+        "area_id": "metrics",
+        "question_id": "Q5.2"
+      },
+      {
+        "finding": "Prefers written communication; was brief in spoken answers.",
+        "outcome": "not_technical",
+        "area_id": null,
+        "question_id": null
+      }
+    ],
+    "refined_at": "2026-11-18T09:40:00Z"
+  },
+  "watcher_notes": {
+    "schema_version": 1,
+    "interview_id": "int_0a1b2c3d4e5f",
+    "notes": [
+      {
+        "note_id": "note_1",
+        "interview_id": "int_0a1b2c3d4e5f",
+        "author": "watcher:admin",
+        "text": "Strong answer on the rollback plan.",
+        "at_seconds": 1320.0,
+        "area_id": "system_design",
+        "created_at": "2026-11-18T10:22:00Z"
+      }
+    ],
+    "scored": false
+  },
+  "capture_manifest": {
+    "schema_version": 1,
+    "interview_id": "int_0a1b2c3d4e5f",
+    "candidate_audio": {
+      "relative_path": "int_0a1b2c3d4e5f/candidate.wav",
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "sample_format": "s16le",
+      "start_seconds": 12.4,
+      "duration_seconds": 1731.6,
+      "bytes": 55411200
+    },
+    "screen_frames": [],
+    "mitra_speaking": [
+      {
+        "start_seconds": 12.4,
+        "end_seconds": 18.9
+      },
+      {
+        "start_seconds": 41.0,
+        "end_seconds": 47.2
+      }
+    ]
+  },
+  "after_call_status": {
+    "schema_version": 1,
+    "interview_id": "int_0a1b2c3d4e5f",
+    "checks": [
+      {
+        "check": "second_voice",
+        "state": "done",
+        "reason": null,
+        "started_at": "2026-11-18T10:31:00Z",
+        "finished_at": "2026-11-18T10:40:30Z"
+      },
+      {
+        "check": "screen_content",
+        "state": "skipped",
+        "reason": "Screen frames are not captured in wave 1.",
+        "started_at": null,
+        "finished_at": null
+      }
+    ],
+    "updated_at": "2026-11-18T10:41:00Z"
+  },
+  "second_voice_signal": {
+    "schema_version": 1,
+    "interview_id": "int_0a1b2c3d4e5f",
+    "ranges": [
+      {
+        "start_seconds": 760.0,
+        "end_seconds": 775.0
+      }
+    ],
+    "confidence": 0.72,
+    "method": "sherpa-onnx diarisation",
+    "method_version": "1.10.0",
+    "wording": "A second voice may be audible from 12:40 to 12:55. Listen before drawing any conclusion.",
+    "integrity_event_id": null
+  }
+}

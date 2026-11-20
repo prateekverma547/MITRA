@@ -88,15 +88,24 @@ ALLOWED_MOVES: dict[tuple[CandidateStage, CandidateStage], frozenset[Actor]] = {
     (S.HR_BOOKED, S.HR_DONE): _SYS_HR,
     (S.HR_BOOKED, S.WITHDREW): _SYS_HR,
     (S.HR_DONE, S.READY_FOR_TECHNICAL): _HR,
+    # The HR round is optional (product owner, 2026-11-20): HR may skip it, before
+    # it is booked or while the booked room is still unjoined. Recorded as a decision.
+    (S.READY_FOR_HR, S.READY_FOR_TECHNICAL): _HR,
+    (S.HR_BOOKED, S.READY_FOR_TECHNICAL): _HR,
     (S.HR_DONE, S.PARKED): _HR,
     (S.HR_DONE, S.REJECTED): _HR,
     # Technical round
     (S.READY_FOR_TECHNICAL, S.TECHNICAL_BOOKED): _HR,
     (S.READY_FOR_TECHNICAL, S.REJECTED): _HR,
     (S.TECHNICAL_BOOKED, S.READY_FOR_TECHNICAL): _SYS_HR,  # cancelled or no-show
-    (S.TECHNICAL_BOOKED, S.TECHNICAL_DONE): _SYS,
+    # The system when a round's report is in; HR or the system when a retake is
+    # cancelled or did not happen and an earlier round already has a report.
+    (S.TECHNICAL_BOOKED, S.TECHNICAL_DONE): _SYS_HR,
     (S.TECHNICAL_BOOKED, S.WITHDREW): _SYS_HR,
     (S.TECHNICAL_DONE, S.WITH_BU_HEAD): _HR,
+    # Another MITRA interview round, as many as HR wants: a retake of the same plan
+    # (product owner, 2026-11-20). Every round keeps its own report.
+    (S.TECHNICAL_DONE, S.TECHNICAL_BOOKED): _HR,
     # The BU head decides
     (S.WITH_BU_HEAD, S.SHORTLISTED): _BU,
     (S.WITH_BU_HEAD, S.ON_HOLD): _BU,

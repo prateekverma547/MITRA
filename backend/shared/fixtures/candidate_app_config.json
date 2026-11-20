@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "retention_days": 10,
+  "recording_enabled": true,
+  "candidate_audio_capture": true,
+  "after_call_checks": false
+}

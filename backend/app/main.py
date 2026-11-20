@@ -9,15 +9,27 @@ blueprint is finished and stored long before anyone joins an interview.
 
 import asyncio
 import importlib
+import os
 import re
 import uuid
 from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from datetime import UTC, datetime
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response as FastAPIResponse, UploadFile, status
-from fastapi.responses import HTMLResponse, Response
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi import Response as FastAPIResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -28,13 +40,13 @@ from app.db import (
     BlueprintStatus,
     Candidate,
     ClarificationTurn,
-    Interview,
     InterviewStatus,
     Job,
     SpecStatus,
-    prepare_schema,
     get_sessionmaker,
+    prepare_schema,
 )
+from app.jd_templates import templates as load_jd_templates
 from blueprint.clarify import (
     EMPLOYER_ROLE,
     INTERVIEWER_ROLE,
@@ -45,7 +57,6 @@ from blueprint.documents import DocumentError, extract_text
 from blueprint.generate import BlueprintGenerationError, BlueprintGenerator
 from blueprint.refine import BlueprintRefiner, RefinementError
 from bot.config import Settings, recording_enabled
-from app.jd_templates import templates as load_jd_templates
 from shared.branding import (
     BOT_FULL_NAME,
     BOT_NAME,
@@ -63,11 +74,19 @@ from shared.contracts import (
     EvaluationSpec,
     InterviewBlueprint,
 )
+from shared.interview_contracts import CandidateAppConfig
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await prepare_schema()
+    # Wave 1: interviews whose bot died with the last web process are ended as
+    # interrupted; a bot still alive is adopted, never touched (app/startup.py).
+    from app.startup import announce_engine, reconcile_running_interviews
+
+    # Start-up safety: one line saying which engine interviews will use (loud if pipeline).
+    announce_engine()
+    await reconcile_running_interviews()
 
     # Recordings arrive from Daily after the call rather than during it, and
     # they have to be deleted ten days later. Both are clock-driven, neither can
@@ -81,15 +100,40 @@ async def lifespan(app: FastAPI):
     from hiring.hr_evaluation import hr_pipeline_forever, pipeline_enabled
 
     hr_loop = asyncio.create_task(hr_pipeline_forever()) if pipeline_enabled() else None
+    # Session D's after-call runner (D-58): always started; it does nothing
+    # while AFTERCALL_ENABLED is off (the default until the consent wording
+    # changes) or AFTERCALL_PAUSED is on. Jobs run in their own low-priority
+    # processes (aftercall/runner.py).
+    from aftercall import runner as aftercall_runner
+
+    aftercall_task = asyncio.create_task(aftercall_runner.run_forever())
+    # The web process's own event writer (live/emit.py): the proctoring
+    # intake's integrity signals go through it.
+    from live.emit import start_web_emitter, stop_web_emitter
+
+    await start_web_emitter()
+    # Wave 1: missing status readings reveal a drop in about 2-3 s (live/drops.py).
+    from live import drops
+
+    drop_watcher = asyncio.create_task(drops.watch_forever()) if drops.enabled() else None
     try:
         yield
     finally:
-        for task in (sweeper, hr_loop):
+        for task in (drop_watcher, aftercall_task, hr_loop):
             if task is not None:
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+        await stop_web_emitter()
+        if sweeper is not None:
+            sweeper.cancel()
+            with suppress(asyncio.CancelledError):
+                await sweeper
 
+
+from app.logs import configure_web_logging  # noqa: E402
+
+configure_web_logging()  # LOG_JSON: structured log lines, off by default (phase 4)
 
 app = FastAPI(title=f"{BOT_NAME}: {BOT_FULL_NAME}", lifespan=lifespan)
 
@@ -200,7 +244,9 @@ async def create_job(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     settings = _settings()
-    chat = ClarificationChat(api_key=settings.openai_api_key, model=settings.blueprint_model)
+    # Pinned to the pre-task-2 model until Track H moves clarify onto the helper
+    # (bot/config.py LEGACY_BLUEPRINT_DEFAULT).
+    chat = ClarificationChat(api_key=settings.openai_api_key, model=settings.legacy_blueprint_model)
 
     try:
         turn = await chat.next_turn(jd_text=jd_text, history=[])
@@ -255,8 +301,8 @@ async def clarify(
         history.append({"role": EMPLOYER_ROLE, "content": request.message})
 
         settings = _settings()
-        chat = ClarificationChat(
-            api_key=settings.openai_api_key, model=settings.blueprint_model
+        chat = ClarificationChat(  # pinned until Track H adopts the helper
+            api_key=settings.openai_api_key, model=settings.legacy_blueprint_model
         )
         try:
             turn = await chat.next_turn(jd_text=job.jd_text, history=history)
@@ -627,6 +673,13 @@ async def create_candidate(
     )
 
 
+def _add_plan_cost(candidate, generator) -> None:
+    """Append the generation call's cost record to candidates.text_model_calls (C-A14)."""
+    record = getattr(generator, "last_usage", None)
+    if record is not None and hasattr(record, "to_dict"):
+        candidate.text_model_calls = [*(candidate.text_model_calls or []), record.to_dict()]
+
+
 async def generate_blueprint_task(candidate_id: str) -> None:
     """Background job: build and store the blueprint for one candidate."""
     sessionmaker = get_sessionmaker()
@@ -652,6 +705,7 @@ async def generate_blueprint_task(candidate_id: str) -> None:
         jd_text = job.jd_text
         await session.commit()
 
+    generator = None
     try:
         settings = _settings()
         spec = EvaluationSpec.model_validate(spec_payload)
@@ -668,6 +722,7 @@ async def generate_blueprint_task(candidate_id: str) -> None:
             if candidate is not None:
                 candidate.blueprint_status = BlueprintStatus.FAILED
                 candidate.blueprint_error = str(exc)
+                _add_plan_cost(candidate, generator)  # a failed call is billed too (C-A14)
                 await session.commit()
         return
 
@@ -680,6 +735,7 @@ async def generate_blueprint_task(candidate_id: str) -> None:
         candidate.blueprint_error = None
         candidate.name = blueprint.candidate_name
         candidate.blueprint_generated_at = datetime.now(UTC)
+        _add_plan_cost(candidate, generator)
         await session.commit()
 
     logger.info(
@@ -841,6 +897,86 @@ async def join_page() -> HTMLResponse:
     see a meeting ID prompt and a consent notice, never a Daily URL.
     """
     return HTMLResponse(_render_page("candidate/index.html"), headers=NO_CACHE)
+
+
+@app.get("/meet", include_in_schema=False)
+async def meet_page(request: Request) -> RedirectResponse:
+    """The candidate's interview room, in the console (`#/meet`).
+
+    A short address for the invitation. A meeting ID in the query
+    (`/meet?id=428-193-756`) is carried over so the page fills it in; the
+    password never travels in a link.
+    """
+    meeting = "".join(c for c in request.query_params.get("id", "") if c.isdigit() or c == "-")[:16]
+    return RedirectResponse(f"/console/#/meet{'?id=' + meeting if meeting else ''}", status_code=307)
+
+
+# -- the candidate app (React, frontend/candidate-app), at /interview ------------
+#
+# The new candidate app replaces /join at cutover; until then both are served and
+# /join is frozen. Its build lands in frontend/candidate-app/dist (the Dockerfile
+# builds it; locally `npm run build`). Registered after /join and before any
+# catch-all so nothing above changes.
+
+#: CANDIDATE_APP_DIST overrides it (a build kept outside the source tree).
+CANDIDATE_APP_DIST = Path(os.environ.get("CANDIDATE_APP_DIST") or FRONTEND_DIR / "candidate-app" / "dist")
+
+
+@app.get("/interview/config", include_in_schema=False)
+async def candidate_app_config(response: FastAPIResponse) -> CandidateAppConfig:
+    """Public, read-only settings the candidate app needs before consent.
+
+    No authentication by design: the candidate reads it before typing a meeting
+    ID. It holds the retention period, whether interviews are recorded, and
+    nothing about any interview or person. `recording_enabled` is read at the
+    moment of the request, from the same switch the bot reads.
+    """
+    from live.interview_static import interview_headers
+
+    response.headers.update(interview_headers())  # every /interview/ response carries the rule
+    # Read the same way the bot (bot/capture.py) and the after-call runner
+    # (aftercall/settings.py) read them, so the consent notice matches what happens (C-171).
+    from aftercall import settings as aftercall_settings
+    from bot.capture import capture_enabled
+
+    return CandidateAppConfig(
+        retention_days=RECORDING_RETENTION_DAYS, recording_enabled=recording_enabled(),
+        candidate_audio_capture=capture_enabled(), after_call_checks=aftercall_settings.enabled(),
+    )
+
+
+@app.get("/interview", include_in_schema=False)
+async def candidate_app_root() -> RedirectResponse:
+    """The app's asset URLs are relative to /interview/, so the slash matters."""
+    from live.interview_static import interview_headers
+
+    return RedirectResponse("/interview/", status_code=308, headers=interview_headers())
+
+
+@app.get("/interview/{path:path}", include_in_schema=False)
+async def candidate_app(path: str, request: Request) -> Response:
+    """Serve the built app: real files as files, client routes as index.html.
+
+    A path naming a file (it has an extension) that does not exist is a 404, not
+    index.html: a missing script answered with HTML fails in confusing ways.
+    Anything else (/interview/, /interview/device-check) is a client route.
+    Types, caching, precompressed variants and the report-only security rule:
+    live/interview_static.py.
+    """
+    from live import interview_static as static
+
+    dist = CANDIDATE_APP_DIST.resolve()
+    index = dist / "index.html"
+    if not index.is_file():
+        raise HTTPException(status_code=503, detail="The interview app has not been built.",
+                            headers=static.interview_headers())
+    accept = request.headers.get("accept-encoding", "")
+    etags = request.headers.get("if-none-match", "")
+    if static.resolve(dist, path) is not None:
+        return static.file_response(dist, path, accept, etags)
+    if "." in path.rsplit("/", 1)[-1]:
+        raise static.not_found()
+    return static.file_response(dist, "index.html", accept, etags)
 
 
 @app.get("/jd-templates", dependencies=[Depends(require_admin)], include_in_schema=False)

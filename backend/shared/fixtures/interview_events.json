@@ -1,0 +1,507 @@
+[
+  {
+    "schema_version": 1,
+    "event_id": "ev_001",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 0.0,
+    "wall_time": "2026-11-18T10:00:00Z",
+    "source": "server",
+    "kind": "participant",
+    "payload": {
+      "kind": "participant",
+      "change": "joined",
+      "role": "candidate",
+      "participant_id": "p_cand",
+      "reason": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_002",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 0.4,
+    "wall_time": "2026-11-18T10:00:00.400000Z",
+    "source": "bot",
+    "kind": "interview_started",
+    "payload": {
+      "kind": "interview_started",
+      "engine": "realtime",
+      "booked_minutes": 30
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_003",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 2.0,
+    "wall_time": "2026-11-18T10:00:02Z",
+    "source": "bot",
+    "kind": "transcript_turn",
+    "payload": {
+      "kind": "transcript_turn",
+      "turn_index": 0,
+      "speaker": "interviewer",
+      "text": "Hello. I'm Mitra, an AI interviewer. How are you doing?",
+      "audio_start_seconds": 1.1,
+      "audio_end_seconds": 5.2,
+      "cut": false,
+      "area_id": "opening"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_004",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 298.0,
+    "wall_time": "2026-11-18T10:04:58Z",
+    "source": "coordinator",
+    "kind": "time_note_sent",
+    "payload": {
+      "kind": "time_note_sent",
+      "text": "About 4 minutes in. Move on now to the first area: Applied LLM depth."
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_005",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 298.2,
+    "wall_time": "2026-11-18T10:04:58.200000Z",
+    "source": "coordinator",
+    "kind": "area_changed",
+    "payload": {
+      "kind": "area_changed",
+      "area_id": "applied_llm_depth",
+      "area_name": "Applied LLM depth",
+      "budget_minutes": 7.0
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_006",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 750.0,
+    "wall_time": "2026-11-18T10:12:30Z",
+    "source": "bot",
+    "kind": "reply_wait",
+    "payload": {
+      "kind": "reply_wait",
+      "turn_index": 12,
+      "end_of_speech_detect_seconds": 0.42,
+      "model_to_first_sound_seconds": 0.61,
+      "total_seconds": 1.03,
+      "interrupted": false
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_007",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 750.2,
+    "wall_time": "2026-11-18T10:12:30.200000Z",
+    "source": "bot",
+    "kind": "transcript_turn",
+    "payload": {
+      "kind": "transcript_turn",
+      "turn_index": 12,
+      "speaker": "interviewer",
+      "text": "Walk me through how you chose between LoRA and a full fine-tune.",
+      "audio_start_seconds": 750.2,
+      "audio_end_seconds": 754.0,
+      "cut": false,
+      "area_id": "applied_llm_depth"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_008",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 756.0,
+    "wall_time": "2026-11-18T10:12:36Z",
+    "source": "auditor",
+    "kind": "question_labelled",
+    "payload": {
+      "kind": "question_labelled",
+      "turn_index": 12,
+      "label": "plan",
+      "question_id": "Q2.1",
+      "follow_up_number": null,
+      "area_id": "applied_llm_depth",
+      "auditors_reading": true
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_009",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 761.0,
+    "wall_time": "2026-11-18T10:12:41Z",
+    "source": "bot",
+    "kind": "transcript_turn",
+    "payload": {
+      "kind": "transcript_turn",
+      "turn_index": 13,
+      "speaker": "candidate",
+      "text": "We used LoRA because a full fine-tune would not fit the instance.",
+      "audio_start_seconds": 761.0,
+      "audio_end_seconds": 772.4,
+      "cut": false,
+      "area_id": "applied_llm_depth"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_010",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 785.0,
+    "wall_time": "2026-11-18T10:13:05Z",
+    "source": "bot",
+    "kind": "transcript_turn",
+    "payload": {
+      "kind": "transcript_turn",
+      "turn_index": 14,
+      "speaker": "interviewer",
+      "text": "What did a point of accuracy cost you",
+      "audio_start_seconds": 785.1,
+      "audio_end_seconds": 787.0,
+      "cut": true,
+      "area_id": "applied_llm_depth"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_011",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 788.0,
+    "wall_time": "2026-11-18T10:13:08Z",
+    "source": "auditor",
+    "kind": "question_labelled",
+    "payload": {
+      "kind": "question_labelled",
+      "turn_index": 14,
+      "label": "follow_up",
+      "question_id": "Q2.1",
+      "follow_up_number": 1,
+      "area_id": "applied_llm_depth",
+      "auditors_reading": true
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_012",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 552.0,
+    "wall_time": "2026-11-18T10:09:12Z",
+    "source": "browser",
+    "kind": "integrity_signal",
+    "payload": {
+      "kind": "integrity_signal",
+      "integrity_event_id": "ie_1",
+      "integrity_kind": "tab_hidden",
+      "reminder": "nudged",
+      "reminder_index": 1,
+      "end_seconds": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_013",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 860.0,
+    "wall_time": "2026-11-18T10:14:20Z",
+    "source": "browser",
+    "kind": "integrity_status",
+    "payload": {
+      "kind": "integrity_status",
+      "distance_cm": 64.0,
+      "distance_in_band": true,
+      "faces_in_view": 1,
+      "page_visible": true
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_014",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 900.0,
+    "wall_time": "2026-11-18T10:15:00Z",
+    "source": "server",
+    "kind": "participant",
+    "payload": {
+      "kind": "participant",
+      "change": "joined",
+      "role": "watcher",
+      "participant_id": "p_watch",
+      "reason": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_015",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1180.0,
+    "wall_time": "2026-11-18T10:19:40Z",
+    "source": "auditor",
+    "kind": "question_labelled",
+    "payload": {
+      "kind": "question_labelled",
+      "turn_index": 30,
+      "label": "off_plan",
+      "question_id": null,
+      "follow_up_number": null,
+      "area_id": "system_design",
+      "auditors_reading": true
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_label_easier",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1181.0,
+    "wall_time": "2026-11-18T10:19:41Z",
+    "source": "auditor",
+    "kind": "question_labelled",
+    "payload": {
+      "kind": "question_labelled",
+      "turn_index": 32,
+      "label": "easier_variant",
+      "question_id": "Q2.1",
+      "follow_up_number": null,
+      "area_id": "system_design",
+      "auditors_reading": true
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_024",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1190.0,
+    "wall_time": "2026-11-18T10:19:50Z",
+    "source": "coordinator",
+    "kind": "skip",
+    "payload": {
+      "kind": "skip",
+      "area_id": "applied_llm_depth",
+      "question_id": null
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_016",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1300.0,
+    "wall_time": "2026-11-18T10:21:40Z",
+    "source": "bot",
+    "kind": "silence_prompt",
+    "payload": {
+      "kind": "silence_prompt",
+      "stage": 1,
+      "action": "nudge",
+      "dead_air_seconds": 20.0
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_017",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1400.0,
+    "wall_time": "2026-11-18T10:23:20Z",
+    "source": "coordinator",
+    "kind": "withdrawal",
+    "payload": {
+      "kind": "withdrawal",
+      "stage": "offered",
+      "by": "code"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_018",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1405.0,
+    "wall_time": "2026-11-18T10:23:25Z",
+    "source": "coordinator",
+    "kind": "withdrawal",
+    "payload": {
+      "kind": "withdrawal",
+      "stage": "declined",
+      "by": "code"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_019",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1500.0,
+    "wall_time": "2026-11-18T10:25:00Z",
+    "source": "bot",
+    "kind": "error",
+    "payload": {
+      "kind": "error",
+      "component": "realtime",
+      "code": "item_delete_invalid_item_id",
+      "message": "stale note id ignored",
+      "fatal": false
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_020",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1731.0,
+    "wall_time": "2026-11-18T10:28:51Z",
+    "source": "coordinator",
+    "kind": "tool_called",
+    "payload": {
+      "kind": "tool_called",
+      "tool": "end_interview",
+      "outcome": "accepted_completed"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_021",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1744.0,
+    "wall_time": "2026-11-18T10:29:04Z",
+    "source": "bot",
+    "kind": "interview_ended",
+    "payload": {
+      "kind": "interview_ended",
+      "ended_because": "interview_complete",
+      "duration_seconds": 1744.0,
+      "ending": "model_spoke",
+      "hang_up_by": "bot_stopped_speaking"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_022",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1744.5,
+    "wall_time": "2026-11-18T10:29:04.500000Z",
+    "source": "bot",
+    "kind": "cost_update",
+    "payload": {
+      "kind": "cost_update",
+      "component": "realtime",
+      "model": "gpt-realtime-2.1",
+      "job": null,
+      "input_tokens": 182000,
+      "cached_input_tokens": 150000,
+      "output_tokens": 21000,
+      "usd": 1.71
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_023",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1800.0,
+    "wall_time": "2026-11-18T10:30:00Z",
+    "source": "server",
+    "kind": "cost_update",
+    "payload": {
+      "kind": "cost_update",
+      "component": "text_model",
+      "model": "gpt-4.1",
+      "job": "feedback",
+      "input_tokens": 3984,
+      "cached_input_tokens": 3840,
+      "output_tokens": 736,
+      "usd": 0.0081
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_w1_drop",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1300.0,
+    "wall_time": "2026-11-18T10:21:40Z",
+    "source": "server",
+    "kind": "candidate_dropped",
+    "payload": {
+      "kind": "candidate_dropped",
+      "detected_by": "status_readings",
+      "participant_id": "p_cand"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_w1_back",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1314.0,
+    "wall_time": "2026-11-18T10:21:54Z",
+    "source": "bot",
+    "kind": "candidate_returned",
+    "payload": {
+      "kind": "candidate_returned",
+      "gap_seconds": 14.0,
+      "same_participant": true,
+      "counted": true,
+      "rejoin_number": 1
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_w1_note",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1320.0,
+    "wall_time": "2026-11-18T10:22:00Z",
+    "source": "server",
+    "kind": "note_added",
+    "payload": {
+      "kind": "note_added",
+      "note_id": "note_1",
+      "author": "watcher:admin",
+      "text": "Strong answer on the rollback plan.",
+      "area_id": "system_design"
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_w1_limit",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 1740.0,
+    "wall_time": "2026-11-18T10:29:00Z",
+    "source": "coordinator",
+    "kind": "rejoin_limit_reached",
+    "payload": {
+      "kind": "rejoin_limit_reached",
+      "rejoins": 4,
+      "limit": 3
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_label_clarification",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 776.0,
+    "wall_time": "2026-11-18T10:12:56Z",
+    "source": "auditor",
+    "kind": "question_labelled",
+    "payload": {
+      "kind": "question_labelled",
+      "turn_index": 34,
+      "label": "clarification",
+      "question_id": "Q2.1",
+      "follow_up_number": null,
+      "area_id": "applied_llm_depth",
+      "auditors_reading": true
+    }
+  },
+  {
+    "schema_version": 1,
+    "event_id": "ev_tool_move_on",
+    "interview_id": "int_0a1b2c3d4e5f",
+    "at_seconds": 126.04,
+    "wall_time": "2026-11-18T10:02:06Z",
+    "source": "coordinator",
+    "kind": "tool_called",
+    "payload": {
+      "kind": "tool_called",
+      "tool": "move_on",
+      "outcome": "moved"
+    }
+  }
+]
