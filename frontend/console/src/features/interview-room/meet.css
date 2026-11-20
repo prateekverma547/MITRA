@@ -1,0 +1,530 @@
+/* The candidate's interview room. Track H.
+   Before the call the page uses the console's own tokens (light by default,
+   dark if the viewer chose it). The call itself is dark in both themes, as
+   video calls are, so faces and Mitra's presence read well. Every class is
+   prefixed meet- so nothing here collides with the shell. */
+
+.meet {
+  min-height: 100vh; display: flex; flex-direction: column;
+  font-family: var(--sans); color: var(--text);
+}
+.meet .sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.meet button { font: inherit; }
+.meet :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+/* ---- the light frame: enter, consent, lobby, done ------------------------------------------- */
+
+.meet-light {
+  background:
+    radial-gradient(1100px 520px at 88% -10%, color-mix(in srgb, var(--neon-b) 10%, transparent), transparent 70%),
+    radial-gradient(900px 480px at -10% 110%, color-mix(in srgb, var(--neon-c) 9%, transparent), transparent 70%),
+    var(--paper);
+}
+.meet-center { align-items: center; justify-content: center; }
+.meet-top { display: flex; align-items: center; justify-content: space-between; padding: 20px clamp(16px, 4vw, 48px); }
+.meet-step { font-size: var(--s-12); color: var(--muted); font-weight: 600; }
+.meet-main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 8px clamp(16px, 4vw, 48px) 48px; }
+
+.meet-title { font-family: var(--serif); font-weight: 400; font-size: clamp(30px, 3.4vw, var(--s-37)); line-height: 1.08; letter-spacing: -0.015em; color: var(--ink); }
+.meet-subtitle { font-family: var(--serif); font-weight: 500; font-size: var(--s-22); color: var(--ink); }
+.meet-lead { font-size: var(--s-15); line-height: 1.6; color: var(--muted); max-width: 60ch; }
+.meet-muted { font-size: var(--s-15); line-height: 1.6; color: var(--muted); max-width: 58ch; }
+.meet-hint { font-size: var(--s-12); color: var(--muted); }
+.meet-hello { font-family: var(--serif); font-style: italic; font-size: var(--s-22); color: var(--muted); }
+
+.meet-card {
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 18px;
+  box-shadow: var(--brief-shadow);
+}
+
+.meet-field { display: flex; flex-direction: column; gap: 6px; font-size: var(--s-12); font-weight: 600; color: var(--ink); }
+.meet-input {
+  height: 48px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--rule); background: var(--paper);
+  color: var(--ink); font: 500 var(--s-18) / 1 var(--sans);
+}
+.meet-input.mono { font-variant-numeric: tabular-nums; letter-spacing: 0.08em; }
+.meet-input:focus { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px color-mix(in srgb, var(--signal) 22%, transparent); }
+.meet-input[aria-invalid="true"] { border-color: var(--error); }
+
+.meet-alert {
+  display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 12px;
+  background: color-mix(in srgb, var(--error) 9%, var(--surface)); color: var(--error); font-size: var(--s-12); line-height: 1.5;
+}
+.meet-alert strong { font-size: var(--s-15); }
+
+.meet-primary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 0 24px;
+  border: 0; border-radius: 999px; background: var(--signal); color: #fff; font-weight: 650; font-size: var(--s-15);
+  cursor: pointer; box-shadow: var(--glow); transition: filter 160ms ease, transform 160ms ease, opacity 160ms ease;
+}
+.meet-primary:hover:not(:disabled) { filter: brightness(1.08); }
+.meet-primary:active:not(:disabled) { transform: translateY(1px); }
+.meet-primary:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+.meet-primary.big { min-height: 54px; padding: 0 32px; font-size: var(--s-18); }
+.meet-quiet {
+  min-height: 48px; padding: 0 18px; border-radius: 999px; border: 1px solid var(--rule); background: transparent;
+  color: var(--ink); font-weight: 600; cursor: pointer;
+}
+.meet-quiet:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.meet-chip-btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid color-mix(in srgb, var(--signal) 35%, var(--rule)); background: var(--signal-soft); color: var(--signal);
+  font-size: var(--s-12); font-weight: 650; cursor: pointer;
+}
+.meet-chip-btn:disabled { opacity: 0.6; cursor: progress; }
+
+.meet-spin { animation: spin 900ms linear infinite; }
+.meet-spinner {
+  width: 30px; height: 30px; border-radius: 50%; border: 3px solid color-mix(in srgb, var(--signal) 25%, transparent);
+  border-top-color: var(--signal); animation: spin 800ms linear infinite;
+}
+.meet-spinner.small { width: 16px; height: 16px; border-width: 2px; flex: none; }
+
+/* enter */
+.meet-enter { width: 100%; max-width: 980px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: clamp(28px, 5vw, 72px); align-items: center; }
+.meet-enter-copy { display: flex; flex-direction: column; gap: 14px; }
+.meet-enter-form { display: flex; flex-direction: column; gap: 16px; padding: 28px; }
+.meet-enter-form .meet-primary { margin-top: 4px; }
+
+/* consent */
+.meet-consent { width: 100%; max-width: 1160px; display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: clamp(28px, 4vw, 64px); align-items: start; }
+.meet-consent-intro { display: flex; flex-direction: column; gap: 16px; padding-top: 12px; }
+.meet-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; margin: 8px 0; padding: 18px 0; border-block: 1px solid var(--rule); }
+.meet-facts dt { font-size: var(--s-12); color: var(--muted); }
+.meet-facts dd { margin: 2px 0 0; font-weight: 600; color: var(--ink); }
+.meet-with { display: inline-flex; align-items: center; gap: 6px; }
+.meet-with svg { color: var(--signal); }
+.meet-consent-card { padding: 26px; display: flex; flex-direction: column; gap: 16px; }
+.meet-ticks { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 10px; }
+.meet-tick {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; align-items: start; padding: 14px; border-radius: 12px;
+  border: 1px solid var(--rule); cursor: pointer; font-size: var(--s-15); line-height: 1.55; color: var(--text);
+  transition: border-color 160ms ease, background 160ms ease;
+}
+.meet-tick:hover { border-color: color-mix(in srgb, var(--signal) 40%, var(--rule)); }
+.meet-tick.on { border-color: color-mix(in srgb, var(--signal) 55%, var(--rule)); background: color-mix(in srgb, var(--signal) 6%, var(--surface)); }
+.meet-tick input { width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--signal); cursor: pointer; }
+.meet-tick b { color: var(--ink); }
+.meet-rights { display: flex; gap: 10px; align-items: flex-start; font-size: var(--s-12); line-height: 1.55; color: var(--muted); }
+.meet-rights svg { flex: none; margin-top: 1px; color: var(--good); }
+.meet-actions { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-top: 4px; }
+
+/* lobby */
+.meet-lobby { width: 100%; max-width: 1240px; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(340px, 1fr); gap: clamp(24px, 4vw, 56px); align-items: center; }
+.meet-preview { display: flex; flex-direction: column; gap: 12px; }
+.meet-preview-tile {
+  position: relative; aspect-ratio: 16 / 10; border-radius: 22px; overflow: hidden; background: #141413;
+  box-shadow: 0 30px 60px -36px rgba(17, 17, 17, 0.6);
+}
+.meet-preview-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #a8a7a3; font-weight: 600; }
+.meet-preview-ctl { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 14px; }
+.meet-devices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 10px; align-items: end; }
+.meet-devices label { display: flex; flex-direction: column; gap: 4px; font-size: var(--s-12); color: var(--muted); min-width: 0; }
+.meet-devices select {
+  font: inherit; font-size: var(--s-12); color: var(--text); background: var(--surface);
+  border: 1px solid var(--rule); border-radius: 10px; padding: 8px; min-width: 0;
+}
+.meet-ready { display: flex; flex-direction: column; gap: 16px; }
+.meet-checks { display: flex; flex-direction: column; gap: 8px; }
+.meet-check {
+  display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  padding: 12px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--rule);
+}
+.meet-check-state { display: grid; place-items: center; color: var(--faint); }
+.meet-check.pass .meet-check-state { color: var(--good); }
+.meet-check.fix .meet-check-state { color: var(--error); }
+.meet-check.warn .meet-check-state { color: var(--attention); }
+.meet-check.fix { border-color: color-mix(in srgb, var(--error) 35%, var(--rule)); }
+.meet-check-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.meet-check-body strong { display: inline-flex; align-items: center; gap: 6px; font-size: var(--s-15); color: var(--ink); }
+.meet-check-body strong svg { color: var(--muted); }
+.meet-check-body span { font-size: var(--s-12); line-height: 1.45; color: var(--muted); }
+.meet-ready .meet-primary.big { align-self: flex-start; }
+
+/* level meter: three bars, driven by --lvl (0 to 1) */
+.meet-meter {
+  --lvl: 0; position: absolute; left: 16px; top: 16px; display: inline-flex; align-items: center; gap: 3px;
+  height: 30px; padding: 0 9px; border-radius: 999px; background: rgba(8, 8, 8, 0.55);
+}
+.meet-meter i { width: 4px; border-radius: 2px; background: #6fd3a0; transition: height 80ms linear; }
+.meet-meter i:nth-child(1) { height: calc(4px + var(--lvl) * 8px); }
+.meet-meter i:nth-child(2) { height: calc(4px + var(--lvl) * 16px); }
+.meet-meter i:nth-child(3) { height: calc(4px + var(--lvl) * 10px); }
+.meet-meter.mini { left: auto; right: 8px; top: 8px; height: 22px; padding: 0 6px; gap: 2px; }
+.meet-meter.mini i { width: 3px; }
+
+/* round buttons, shared by the lobby and the call */
+.meet-round {
+  position: relative; width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.35); background: rgba(16, 16, 16, 0.55); color: #fff;
+  backdrop-filter: blur(6px); transition: background 160ms ease;
+}
+.meet-round:hover { background: rgba(16, 16, 16, 0.75); }
+.meet-round.off { background: #d93025; border-color: #d93025; }
+.meet-round.locked { cursor: default; }
+.meet-lock { position: absolute; right: 7px; bottom: 7px; padding: 1px; border-radius: 4px; background: #0f0f0f; color: #a8a7a3; }
+
+/* done */
+.meet-done { width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 18px; }
+.meet-done-mark { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; background: var(--good-soft); color: var(--good); }
+.meet-done-mark.amber { background: var(--attention-soft); color: var(--attention); }
+.meet-next { padding: 22px 24px; display: flex; flex-direction: column; gap: 10px; }
+.meet-next ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: var(--s-15); line-height: 1.55; color: var(--text); }
+.meet-done .meet-primary { align-self: flex-start; }
+
+@media (max-width: 920px) {
+  .meet-enter, .meet-consent, .meet-lobby { grid-template-columns: minmax(0, 1fr); }
+  .meet-devices { grid-template-columns: minmax(0, 1fr); }
+  .meet-facts { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---- the call --------------------------------------------------------------------------------- */
+/* Light, on the console's own tokens (product owner, 2026-11-20: the dark room was
+   too heavy and its colours too bright). A viewer who chose the dark theme gets it. */
+
+.meet-call {
+  --room-line: var(--rule); --room-ctl: color-mix(in srgb, var(--ink) 7%, var(--surface)); --room-ctl-hover: color-mix(in srgb, var(--ink) 12%, var(--surface));
+  height: 100vh; min-height: 560px; overflow: hidden; color: var(--text);
+  background:
+    radial-gradient(1100px 520px at 88% -10%, color-mix(in srgb, var(--neon-b) 8%, transparent), transparent 70%),
+    var(--paper);
+}
+
+.meet-bar { position: relative; display: flex; align-items: center; gap: 14px 22px; padding: 12px 24px; flex-wrap: wrap; }
+.meet-bar-role { font-size: var(--s-15); color: var(--muted); }
+.meet-bar-fill { flex: 1; }
+.meet-pill { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border-radius: 999px; font-size: var(--s-12); font-weight: 650; }
+.meet-pill.rec { background: var(--prio-red-soft); color: var(--prio-red-ink); }
+.meet-pill.warn { background: var(--prio-amber-soft); color: var(--prio-amber-ink); }
+.meet-rec-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--prio-red); animation: meet-rec 2s ease-in-out infinite; }
+@keyframes meet-rec { 50% { opacity: 0.35; } }
+.meet-clock { font-variant-numeric: tabular-nums; font-weight: 650; font-size: var(--s-15); }
+.meet-clock span { color: var(--muted); font-weight: 500; }
+.meet-progress { position: absolute; left: 24px; right: 24px; bottom: 0; height: 2px; border-radius: 2px; background: var(--rule); overflow: hidden; }
+.meet-progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--neon-a), var(--neon-b), var(--neon-c)); transform-origin: left; transition: transform 1s linear; }
+
+.meet-notices {
+  position: absolute; left: 50%; top: 78px; transform: translateX(-50%); z-index: 5;
+  display: flex; flex-direction: column; align-items: center; gap: 10px; width: max-content; max-width: calc(100vw - 32px);
+}
+.meet-notice {
+  display: flex; align-items: center; gap: 12px; padding: 11px 12px 11px 16px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--rule); color: var(--text); font-size: var(--s-15); line-height: 1.45;
+  box-shadow: var(--brief-shadow); animation: meet-drop 260ms cubic-bezier(.2,.8,.2,1);
+}
+.meet-notice.danger { background: var(--prio-red-soft); border-color: color-mix(in srgb, var(--prio-red) 40%, transparent); }
+.meet-notice.danger svg { color: var(--prio-red-ink); flex: none; }
+.meet-notice.amber { background: var(--prio-amber-soft); border-color: color-mix(in srgb, var(--prio-amber) 45%, transparent); }
+.meet-notice.amber svg { color: var(--prio-amber-ink); flex: none; }
+.meet-notice-btn {
+  flex: none; padding: 8px 14px; border-radius: 10px; border: 0; cursor: pointer; font-weight: 650;
+  background: var(--btn-primary-bg); color: var(--btn-primary-fg);
+}
+.meet-notice-btn:hover { background: var(--signal-strong); }
+@keyframes meet-drop { from { opacity: 0; transform: translateY(-8px); } }
+
+.meet-stage { position: relative; flex: 1; min-height: 0; display: flex; gap: 12px; padding: 12px 20px 0; }
+.meet-stage-main {
+  position: relative; flex: 1; min-width: 0; border-radius: 20px; overflow: hidden; display: grid; place-items: center;
+  background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--brief-shadow);
+}
+.meet-stage-main.person { background: var(--room-tile, #161b23); }
+
+.meet-name {
+  position: absolute; left: 14px; bottom: 14px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px;
+  border-radius: 10px; background: rgba(8, 8, 8, 0.6); font-size: var(--s-12); font-weight: 650; color: #f2f1ee;
+}
+.meet-watching {
+  position: absolute; left: 14px; top: 14px; display: inline-flex; align-items: center; gap: 7px; padding: 6px 11px;
+  border-radius: 999px; background: var(--paper); font-size: var(--s-12); color: var(--muted);
+}
+
+/* Mitra's presence: rings and an orb that swell with its voice */
+.meet-mitra { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.meet-orb-wrap { position: relative; width: 220px; height: 220px; display: grid; place-items: center; }
+.meet-orb {
+  --lvl: 0; width: 132px; height: 132px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff 0 4%, #7fd4ff 24%, #1f97d1 60%, #3dbdf5);
+  box-shadow: 0 0 calc(30px + var(--lvl) * 50px) rgba(0, 154, 217, calc(0.22 + var(--lvl) * 0.3));
+  transform: scale(calc(1 + var(--lvl) * 0.16)); transition: transform 90ms linear, box-shadow 90ms linear;
+}
+.meet-orb-ring { position: absolute; border-radius: 50%; border: 2px solid rgba(0, 154, 217, 0); transition: border-color 300ms ease, transform 600ms ease; }
+.meet-orb-ring.r1 { inset: 30px; }
+.meet-orb-ring.r2 { inset: 4px; }
+.meet-mitra.speaking .meet-orb-ring.r1 { border-color: rgba(0, 154, 217, 0.4); animation: meet-ring 1.8s ease-out infinite; }
+.meet-mitra.speaking .meet-orb-ring.r2 { border-color: rgba(0, 154, 217, 0.2); animation: meet-ring 1.8s ease-out 0.5s infinite; }
+@keyframes meet-ring { from { transform: scale(0.94); opacity: 1; } to { transform: scale(1.08); opacity: 0.2; } }
+.meet-mitra.joining .meet-orb, .meet-mitra.gone .meet-orb { filter: saturate(0.4) brightness(0.9); }
+.meet-mitra.joining .meet-orb { animation: meet-breathe 2.4s ease-in-out infinite; }
+@keyframes meet-breathe { 50% { transform: scale(0.95); } }
+.meet-mitra-name { font-family: var(--serif); font-size: var(--s-31); color: var(--ink); }
+.meet-mitra-state { display: inline-flex; align-items: center; gap: 8px; font-size: var(--s-15); color: var(--muted); min-height: 20px; }
+.meet-mitra.speaking .meet-mitra-state { color: var(--signal); }
+
+/* tiles */
+
+.meet-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #0b0e13; }
+.meet-video.mirror { transform: scaleX(-1); }
+.meet-video.contain { object-fit: contain; }
+.meet-avatar {
+  width: 120px; height: 120px; border-radius: 50%; display: grid; place-items: center; font-size: 42px; font-weight: 600;
+  background: linear-gradient(135deg, #1f97d1, #00b4f0); color: #fff;
+}
+.meet-avatar.small { width: 56px; height: 56px; font-size: var(--s-18); }
+
+.meet-self {
+  position: absolute; right: 34px; bottom: 14px; z-index: 2; margin: 0; width: 248px; aspect-ratio: 16 / 10;
+  border-radius: 14px; overflow: hidden; background: color-mix(in srgb, var(--ink) 6%, var(--surface)); border: 1px solid var(--rule);
+  display: grid; place-items: center; box-shadow: var(--brief-shadow);
+}
+.meet-self figcaption {
+  position: absolute; left: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px;
+  border-radius: 8px; background: rgba(8, 8, 8, 0.6); color: #f2f1ee; font-size: var(--s-12); font-weight: 650;
+}
+.meet-self-share {
+  position: absolute; left: 8px; top: 8px; display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px;
+  border-radius: 8px; background: rgba(0, 119, 182, 0.85); color: #fff; font-size: 12px; font-weight: 650;
+}
+
+/* controls */
+.meet-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px; padding: 14px 24px 18px; }
+.meet-status { display: inline-flex; align-items: center; gap: 8px; font-size: var(--s-12); color: var(--muted); }
+.meet-buttons { display: flex; gap: 12px; }
+.meet-round.dark { background: var(--room-ctl); border-color: var(--rule); color: var(--ink); backdrop-filter: none; }
+.meet-round.dark:hover { background: var(--room-ctl-hover); }
+.meet-round.dark.off { background: var(--prio-red-soft); border-color: color-mix(in srgb, var(--prio-red) 45%, transparent); color: var(--prio-red-ink); }
+.meet-round.dark.off:hover { background: color-mix(in srgb, var(--prio-red) 22%, var(--surface)); }
+.meet-round.dark.active { background: var(--signal-soft); border-color: color-mix(in srgb, var(--signal) 35%, transparent); color: var(--signal); }
+.meet-round.dark .meet-lock { background: var(--surface); color: var(--muted); }
+.meet-end {
+  justify-self: end; display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 22px; border: 0;
+  border-radius: 999px; background: #d93025; color: #fff; font-weight: 650; cursor: pointer;
+}
+.meet-end:hover { background: #e5483d; }
+
+.meet-help-wrap { position: relative; }
+.meet-help {
+  position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%); width: min(360px, calc(100vw - 32px));
+  padding: 16px 18px; border-radius: 16px; background: var(--surface); border: 1px solid var(--rule); z-index: 6;
+  box-shadow: var(--brief-shadow); animation: meet-drop 200ms ease;
+}
+.meet-help-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.meet-help ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: var(--s-12); line-height: 1.55; color: var(--muted); }
+.meet-help b { color: var(--ink); }
+.meet-icon-btn { width: 30px; height: 30px; border-radius: 8px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.meet-icon-btn:hover { background: var(--room-ctl); color: var(--ink); }
+
+.meet-scrim { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; background: rgba(17, 17, 17, 0.35); animation: meet-fade 160ms ease; }
+@keyframes meet-fade { from { opacity: 0; } }
+.meet-dialog {
+  width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 14px; padding: 28px; border-radius: 20px;
+  background: var(--surface); border: 1px solid var(--rule); box-shadow: 0 40px 80px -40px rgba(17, 17, 17, 0.45);
+}
+.meet-dialog h2 { font-family: var(--serif); font-weight: 400; font-size: var(--s-31); color: var(--ink); }
+.meet-dialog p { font-size: var(--s-15); line-height: 1.6; color: var(--muted); }
+.meet-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.meet-ghost { min-height: 46px; padding: 0 18px; border-radius: 12px; border: 1px solid var(--rule); background: transparent; color: var(--ink); font-weight: 600; cursor: pointer; }
+.meet-ghost:hover { background: var(--paper); }
+.meet-danger { min-height: 46px; padding: 0 18px; border-radius: 12px; border: 0; background: #d93025; color: #fff; font-weight: 650; cursor: pointer; }
+.meet-dialog .meet-dialog-note { font-size: var(--s-12); color: var(--faint); }
+
+@media (max-width: 760px) {
+  .meet-bar-role, .meet-status { display: none; }
+  .meet-controls { grid-template-columns: auto 1fr; }
+  .meet-buttons { gap: 8px; }
+  .meet-round { width: 46px; height: 46px; }
+  .meet-self { width: 140px; right: 26px; }
+  .meet-orb-wrap { width: 170px; height: 170px; }
+  .meet-orb { width: 104px; height: 104px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meet-orb, .meet-orb-ring, .meet-rec-dot, .meet-mitra.joining .meet-orb  { animation: none !important; transition: none !important; }
+  .meet-orb { transform: none; }
+  .meet-notice, .meet-help, .meet-scrim, .meet-warning { animation: none; }
+}
+
+/* ---- the HR round: a voice call (the tiles are shared with HR's room) ----------------------------- */
+
+.meet-call {
+  --stage: var(--paper); --stage-tile: var(--surface); --stage-line: var(--rule);
+  --stage-text: var(--text); --stage-muted: var(--muted);
+}
+.meet-preview-tile.voice {
+  --stage: #101010; --stage-tile: #1a1a19; --stage-line: rgba(255, 255, 255, 0.08);
+  --stage-text: #f2f1ee; --stage-muted: #a8a7a3;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px;
+  background: radial-gradient(70% 90% at 50% 10%, color-mix(in srgb, var(--neon-a) 24%, transparent), transparent 70%), #101010;
+}
+.meet-preview-tile.voice .meet-preview-ctl { position: static; transform: none; }
+.meet-voice-hint { color: var(--stage-muted, #a8a7a3); font-size: var(--s-15); text-align: center; max-width: 44ch; }
+.meet-stage-main.voice { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
+.meet-voices { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: clamp(32px, 7vw, 120px); }
+.meet-call .voice-tile.speaking .voice-state { color: var(--signal); }
+
+/* ---- the MITRA interview round: the shared screen, MITRA, the rules and warnings, the time ------- */
+
+.meet-time { display: inline-flex; align-items: baseline; gap: 10px; }
+.meet-clock { font-size: var(--s-22); }
+.meet-left { font-size: var(--s-12); font-weight: 650; padding: 4px 10px; border-radius: 999px; background: var(--room-ctl); color: var(--muted); }
+.meet-left.soon { background: var(--prio-amber-soft); color: var(--prio-amber-ink); }
+.meet-left.over { background: var(--prio-red-soft); color: var(--prio-red-ink); }
+.meet-notice-count { flex: none; font-size: var(--s-12); color: var(--prio-amber-ink); font-variant-numeric: tabular-nums; }
+
+.meet-watching { left: auto !important; right: 14px; }
+
+/* One calm stage with MITRA at its centre | the rail: rules, then warnings */
+.meet-stage-main.tech {
+  display: grid; grid-template-columns: minmax(0, 1fr) clamp(320px, 26vw, 400px); place-items: stretch; padding: 0;
+}
+.meet-tech-stage {
+  position: relative; min-width: 0; min-height: 0; display: grid; place-items: center;
+  background: radial-gradient(55% 60% at 50% 46%, color-mix(in srgb, var(--neon-c) 11%, var(--surface)), var(--surface) 72%);
+  transition: box-shadow 300ms ease;
+}
+.meet-tech-stage.alert { box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--prio-amber) 55%, transparent); }
+.meet-tech-stage .meet-orb-wrap { width: 236px; height: 236px; }
+.meet-tech-stage .meet-orb { width: 168px; height: 168px; }
+.meet-tech-stage .meet-mitra-name { font-size: var(--s-37); }
+.meet-tech-stage .meet-mitra-state {
+  padding: 6px 14px; border-radius: 999px; background: var(--room-ctl); font-weight: 600;
+}
+.meet-tech-stage .meet-mitra.speaking .meet-mitra-state { background: var(--signal-soft); }
+.meet-tech-stage .meet-self { right: 20px; bottom: 20px; width: clamp(200px, 19vw, 280px); }
+
+/* The shared screen as a status card, top left: small, never a mirror of the page */
+.meet-share {
+  position: absolute; left: 20px; top: 20px; z-index: 2; display: flex; align-items: center; gap: 12px;
+  max-width: calc(100% - 40px); padding: 8px 14px 8px 8px; border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent); border: 1px solid var(--rule); box-shadow: var(--brief-shadow);
+  backdrop-filter: blur(8px);
+}
+.meet-share-thumb {
+  position: relative; flex: none; width: 96px; aspect-ratio: 16 / 10; margin: 0; border-radius: 8px; overflow: hidden;
+  background: color-mix(in srgb, var(--ink) 8%, var(--paper));
+}
+.meet-share-icon { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 10px; background: var(--surface); color: var(--prio-red-ink); }
+.meet-share-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.meet-share-text b { display: inline-flex; align-items: center; gap: 7px; font-size: var(--s-15); font-weight: 700; color: var(--ink); }
+.meet-share.on .meet-share-text b::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--prio-green); }
+.meet-share-text span { font-size: var(--s-12); color: var(--muted); }
+.meet-share.off { background: var(--prio-red-soft); border-color: color-mix(in srgb, var(--prio-red) 45%, transparent); }
+.meet-share.off .meet-share-text b, .meet-share.off .meet-share-text span { color: var(--prio-red-ink); }
+
+/* The share card is a button: it opens the split view */
+button.meet-share { font: inherit; color: inherit; text-align: left; cursor: pointer; transition: border-color 160ms ease, box-shadow 160ms ease; }
+button.meet-share:hover { border-color: color-mix(in srgb, var(--signal) 45%, var(--rule)); }
+.meet-share-expand {
+  position: absolute; right: 4px; bottom: 4px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px;
+  background: rgba(17, 17, 17, 0.6); color: #fff;
+}
+
+/* Split: their shared screen fills the left half; MITRA and their camera, then the rail, fill the right */
+.meet-stage-main.tech.split {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.5fr) minmax(280px, 0.5fr); grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "screen rail stage";
+}
+.meet-screen-panel { grid-area: screen; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px; border-right: 1px solid var(--rule); }
+.meet-screen-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.meet-screen-head .meet-share-text b::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--prio-green); }
+.meet-screen-full {
+  position: relative; flex: 1; min-height: 0; margin: 0; border-radius: 14px; overflow: hidden;
+  background: color-mix(in srgb, var(--ink) 6%, var(--paper)); border: 1px solid var(--rule);
+}
+.meet-ghost-btn {
+  flex: none; display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 0 14px; border-radius: 10px; cursor: pointer;
+  font: inherit; font-size: var(--s-15); font-weight: 650; color: var(--ink); background: var(--surface); border: 1px solid var(--rule);
+}
+.meet-ghost-btn:hover { background: var(--room-ctl); }
+.split .meet-tech-stage {
+  grid-area: stage; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 20px;
+  border-left: 1px solid var(--rule);
+}
+/* MITRA keeps its full size, centred in the column; the camera sits bottom right, below it */
+.split .meet-tech-stage .meet-mitra { flex: 1; justify-content: center; }
+.split .meet-tech-stage .meet-orb-wrap { width: 220px; height: 220px; }
+.split .meet-tech-stage .meet-orb { width: 156px; height: 156px; }
+.split .meet-tech-stage .meet-self { position: relative; right: auto; bottom: auto; flex: none; align-self: flex-end; width: min(100%, 240px); }
+.split .meet-rail { grid-area: rail; border-left: 0; }
+
+/* The live proctoring line, top of the rail */
+.meet-live {
+  margin: 0; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px;
+  background: var(--signal-soft); color: var(--signal); font-size: var(--s-15); font-weight: 700;
+}
+.meet-live-dot { position: relative; flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--neon-a); animation: meet-live-blink 1.4s ease-in-out infinite; }
+.meet-live-dot::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 2px solid var(--neon-a); opacity: 0; animation: meet-live-ring 1.4s ease-out infinite; }
+@keyframes meet-live-blink { 50% { opacity: 0.35; } }
+@keyframes meet-live-ring { 0% { transform: scale(0.6); opacity: 0.6; } 100% { transform: scale(1.4); opacity: 0; } }
+
+/* The rail */
+.meet-rail {
+  min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 20px 18px;
+  background: var(--paper); border-left: 1px solid var(--rule);
+}
+.meet-rail > * { flex: none; }
+.meet-rail-title { margin: 0; font-size: var(--s-12); font-weight: 700; color: var(--muted); letter-spacing: 0.01em; }
+.meet-rail-title + .meet-warnings { margin-top: -2px; }
+.meet-rules { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; border-radius: 14px; background: var(--surface); border: 1px solid var(--rule); overflow: hidden; }
+.meet-rules li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 8px 12px; }
+.meet-rules li + li { border-top: 1px solid var(--rule); }
+.meet-rule-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--room-ctl); color: var(--faint); }
+.meet-rule-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.meet-rule-text b { font-size: var(--s-15); font-weight: 650; color: var(--ink); line-height: 1.3; }
+.meet-rule-text span { font-size: var(--s-12); color: var(--muted); }
+.meet-rule-count {
+  min-width: 26px; height: 26px; padding: 0 8px; border-radius: 999px; display: grid; place-items: center;
+  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; background: var(--prio-amber-soft); color: var(--prio-amber-ink);
+}
+.meet-rule-count.zero { background: var(--room-ctl); color: var(--faint); }
+.meet-rules li.ok .meet-rule-icon { background: var(--prio-green-soft); color: var(--prio-green-ink); }
+.meet-rules li.warn { background: var(--prio-amber-soft); }
+.meet-rules li.warn .meet-rule-icon { background: var(--surface); color: var(--prio-amber-ink); }
+.meet-rules li.warn .meet-rule-text span { color: var(--prio-amber-ink); font-weight: 650; }
+.meet-rules li.warn .meet-rule-count { background: var(--surface); }
+
+/* Warnings: large and bold, readable from a distance, each with its count */
+.meet-warnings { display: flex; flex-direction: column; gap: 10px; }
+.meet-warnings-none { margin: 0; display: flex; align-items: center; gap: 8px; font-size: var(--s-15); line-height: 1.4; color: var(--muted); }
+.meet-warnings-none svg { flex: none; color: var(--prio-green-ink); }
+.meet-warning {
+  position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 12px;
+  padding: 13px 14px 13px 13px; border-radius: 14px; font-size: 20px; font-weight: 800; line-height: 1.28; color: var(--ink);
+  border: 1px solid; border-left-width: 5px; animation: meet-drop 260ms cubic-bezier(.2,.8,.2,1);
+}
+.meet-warning > svg { margin-top: 2px; }
+.meet-warning-text { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; }
+.meet-warning-count {
+  margin-top: 2px; padding: 3px 10px; border-radius: 999px; background: var(--surface);
+  font-size: 13px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.meet-warning.amber { background: var(--prio-amber-soft); border-color: color-mix(in srgb, var(--prio-amber) 55%, transparent); }
+.meet-warning.amber > svg, .meet-warning.amber .meet-warning-count { color: var(--prio-amber-ink); }
+.meet-warning.danger { background: var(--prio-red-soft); border-color: color-mix(in srgb, var(--prio-red) 50%, transparent); }
+.meet-warning.danger > svg, .meet-warning.danger .meet-warning-count { color: var(--prio-red-ink); }
+.meet-warning .meet-notice-btn { font-size: var(--s-15); font-weight: 700; padding: 9px 16px; }
+
+@media (max-width: 900px) {
+  .meet-stage-main.tech { display: flex; flex-direction: column; overflow-y: auto; }
+  .meet-stage-main.tech > * { flex: none; }
+  .meet-tech-stage { display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 12px; }
+  .meet-tech-stage > * { flex: none; }
+  .meet-tech-stage .meet-mitra { align-self: center; }
+  .meet-share { position: static; max-width: none; }
+  .meet-rail { border-left: 0; border-top: 1px solid var(--rule); overflow: visible; }
+  .meet-tech-stage .meet-orb-wrap { width: 200px; height: 200px; }
+  .meet-tech-stage .meet-orb { width: 120px; height: 120px; }
+  .meet-tech-stage .meet-self { position: relative; right: auto; bottom: auto; align-self: flex-end; width: 150px; }
+  .meet-share-thumb { display: none; }
+  .meet-screen-panel { height: 300px; border-right: 0; border-bottom: 1px solid var(--rule); }
+  .split .meet-tech-stage { border-left: 0; }
+  .split .meet-tech-stage .meet-self { width: 150px; }
+}
+@media (prefers-reduced-motion: reduce) { .meet-live-dot, .meet-live-dot::after { animation: none; } }
+
+.meet-switch { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; padding: 14px; border-radius: 12px; background: var(--paper); font-size: var(--s-12); line-height: 1.5; color: var(--muted); cursor: pointer; }
+.meet-switch input { width: 20px; height: 20px; margin: 0; accent-color: var(--signal); }
+.meet-switch b { color: var(--ink); }

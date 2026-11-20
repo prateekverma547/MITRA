@@ -59,7 +59,7 @@ async def test_hr_and_admins_read_but_do_not_decide(org_client):
 
 async def test_another_bus_head_cannot_see_or_decide(org_client):
     cid = await prepared(org_client)
-    sign_in(org_client, "finance.head@mitra.local")
+    sign_in(org_client, "sales.head@mitra.local")
     assert org_client.get(f"/api/candidates/{cid}/results").status_code == 404
     assert org_client.post(f"/api/candidates/{cid}/move", json={"to": "shortlisted"}).status_code == 404
 
@@ -101,7 +101,7 @@ async def test_closed_candidates_are_hidden_unless_asked_for(org_client):
 
 async def test_the_comparison_is_scoped_to_the_bu(org_client):
     job_id = org_client.demo.job_ids["AI Engineer"]
-    sign_in(org_client, "finance.head@mitra.local")
+    sign_in(org_client, "sales.head@mitra.local")
     assert org_client.get(f"/api/jobs/{job_id}/compare").status_code == 404
 
 
@@ -122,7 +122,7 @@ async def test_a_real_technical_report_shows_its_headline_and_is_recorded_beside
     sign_in(org_client, "ai.head@mitra.local")
     r = org_client.get(f"/api/candidates/{cid}/results").json()
     assert r["technical"]["report"]["recommendation"] == "some_evidence_for"
-    assert r["decisions"][-1]["model_recommendation"] == "Technical round report: some evidence for."
+    assert r["decisions"][-1]["model_recommendation"] == "MITRA interview report: some evidence for."
     org_client.post(f"/api/candidates/{cid}/move", json={"to": "shortlisted"})
     last = org_client.get(f"/api/candidates/{cid}/decisions").json()["decisions"][-1]
-    assert last["actor"] == "bu_head" and last["model_recommendation"].startswith("Technical round report")
+    assert last["actor"] == "bu_head" and last["model_recommendation"].startswith("MITRA interview report")

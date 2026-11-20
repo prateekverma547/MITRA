@@ -3,7 +3,6 @@
 
 import {
   CheckCircle2,
-  Clock3,
   FileAudio,
   MessageSquareQuote,
   NotebookPen,
@@ -16,6 +15,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../../api";
 import type { CandidateStage, HRRoundState, HRRoundView } from "../../contracts";
+import { useGoBack } from "../../shell/ui/BackButton";
 import { Button } from "../../shell/ui/Button";
 import { Pips } from "../../shell/ui/Pips";
 import { Spinner } from "../../shell/ui/Spinner";
@@ -33,13 +33,20 @@ function clock(seconds: number) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function Progress({ status }: { status: HRRoundState["eval_status"] }) {
-  const at = STEPS.findIndex((s) => s.key === status);
+/** With a live transcript there is no recording to wait for: it goes straight to evaluation. */
+const LIVE_STEPS = [
+  { key: "transcribed", label: "Transcribed live during the call", note: "" },
+  { key: "evaluating", label: "Evaluating the candidate's answers", note: "Every quote is checked against the transcript. Usually under a minute." },
+] as const;
+
+function Progress({ status, live }: { status: HRRoundState["eval_status"]; live: boolean }) {
+  const steps: readonly { key: string; label: string; note: string }[] = live ? LIVE_STEPS : STEPS;
+  const at = steps.findIndex((s) => s.key === status);
   return (
     <section className="after-progress live-border" aria-live="polite">
       <h2 className="section-title">MITRA is working on the HR round</h2>
       <ol className="progress-steps">
-        {STEPS.map((step, i) => (
+        {steps.map((step, i) => (
           <li key={step.key} className={i < at ? "done" : i === at ? "active" : ""}>
             <span className="progress-mark">
               {i < at ? <CheckCircle2 size={18} /> : i === at ? <Spinner size={18} /> : <span className="progress-dot" />}
@@ -120,7 +127,7 @@ function Failed({ round, candidateId, onChange }: { round: HRRoundState; candida
 }
 
 const RECOMMEND = {
-  proceed_to_technical: { label: "Proceed to the technical round", tone: "good" },
+  proceed_to_technical: { label: "Proceed to the MITRA interview round", tone: "good" },
   reject: { label: "Reject", tone: "closed" },
   discuss: { label: "Discuss: the evidence points neither way", tone: "attention" },
 } as const;
@@ -156,7 +163,11 @@ function Evaluation({ round }: { round: HRRoundState }) {
         <p className="fit-summary">{ev.summary}</p>
         {round.attribution && (
           <span className={round.attribution.confidence === "uncertain" ? "mark mark-lg tone-attention" : "mark mark-lg tone-good"}>
-            {CONFIDENCE[round.attribution.confidence]}
+            {round.attribution.method === "live"
+              ? "Transcribed live: who said what is known"
+              : round.attribution.method === "live_one_mic"
+                ? "A phone call, transcribed live: voices told apart by sound"
+                : CONFIDENCE[round.attribution.confidence]}
             {round.attribution.other_voices > 0 ? `, and ${round.attribution.other_voices} other voice heard` : ""}
           </span>
         )}
@@ -182,7 +193,7 @@ function Evaluation({ round }: { round: HRRoundState }) {
         </ol>
         {ev.findings_for_technical.length > 0 && (
           <>
-            <h3 className="brief-sub">For the technical round</h3>
+            <h3 className="brief-sub">For the MITRA interview round</h3>
             <ul className="dealbreakers">
               {ev.findings_for_technical.map((f, i) => (
                 <li key={i}>{f}</li>
@@ -223,13 +234,13 @@ interface Choice {
 }
 
 const CHOICES: Choice[] = [
-  { to: "ready_for_technical", label: "Proceed to technical", icon: <UserCheck size={17} />, variant: "primary" },
-  { to: "parked", label: "Not now", icon: <Clock3 size={16} />, variant: "secondary", prompt: "Why not now? HR and the BU head will read this." },
+  { to: "ready_for_technical", label: "Proceed to MITRA interview", icon: <UserCheck size={17} />, variant: "primary" },
   { to: "rejected", label: "Reject", icon: <XCircle size={17} />, variant: "danger", prompt: "Why reject? This is kept on their record." },
 ];
 
-export function HRDecision({ view, onDone }: { view: HRRoundView; onDone: () => void }) {
+export function HRDecision({ view }: { view: HRRoundView }) {
   const toast = useToast();
+  const goBack = useGoBack(`/candidates/${view.candidate.id}`);
   const [picked, setPicked] = useState<Choice | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -241,9 +252,9 @@ export function HRDecision({ view, onDone }: { view: HRRoundView; onDone: () => 
     setError(null);
     try {
       await api.post(`/candidates/${view.candidate.id}/move`, { to: choice.to, reason: reason.trim() || undefined });
-      toast(`${view.candidate.name}: ${choice.label}`);
+      toast(`${view.candidate.name}: ${choice.label}. Saved.`, choice.to === "rejected" ? "urgent" : "ok");
       setPicked(null);
-      onDone();
+      goBack();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -291,7 +302,15 @@ export function AfterRound({ view, onChange }: { view: HRRoundView; onChange: (v
   const round = view.round!;
   if (round.eval_status === "ready" && round.evaluation) return <Evaluation round={round} />;
   if (round.eval_status === "failed") return <Failed round={round} candidateId={view.candidate.id} onChange={onChange} />;
-  if (["waiting_recording", "transcribing", "evaluating"].includes(round.eval_status)) return <Progress status={round.eval_status} />;
+  if (["waiting_recording", "transcribing", "evaluating"].includes(round.eval_status))
+    // Live lines go straight to the evaluation; a round waiting on its recording
+    // (checked against the live lines after the call) shows the recording's steps.
+    return (
+      <Progress
+        status={round.eval_status}
+        live={(round.attribution?.method === "live" || round.attribution?.method === "live_one_mic") && round.eval_status === "evaluating"}
+      />
+    );
   return (
     <section className="after-failed">
       <p className="muted">

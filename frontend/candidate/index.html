@@ -1156,8 +1156,13 @@
       $("speaker").textContent = botSpeaking ? "{{BOT_NAME}} is speaking" : "Listening";
     });
 
-    // The bot leaving is how a completed interview ends.
-    call.on("participant-left", () => {
+    // The bot leaving is how a completed interview ends. Only the bot: anyone
+    // else leaving (someone watching, the candidate's own second tab) must not
+    // end the candidate's interview. The bot is recognised as the room owner:
+    // its token is the only one minted with is_owner (app/interviews.py,
+    // _start_bot); the candidate's is not, and watchers' must not be.
+    call.on("participant-left", (event) => {
+      if (event?.participant?.owner !== true) return;
       finish("Your interview has ended. Thank you for your time. You can close this tab.");
     });
 

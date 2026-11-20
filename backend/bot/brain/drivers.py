@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from loguru import logger
 from openai import AsyncOpenAI
 
+from shared.text_models import REASONING_MODELS
+
 from bot.brain.brain import Judgment, JudgmentRequest, TurnPlan
 from shared.contracts import Contradiction, CoverageLevel, KeyClaim, UnexplainedTerm
 
@@ -174,13 +176,10 @@ them. A missed one can still be caught by the human reading the transcript.
 #: gpt-5-mini and gpt-5-nano take "minimal" and reject "none"; gpt-5.4 and
 #: gpt-5.6 take "none" and reject "minimal". Anything that cannot be pinned is
 #: excluded rather than tested.
-LOWEST_EFFORT = {
-    "gpt-5-mini": "minimal",
-    "gpt-5-nano": "minimal",
-    "gpt-5.4-mini": "none",
-    "gpt-5.4-nano": "none",
-    "gpt-5.6-luna": "none",
-}
+#: The table now lives in shared/text_models.py (REASONING_MODELS), so the
+#: off-call helper and this driver read one table. Its first five rows are the
+#: entries that were here; the gpt-6 Sol rows were added for the helper.
+LOWEST_EFFORT = REASONING_MODELS
 
 
 @dataclass

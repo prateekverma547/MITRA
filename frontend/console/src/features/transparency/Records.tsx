@@ -17,7 +17,7 @@ const KINDS = [
 ] as const;
 
 const RECOMMENDS = {
-  proceed_to_technical: "Recommended proceeding to the technical round",
+  proceed_to_technical: "Recommended proceeding to the MITRA interview round",
   reject: "Recommended rejecting",
   discuss: "Recommended discussing: the evidence pointed neither way",
 };
@@ -97,7 +97,7 @@ function Result({ item, term }: { item: RecordItem; term: string }) {
         )}
         {item.kind === "recording" && (
           <>
-            <p className="tx-record-line">{item.round === "hr" ? "HR round" : "Technical round"} recording, stored. Opening it is recorded in the audit trail.</p>
+            <p className="tx-record-line">{item.round === "hr" ? "HR round" : "MITRA interview round"} recording, stored. Opening it is recorded in the audit trail.</p>
             <Recording item={item} />
           </>
         )}
@@ -148,7 +148,7 @@ export function Records() {
       </div>
 
       <p className="notice tx-note">
-        Technical-round transcripts and MITRA's interview reports will appear here once the technical round is connected. Nothing is shown in
+        MITRA interview transcripts and reports will appear here once the MITRA interview round is connected. Nothing is shown in
         their place until then.
       </p>
 

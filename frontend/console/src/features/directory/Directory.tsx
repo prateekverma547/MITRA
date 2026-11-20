@@ -2,7 +2,7 @@
 // Built for hundreds: search, filters with counts, sorting and pages, all in
 // the URL so back, forward and a shared link keep the same view.
 
-import { ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Info, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
@@ -12,6 +12,7 @@ import { Button } from "../../shell/ui/Button";
 import { RowLink } from "../../shell/ui/RowLink";
 import { PageSkeleton } from "../../shell/ui/Skeleton";
 import { ScoreMeter } from "../screening/ScoreMeter";
+import { waitClass } from "../../shell/ui/waitClass";
 
 const SORTS = [
   { id: "recent", label: "Newest first" },
@@ -62,6 +63,8 @@ export function Directory() {
     if (bu) query.set("bu", bu);
     if (group) query.set("group", group);
     if (flag) query.set("flag", flag);
+    // Without a unit chosen, keep each business unit's candidates together.
+    if (!bu) query.set("by_bu", "true");
     api
       .get<DirectoryData>(`/candidates?${query}`)
       .then((d) => {
@@ -85,6 +88,14 @@ export function Directory() {
   const from = data.total ? (data.page - 1) * data.page_size + 1 : 0;
   const to = Math.min(data.total, data.page * data.page_size);
   const filtered = Boolean(q || bu || group || flag);
+  // The rows on this page, under their business unit (the server keeps each unit together).
+  const sections: { name: string; items: typeof data.items }[] = [];
+  for (const item of data.items) {
+    const name = item.bu_name ?? "";
+    const last = sections[sections.length - 1];
+    if (last && last.name === name) last.items.push(item);
+    else sections.push({ name, items: [item] });
+  }
 
   return (
     <div className="page page-wide dash">
@@ -92,10 +103,19 @@ export function Directory() {
         <div>
           <h1 className="page-title">Candidates</h1>
           <p className="page-sub">
-            {me?.role === "bu_head" ? `Everyone in ${me.bu_name ?? "your"} job requests.` : "Everyone across every job request and business unit."}
+            {me?.role === "bu_head" ? `Everyone in ${me.bu_name ?? "your"} job requests.` : "Everyone across every job request, grouped by business unit."}
           </p>
         </div>
       </header>
+
+      <p className="page-guide">
+        <Info size={16} aria-hidden="true" />
+        {me?.role === "hr"
+          ? "Open someone to see their next step. \"Waiting for you\" shows only the people who need you now; pick a unit or a step to narrow the list."
+          : me?.role === "bu_head"
+            ? "Open someone to read their results. \"Waiting for you\" shows the people whose decision is yours."
+            : "Open anyone to see where they stand. Pick a unit or a step to narrow the list."}
+      </p>
 
       <div className="toolbar">
         <label className="search-box">
@@ -194,44 +214,53 @@ export function Directory() {
                   <th className="row-go-head" aria-hidden="true" />
                 </tr>
               </thead>
-              <tbody>
-                {data.items.map((c) => (
-                  <RowLink key={c.id} to={`/candidates/${c.id}`}>
-                    <td>
-                      <span className="person">
-                        <span className="avatar" aria-hidden="true">
-                          {initials(c.name)}
+              {sections.map((sec) => (
+                <tbody key={sec.name}>
+                  {!bu && (
+                    <tr className="unit-row">
+                      <th scope="colgroup" colSpan={5}>
+                        <span>{sec.name || "No business unit"}</span>
+                        <span className="unit-row-n">
+                          {data.bu_counts?.[sec.name] ?? sec.items.length} {(data.bu_counts?.[sec.name] ?? sec.items.length) === 1 ? "candidate" : "candidates"}
                         </span>
-                        <span className="person-text">
-                          <Link className="row-title" viewTransition to={`/candidates/${c.id}`}>
-                            {c.name}
-                          </Link>
-                          <span className="row-sub">
-                            {c.job.title}
-                            {c.bu_name ? `, ${c.bu_name}` : ""}
+                      </th>
+                    </tr>
+                  )}
+                  {sec.items.map((c) => (
+                  <RowLink key={c.id} to={`/candidates/${c.id}`}>
+                      <td>
+                        <span className="person">
+                          <span className="avatar" aria-hidden="true">
+                            {initials(c.name)}
+                          </span>
+                          <span className="person-text">
+                            <Link className="row-title" viewTransition to={`/candidates/${c.id}`}>
+                              {c.name}
+                            </Link>
+                            <span className="row-sub">{c.job.title}</span>
                           </span>
                         </span>
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`mark tone-${STAGE_TONES[c.stage]}`}>{STAGE_LABELS[c.stage]}</span>
-                      {c.needs && <span className="row-sub needs">{c.needs}</span>}
-                    </td>
-                    <td>
-                      {c.score_percent === null ? (
-                        <span className="muted">Not screened</span>
-                      ) : (
-                        <ScoreMeter score={c.score_percent} threshold={c.threshold_percent ?? 50} enoughEvidence={c.enough_evidence ?? true} compact />
-                      )}
-                    </td>
-                    <td>
-                      <span className={c.needs && c.waiting_days >= 3 ? "wait long" : "wait"}>
-                        {c.waiting_days === 0 ? "Today" : `${c.waiting_days} d`}
-                      </span>
-                    </td>
-                  </RowLink>
-                ))}
-              </tbody>
+                      </td>
+                      <td>
+                        <span className={`mark tone-${STAGE_TONES[c.stage]}`}>{STAGE_LABELS[c.stage]}</span>
+                        {c.needs && <span className="row-sub needs">{c.needs}</span>}
+                      </td>
+                      <td>
+                        {c.score_percent === null ? (
+                          <span className="muted">Not screened</span>
+                        ) : (
+                          <ScoreMeter score={c.score_percent} threshold={c.threshold_percent ?? 50} enoughEvidence={c.enough_evidence ?? true} compact />
+                        )}
+                      </td>
+                      <td>
+                        <span className={c.needs ? waitClass(c.waiting_days) : "wait"}>
+                          {c.waiting_days === 0 ? "Today" : `${c.waiting_days} d`}
+                        </span>
+                      </td>
+                    </RowLink>
+                  ))}
+                </tbody>
+              ))}
             </table>
           </div>
         )}

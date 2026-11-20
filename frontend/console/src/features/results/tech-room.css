@@ -1,0 +1,76 @@
+/* The live room for the technical round. Track H. The stage is a dark session
+   panel in both themes; everything else uses the shell's tokens. */
+
+.troom { gap: 16px; }
+.troom-head { align-items: center; }
+.troom-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1200px) { .troom-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .troom-stage { grid-column: 1 / -1; } }
+@media (max-width: 760px) { .troom-grid { grid-template-columns: minmax(0, 1fr); } }
+
+.troom-stage {
+  --stage: #111111; --stage-2: #1c1c1b; --stage-line: rgba(160, 190, 255, 0.14); --stage-text: #f2f1ee; --stage-muted: #a8a7a3;
+  border-radius: 16px; padding: 18px 20px; color: var(--stage-text);
+  background: radial-gradient(120% 80% at 90% -20%, color-mix(in srgb, var(--neon-b) 18%, transparent), transparent 60%), linear-gradient(var(--stage-2), var(--stage));
+  border: 1px solid color-mix(in srgb, var(--neon-a) 28%, var(--stage-line));
+  display: flex; flex-direction: column; gap: 18px; min-height: 340px;
+}
+.troom-stage-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.troom-pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px; font-size: var(--s-12); font-weight: 650; background: rgba(255, 255, 255, 0.07); color: var(--stage-muted); }
+.troom-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.troom-live, .troom-starting { color: #ffd2cc; background: rgba(255, 92, 76, 0.16); }
+.troom-live .troom-dot, .troom-starting .troom-dot { background: #ff5c4c; animation: troom-pulse 2s ease-in-out infinite; }
+.troom-consented, .troom-scoring, .troom-candidate_left, .troom-closing { color: #ffe3a3; background: rgba(243, 199, 102, 0.14); }
+.troom-done { color: #b8f0d3; background: rgba(111, 211, 160, 0.14); }
+.troom-did_not_happen { color: #ffc2bc; background: rgba(255, 143, 132, 0.12); }
+@keyframes troom-pulse { 50% { box-shadow: 0 0 0 5px rgba(255, 92, 76, 0.18); } }
+.troom-clock { font: 650 1.5rem / 1 var(--sans); font-variant-numeric: tabular-nums; }
+.troom-of { font-size: var(--s-12); font-weight: 500; color: var(--stage-muted); }
+
+.troom-mitra { display: flex; gap: 16px; align-items: center; }
+.troom-orb {
+  flex: none; width: 54px; height: 54px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff 0 4%, var(--neon-c) 22%, var(--neon-a) 58%, var(--neon-b));
+  box-shadow: 0 0 22px color-mix(in srgb, var(--neon-a) 55%, transparent);
+}
+.troom-mitra.speaking .troom-orb { animation: troom-breathe 3s ease-in-out infinite; }
+@keyframes troom-breathe { 50% { box-shadow: 0 0 30px color-mix(in srgb, var(--neon-c) 70%, transparent); } }
+.troom-name { font-weight: 700; letter-spacing: 0.04em; }
+.troom-line { font-size: var(--s-15); color: var(--stage-text); margin-top: 2px; }
+.troom-muted { color: var(--stage-muted); font-size: var(--s-12); }
+
+.troom-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.troom-facts div { padding: 10px 12px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--stage-line); }
+.troom-facts dt { font-size: 12px; color: var(--stage-muted); }
+.troom-facts dd { margin: 2px 0 0; font-size: var(--s-12); font-weight: 600; }
+@media (max-width: 560px) { .troom-facts { grid-template-columns: minmax(0, 1fr); } }
+.troom-see { display: flex; gap: 8px; align-items: flex-start; font-size: var(--s-12); color: var(--stage-muted); margin-top: auto; }
+.troom-see svg { flex: none; margin-top: 2px; }
+
+.troom-plan .card-title svg, .troom-integrity .card-title svg { vertical-align: -2px; margin-right: 4px; color: var(--muted); }
+.troom-sections { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.troom-sections li { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 8px 0; font-size: var(--s-15); }
+.troom-sections li:not(:last-child)::after { content: ""; position: absolute; left: 6px; top: 26px; bottom: -8px; width: 2px; background: var(--rule); }
+.troom-step { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--rule); background: var(--surface); position: relative; z-index: 1; }
+.troom-sections li.done .troom-step { background: var(--signal); border-color: var(--signal); }
+.troom-sections li.done:not(:last-child)::after { background: var(--signal); }
+.troom-sections li.now .troom-step { border-color: var(--signal); box-shadow: 0 0 0 4px var(--signal-soft); }
+.troom-sections li.now .troom-section-name { color: var(--signal); font-weight: 650; }
+.troom-section-min { font-size: var(--s-12); color: var(--muted); font-variant-numeric: tabular-nums; }
+.troom-now { grid-column: 2 / -1; font-size: 12px; color: var(--signal); margin-top: -4px; }
+
+.troom-counts { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.troom-counts li { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; background: color-mix(in srgb, var(--attention-soft) 70%, var(--surface)); font-size: var(--s-12); }
+.troom-count { font-weight: 700; color: var(--attention); font-variant-numeric: tabular-nums; }
+.troom-events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.troom-events li { display: grid; grid-template-columns: 3.4rem minmax(0, 1fr); gap: 8px; font-size: var(--s-12); padding: 6px 0; border-bottom: 1px solid var(--rule); }
+.troom-at { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) { .troom-live .troom-dot, .troom-mitra.speaking .troom-orb { animation: none; } }
+
+/* the round's steps, on the dark stage */
+.troom-stage .round-steps { margin-top: 10px; }
+.troom-stage .round-steps li { color: var(--stage-muted); padding: 6px 0; }
+.troom-stage .round-steps li.active { color: var(--stage-text); }
+.troom-stage .round-steps .progress-note { color: var(--stage-muted); }
+.troom-stage .round-steps .progress-dot { background: var(--stage-line); }
+.troom-stage .round-steps .progress-mark { color: #6fd3a0; }

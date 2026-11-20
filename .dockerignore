@@ -26,6 +26,12 @@ uploads/
 .git
 .github
 
-# The console is built inside the image from its lockfile.
-frontend/console/node_modules
-frontend/console/dist
+# Frontend packages are installed and built inside the image (the Dockerfile's
+# frontend stage), never copied from a developer's machine.
+**/node_modules
+frontend/**/dist
+
+# The after-call speaker model is fetched and checksum-verified in the image
+# (backend/Dockerfile); a local copy must never be baked in instead.
+backend/aftercall/models/*.onnx
+backend/aftercall/models/*.part

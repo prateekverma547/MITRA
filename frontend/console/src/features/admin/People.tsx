@@ -15,7 +15,7 @@ import "./admin.css";
 
 const ROLE_HELP: Record<Role, string> = {
   org_admin: "Sees everything, read-only, and runs these admin screens.",
-  hr: "Screens CVs, runs the HR round, books the technical round.",
+  hr: "Screens CVs, runs the HR round, books the MITRA interview round.",
   bu_head: "Raises job requests and decides on their own unit's candidates.",
 };
 

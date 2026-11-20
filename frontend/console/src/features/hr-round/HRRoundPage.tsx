@@ -1,206 +1,169 @@
 // The HR round, run by a person from inside the console. Track H.
 //
-// Before the call: the credentials to send the candidate, and the questions.
-// During it: the call on the left (Daily, embedded, with HR as the room's
-// owner), and on the right the ten questions as a checklist and a notes box,
-// both saved as HR works. No bot is in this room (backend/hiring/hr_round.py).
+// Three moments, one page:
+// - before: one "Start the room" creates a private room and the candidate's
+//   credentials, and goes straight to the lobby (microphone check, devices, the
+//   invitation, "Join now");
+// - during: the meeting room (MeetingRoom.tsx), with the questions and notes
+//   beside the call;
+// - after: MITRA's evaluation of the recording, then HR's decision.
+// No AI joins this room (backend/hiring/hr_round.py).
 
-import DailyIframe, { type DailyCall } from "@daily-co/daily-js";
-import { Check, ClipboardCopy, Loader2, PhoneOff, Undo2, Video, XCircle } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Ear, Eye, Video } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
-import { STAGE_LABELS, STAGE_TONES, type HRQuestion, type HRRoundView } from "../../contracts";
+import { STAGE_LABELS, STAGE_TONES, type HRRoundView } from "../../contracts";
 import { BackButton } from "../../shell/ui/BackButton";
 import { Button } from "../../shell/ui/Button";
-import { CopyField, copyText } from "../../shell/ui/CopyField";
 import { PageSkeleton } from "../../shell/ui/Skeleton";
 import { useToast } from "../../shell/ui/Toast";
 import { AfterRound, HRDecision } from "./AfterRound";
+import { InviteCard, MeetingRoom } from "./MeetingRoom";
+import { NotesPanel, QuestionBrief, useRoundProgress } from "./RoomPanel";
+import "./hr-room.css";
 
-const SAVE_DELAY_MS = 700;
+const WORKING = ["waiting_recording", "transcribing", "evaluating"];
+const LIVE_POLL_MS = 8000;
 
-function invitation(view: HRRoundView): string {
+/** What is actually happening in a live round, from Daily's presence. */
+function liveWords(view: HRRoundView): { label: string; line: string; empty: boolean } {
   const r = view.round!;
-  return [
-    `Hello ${view.candidate.name},`,
-    "",
-    `Your HR conversation for ${view.job.title} is ready. Join here: ${r.join_url}`,
-    `Meeting ID: ${r.meeting_id}`,
-    `Password: ${r.password}`,
-    "",
-    "It is a conversation with a member of our HR team, and it is recorded.",
-  ].join("\n");
+  const p = r.presence;
+  if (r.mode === "listen") {
+    // A phone call: the candidate is never in MITRA's room, so presence says nothing about them.
+    return r.status === "scheduled"
+      ? { label: "Ready to listen", line: `HR will call ${view.candidate.name} on the phone; MITRA listens and transcribes.`, empty: false }
+      : { label: "In progress", line: `HR is on the phone with ${view.candidate.name}; MITRA is listening.`, empty: false };
+  }
+  if (r.status === "scheduled") return { label: "Waiting to start", line: `The room is open. ${view.candidate.name} joins with the meeting ID and password.`, empty: false };
+  if (!p || !p.known) return { label: "In progress", line: `HR is talking with ${view.candidate.name}.`, empty: false };
+  if (p.candidate && p.others > 0) return { label: "In progress", line: `HR and ${view.candidate.name} are in the room.`, empty: false };
+  if (p.candidate) return { label: "Candidate waiting", line: `${view.candidate.name} is in the room, waiting for HR.`, empty: false };
+  if (p.others > 0) return { label: "Candidate left the call", line: `HR is in the room; ${view.candidate.name} has left.`, empty: false };
+  return { label: "Nobody in the room", line: "The call has emptied, but the round is still open. End it so MITRA can evaluate the conversation.", empty: true };
 }
 
-// ---- the call ------------------------------------------------------------------------------------
+function Room({ view, onChange }: { view: HRRoundView; onChange: (v: HRRoundView | null) => void }) {
+  const toast = useToast();
+  const [params] = useSearchParams();
+  const r = view.round!;
+  const progress = useRoundProgress(view.candidate.id, r.asked, r.notes, r.can_edit_notes && r.can_join);
+  // A development-only preview of the in-call layout, with stand-in participants.
+  const preview = import.meta.env.DEV && params.get("preview") === "room";
 
-function Call({ candidateId, onLeft }: { candidateId: string; onLeft: () => void }) {
-  const host = useRef<HTMLDivElement>(null);
-  const call = useRef<DailyCall | null>(null);
-  const [state, setState] = useState<"idle" | "joining" | "in" | "left">("idle");
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(
-    () => () => {
-      call.current?.destroy();
-      call.current = null;
-    },
-    [],
-  );
-
-  async function join() {
-    if (!host.current) return;
-    setState("joining");
-    setError(null);
+  async function cancel() {
     try {
-      const { room_url, token } = await api.post<{ room_url: string; token: string }>(`/candidates/${candidateId}/hr-round/join`);
-      const frame = DailyIframe.createFrame(host.current, {
-        showLeaveButton: true,
-        iframeStyle: { width: "100%", height: "100%", border: "0" },
-      });
-      call.current = frame;
-      frame.on("left-meeting", () => {
-        frame.destroy();
-        call.current = null;
-        setState("left");
-        onLeft();
-      });
-      await frame.join({ url: room_url, token });
-      setState("in");
+      onChange(await api.post<HRRoundView>(`/candidates/${view.candidate.id}/hr-round/cancel`, {}));
+      toast("Invitation cancelled. You can start a new room at any time.");
     } catch (e) {
-      setError((e as Error).message || "Could not join the call.");
-      call.current?.destroy();
-      call.current = null;
-      setState("idle");
+      toast((e as Error).message);
     }
   }
 
+  const [ending, setEnding] = useState(false);
+  async function endNow() {
+    setEnding(true);
+    try {
+      onChange(await api.post<HRRoundView>(`/candidates/${view.candidate.id}/hr-round/end`));
+      toast("HR round ended. MITRA is evaluating the recording.");
+    } catch (e) {
+      toast((e as Error).message);
+    } finally {
+      setEnding(false);
+    }
+  }
+  const words = r.status === "in_progress" ? liveWords(view) : null;
+
   return (
-    <div className="call">
-      <div ref={host} className="call-frame" />
-      {state !== "in" && (
-        <div className="call-idle">
+    <>
+      {words?.empty && r.can_end && (
+        <section className="room-status-card attention" role="status">
+          <Eye size={22} aria-hidden="true" />
           <div>
-            <Video size={34} aria-hidden="true" />
-            <h2 className="section-title call-title">{state === "left" ? "You left the call" : "Join when you are ready"}</h2>
-            <p>
-              {state === "left"
-                ? "You can rejoin while the round is open. End the round when you have finished."
-                : "You join as the host. The candidate joins with the meeting ID and password you sent them."}
-            </p>
-            {error && <p className="error">{error}</p>}
-            <Button
-              variant="primary"
-              icon={state === "joining" ? <Loader2 size={17} className="spin" /> : <Video size={17} />}
-              disabled={state === "joining"}
-              onClick={join}
-            >
-              {state === "left" ? "Rejoin the call" : state === "joining" ? "Joining" : "Join the HR round"}
-            </Button>
+            <h2>{words.label}</h2>
+            <p className="room-muted">{words.line}</p>
           </div>
-        </div>
+          <Button variant="primary" loading={ending} onClick={endNow}>
+            End round and evaluate
+          </Button>
+        </section>
       )}
-    </div>
+      <MeetingRoom view={view} progress={progress} onEnded={onChange} onCancel={cancel} preview={preview} />
+    </>
   );
 }
 
-// ---- checklist and notes ----------------------------------------------------------------------------
-
-function SidePanel({
-  candidateId,
-  questions,
-  initialAsked,
-  initialNotes,
-  editable,
-}: {
-  candidateId: string;
-  questions: HRQuestion[];
-  initialAsked: string[];
-  initialNotes: string;
-  editable: boolean;
-}) {
-  const [asked, setAsked] = useState<string[]>(initialAsked);
-  const [notes, setNotes] = useState(initialNotes);
-  const [saved, setSaved] = useState<"saved" | "saving" | "error">("saved");
-  const first = useRef(true);
-
-  useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
-    }
-    setSaved("saving");
-    const timer = window.setTimeout(async () => {
-      try {
-        await api.post(`/candidates/${candidateId}/hr-round/progress`, { asked, notes });
-        setSaved("saved");
-      } catch {
-        setSaved("error");
-      }
-    }, SAVE_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [asked, notes, candidateId]);
-
-  function toggle(id: string) {
-    setAsked((all) => (all.includes(id) ? all.filter((x) => x !== id) : [...all, id]));
-  }
-
+/** For a BU head or admin while the round is live: they can follow it, not join it. */
+function Watching({ view }: { view: HRRoundView }) {
   return (
-    <aside className="side-panel">
-      <div className="panel-head">
-        <h2 className="section-title">Questions</h2>
-        <span className="saved" aria-live="polite">
-          {saved === "saving" ? "Saving" : saved === "error" ? "Not saved, retrying on your next change" : `${asked.length} of ${questions.length} asked`}
-        </span>
+    <section className="room-status-card">
+      <Eye size={22} aria-hidden="true" />
+      <div>
+        <h2>{liveWords(view).label}</h2>
+        <p className="room-muted">
+          {liveWords(view).line} MITRA's evaluation appears here when the round ends.
+        </p>
       </div>
-      {questions.length === 0 ? (
-        <p className="muted">No screening questions for this candidate.</p>
+    </section>
+  );
+}
+
+/**
+ * After the round the prompter has done its job: what was asked is the record,
+ * not the full list to ask from. Only the questions HR ticked are kept here.
+ */
+function AskedSummary({ view }: { view: HRRoundView }) {
+  const asked = new Set(view.round!.asked);
+  const done = view.questions.filter((q) => asked.has(q.id));
+  return (
+    <section className="room-panel-body asked-summary" aria-label="Questions asked">
+      <header className="room-panel-head">
+        <h2>Questions asked</h2>
+        <span className="muted">
+          {done.length} of {view.questions.length}
+        </span>
+      </header>
+      {done.length === 0 ? (
+        <p className="room-muted">None were ticked during the round. The transcript is the record of what was asked.</p>
       ) : (
-        <ol className="checklist">
-          {questions.map((q) => (
-            <li key={q.id}>
-              <label className="check">
-                <input type="checkbox" checked={asked.includes(q.id)} onChange={() => toggle(q.id)} disabled={!editable} />
-                <span className="check-box" aria-hidden="true">
-                  <Check size={14} strokeWidth={3} />
-                </span>
-                <span className="check-text">
-                  {q.text}
-                  <span className="check-why">{q.why}</span>
-                </span>
-              </label>
-            </li>
+        <ol className="asked-list">
+          {done.map((q) => (
+            <li key={q.id}>{q.text}</li>
           ))}
         </ol>
       )}
-      <div className="notes">
-        <label htmlFor="notes" className="section-title notes-title">
-          Your notes
-        </label>
-        <textarea
-          id="notes"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          readOnly={!editable}
-          placeholder="What stood out, what to follow up in the technical round. Saved as you type."
-        />
-      </div>
-    </aside>
+    </section>
   );
 }
 
-// ---- the page ------------------------------------------------------------------------------------------
+function Completed({ view, onChange }: { view: HRRoundView; onChange: (v: HRRoundView) => void }) {
+  const r = view.round!;
+  const progress = useRoundProgress(view.candidate.id, r.asked, r.notes, r.can_edit_notes);
+  return (
+    <>
+      <div className="after-grid">
+        <AfterRound view={view} onChange={onChange} />
+        <aside className="after-side">
+          <div className="after-side-card">
+            <NotesPanel progress={progress} editable={r.can_edit_notes} />
+          </div>
+          <div className="after-side-card">
+            <AskedSummary view={view} />
+          </div>
+        </aside>
+      </div>
+      <HRDecision view={view} />
+    </>
+  );
+}
 
 export function HRRoundPage() {
   const { candidateId } = useParams();
   const toast = useToast();
   const [view, setView] = useState<HRRoundView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"book" | "end" | "cancel" | null>(null);
-  const [ending, setEnding] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
-  const [reason, setReason] = useState("");
+  const [starting, setStarting] = useState<"room" | "listen" | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -214,28 +177,32 @@ export function HRRoundPage() {
     load();
   }, [load]);
 
-  // While MITRA works on the round after the call, check back every few seconds.
-  const working = ["waiting_recording", "transcribing", "evaluating"].includes(view?.round?.eval_status ?? "");
+  // While MITRA works on the recording, check back every few seconds.
+  const working = WORKING.includes(view?.round?.eval_status ?? "");
   useEffect(() => {
     if (!working) return;
     const timer = window.setTimeout(load, 5000);
     return () => window.clearTimeout(timer);
   }, [view, working, load]);
 
-  async function act(kind: "book" | "end" | "cancel") {
-    setBusy(kind);
+  // While the round is live, keep who-is-in-the-room current.
+  const liveRound = view?.round?.status === "in_progress" || view?.round?.status === "scheduled";
+  useEffect(() => {
+    if (!liveRound) return;
+    const timer = window.setTimeout(load, LIVE_POLL_MS);
+    return () => window.clearTimeout(timer);
+  }, [view, liveRound, load]);
+
+  async function start(mode: "room" | "listen") {
+    setStarting(mode);
     setError(null);
     try {
-      const path = kind === "book" ? "" : `/${kind}`;
-      const body = kind === "cancel" ? { reason } : undefined;
-      setView(await api.post<HRRoundView>(`/candidates/${candidateId}/hr-round${path}`, body));
-      toast(kind === "book" ? "HR round booked" : kind === "end" ? "HR round ended" : "HR round cancelled");
-      setEnding(false);
-      setCancelling(false);
+      setView(await api.post<HRRoundView>(`/candidates/${candidateId}/hr-round`, { mode }));
+      toast(mode === "listen" ? "Ready. Put your phone on speaker, then start listening." : "Room ready. Send the invitation, then join.");
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBusy(null);
+      setStarting(null);
     }
   }
 
@@ -253,17 +220,18 @@ export function HRRoundPage() {
   const stage = view.candidate.stage;
 
   return (
-    <div className="page page-wide">
+    <div className="page page-wide hr-round-page">
       <BackButton fallback={`/candidates/${view.candidate.id}`} label={view.candidate.name} />
-      <header className="page-head">
+      <header className="page-head room-page-head">
         <div>
-          <h1 className="page-title">HR round</h1>
+          <h1 className="page-title">HR round with {view.candidate.name}</h1>
           <p className="page-sub">
-            {view.candidate.name}, for {view.job.title}. A conversation between HR and the candidate; no AI joins it.
+            {view.job.title}
+            {view.job.bu_name ? `, ${view.job.bu_name}` : ""}. A recorded voice call, transcribed live; MITRA evaluates it when the round ends.
           </p>
         </div>
         {r?.status === "in_progress" ? (
-          <span className="mark mark-lg live-dot">In progress</span>
+          <span className={liveWords(view).label === "In progress" ? "mark mark-lg live-dot" : "mark mark-lg tone-attention"}>{liveWords(view).label}</span>
         ) : (
           <span className={`mark mark-lg tone-${STAGE_TONES[stage]}`}>{STAGE_LABELS[stage]}</span>
         )}
@@ -271,121 +239,52 @@ export function HRRoundPage() {
 
       {error && <p className="error">{error}</p>}
 
-      {!r && (
-        <section className="hr-entry live-border">
-          <div>
-            <h2 className="section-title">Not booked yet</h2>
-            <p className="muted">Booking creates a private room and the meeting ID and password to send the candidate.</p>
-          </div>
-          {view.can_book && (
-            <Button variant="primary" loading={busy === "book"} onClick={() => act("book")}>
-              Book the HR round
+      {!live && view.can_book && (
+        <section className="room-start-choice" aria-label="How the HR round takes place">
+          <div className="room-start">
+            <div className="room-start-art" aria-hidden="true">
+              <Video size={30} />
+            </div>
+            <div className="room-start-copy">
+              <h2>In MITRA's room</h2>
+              <p className="room-muted">
+                MITRA opens a private, recorded voice room and gives you a meeting ID and password to send {view.candidate.name}. You join from
+                here; they join from their link.
+              </p>
+            </div>
+            <Button variant="primary" icon={<Video size={17} />} loading={starting === "room"} disabled={starting !== null} onClick={() => start("room")}>
+              Start the room
             </Button>
-          )}
-        </section>
-      )}
-
-      {r && r.meeting_id && live && (
-        <section className="invite">
-          <div className="credentials">
-            <CopyField label="Meeting ID" value={r.meeting_id} />
-            <CopyField label="Password" value={r.password ?? ""} />
-            <CopyField label="Join page" value={r.join_url ?? ""} small />
           </div>
-          <Button
-            icon={<ClipboardCopy size={16} />}
-            onClick={async () => {
-              if (await copyText(invitation(view))) toast("Copied a message you can send to the candidate");
-            }}
-          >
-            Copy an invitation to send
-          </Button>
+          <div className="room-start">
+            <div className="room-start-art" aria-hidden="true">
+              <Ear size={30} />
+            </div>
+            <div className="room-start-copy">
+              <h2>On your phone, MITRA listens</h2>
+              <p className="room-muted">
+                You call {view.candidate.name} from your own phone, on speaker, near this laptop. MITRA listens through your microphone,
+                transcribes the call and shows you the questions, as in the room.
+              </p>
+            </div>
+            <Button icon={<Ear size={17} />} loading={starting === "listen"} disabled={starting !== null} onClick={() => start("listen")}>
+              Listen to a phone call
+            </Button>
+          </div>
         </section>
       )}
+      {!live && view.can_book && <QuestionBrief questions={view.questions} name={view.candidate.name} />}
 
-      {r && live && (
-        <div className="hr-grid">
-          {r.can_join ? (
-            <Call candidateId={view.candidate.id} onLeft={load} />
-          ) : (
-            <div className="call">
-              <div className="call-idle">
-                <p>Only HR joins this call from the console.</p>
-              </div>
-            </div>
-          )}
-          <SidePanel
-            candidateId={view.candidate.id}
-            questions={view.questions}
-            initialAsked={r.asked}
-            initialNotes={r.notes}
-            editable={r.can_edit_notes && r.can_join}
-          />
-        </div>
+      {live && r!.can_join && <Room view={view} onChange={(v) => (v ? setView(v) : load())} />}
+
+      {live && !r!.can_join && (
+        <>
+          <Watching view={view} />
+          {r!.meeting_id && r!.password && <InviteCard view={view} />}
+        </>
       )}
 
-      {r && r.status === "completed" && (
-        <div className="hr-grid">
-          <AfterRound view={view} onChange={setView} />
-          <SidePanel
-            candidateId={view.candidate.id}
-            questions={view.questions}
-            initialAsked={r.asked}
-            initialNotes={r.notes}
-            editable={r.can_edit_notes}
-          />
-        </div>
-      )}
-
-      {r && r.status === "completed" && <HRDecision view={view} onDone={load} />}
-
-      {r && (r.can_end || r.can_cancel) && (
-        <div className="decision-bar decision-stack">
-          {cancelling ? (
-            <form
-              className="reason"
-              onSubmit={(e) => {
-                e.preventDefault();
-                act("cancel");
-              }}
-            >
-              <label htmlFor="cancel-reason">Why is the round cancelled? The candidate can be booked again.</label>
-              <textarea id="cancel-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
-              <div className="actions">
-                <Button type="submit" variant="danger" icon={<XCircle size={17} />} loading={busy === "cancel"} disabled={!reason.trim()}>
-                  Cancel the round
-                </Button>
-                <Button variant="ghost" icon={<Undo2 size={16} />} onClick={() => setCancelling(false)}>
-                  Keep it
-                </Button>
-              </div>
-            </form>
-          ) : ending ? (
-            <div className="actions">
-              <span className="decision-q">End the HR round for both of you?</span>
-              <Button variant="danger" icon={<PhoneOff size={17} />} loading={busy === "end"} onClick={() => act("end")}>
-                End the round
-              </Button>
-              <Button variant="ghost" icon={<Undo2 size={16} />} onClick={() => setEnding(false)}>
-                Not yet
-              </Button>
-            </div>
-          ) : (
-            <div className="actions">
-              {r.can_end && (
-                <Button variant="primary" icon={<PhoneOff size={17} />} onClick={() => setEnding(true)}>
-                  End the round
-                </Button>
-              )}
-              {r.can_cancel && (
-                <Button variant="ghost" icon={<XCircle size={16} />} onClick={() => setCancelling(true)}>
-                  Cancel the booking
-                </Button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      {r && r.status === "completed" && <Completed view={view} onChange={setView} />}
     </div>
   );
 }

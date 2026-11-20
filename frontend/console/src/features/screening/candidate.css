@@ -22,7 +22,13 @@
 .next-actions .hr-entry::after { display: none; }
 .next-actions .hr-entry .section-title { display: none; }
 .next-actions .hr-entry p.muted { display: none; }  /* "What happens now" already says it */
-.next-actions .tech-entry, .next-actions .tech-entry-row { display: flex; flex-direction: row-reverse; flex-wrap: wrap; gap: 10px; align-items: center; }
+.next-actions .tech-entry { align-items: flex-end; }
+.next-actions .tech-entry .actions { justify-content: flex-end; }
+/* A booked round shows its credentials: give them the full width of the block. */
+.next-step:has(.tech-booking), .next-step:has(.tech-plan), .next-step:has(.tech-status) { grid-template-columns: minmax(0, 1fr); }
+.next-step:has(.tech-booking) .next-actions, .next-step:has(.tech-plan) .next-actions, .next-step:has(.tech-status) .next-actions { justify-content: flex-start; }
+.next-step:has(.tech-booking) .tech-entry, .next-step:has(.tech-plan) .tech-entry, .next-step:has(.tech-status) .tech-entry { align-items: stretch; width: 100%; }
+.next-step:has(.tech-booking) .tech-entry .actions, .next-step:has(.tech-plan) .tech-entry .actions { justify-content: flex-start; }
 .next-actions .reason { min-width: min(420px, 80vw); }
 @media (max-width: 900px) { .next-step { grid-template-columns: minmax(0, 1fr); } .next-actions { justify-content: flex-start; } }
 
@@ -53,7 +59,7 @@
 .point { display: flex; flex-direction: column; gap: 4px; }
 .point-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
 .point-name { font-weight: 600; font-size: var(--s-15); }
-.point-src { font-size: 11px; font-weight: 600; color: var(--muted); padding: 1px 7px; border: 1px solid var(--rule); border-radius: 999px; white-space: nowrap; }
+.point-src { font-size: 12px; font-weight: 600; color: var(--muted); padding: 1px 7px; border: 1px solid var(--rule); border-radius: 999px; white-space: nowrap; }
 .point-why { font-size: var(--s-12); color: var(--muted); }
 
 .cv-table { width: 100%; border-collapse: collapse; font-size: var(--s-15); }
@@ -88,3 +94,74 @@
 .sh-what { color: var(--text); }
 .sh-when { color: var(--faint); white-space: nowrap; }
 .sh-reason { grid-column: 1 / -1; color: var(--muted); font-style: italic; }
+
+/* The results page's decision block: the buttons sit beside the reading. */
+.decide-block .next-actions .actions { justify-content: flex-end; }
+.decide-block .reason { min-width: min(460px, 80vw); }
+
+/* ---- a CV just uploaded: confirm it, then proceed or re-upload --------------------------------- */
+
+.cv-ready {
+  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: clamp(20px, 3vw, 48px); align-items: stretch;
+  padding: clamp(22px, 3vw, 40px); border-radius: 22px;
+  background:
+    radial-gradient(70% 90% at 0% 0%, color-mix(in srgb, var(--neon-a) 10%, transparent), transparent 70%),
+    radial-gradient(60% 80% at 100% 100%, color-mix(in srgb, var(--neon-c) 10%, transparent), transparent 70%),
+    var(--surface);
+  border: 1px solid color-mix(in srgb, var(--signal) 20%, var(--rule)); box-shadow: var(--brief-shadow);
+}
+.cv-ready-main { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 14px; }
+.cv-ready-icon {
+  width: 96px; height: 96px; border-radius: 26px; display: grid; place-items: center; color: var(--good);
+  background: var(--good-soft); box-shadow: 0 0 0 10px color-mix(in srgb, var(--good) 8%, transparent);
+}
+.cv-ready-title { font-family: var(--serif); font-weight: 400; font-size: var(--s-37); line-height: 1.1; color: var(--ink); }
+.cv-ready-file { color: var(--muted); font-size: var(--s-15); }
+.cv-ready-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+.cv-ready-actions .btn { min-height: 52px; padding: 0 24px; font-size: var(--s-15); }
+.cv-ready-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+.cv-ready-steps li {
+  display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 14px; align-items: start; padding: 16px 18px;
+  border-radius: 16px; background: color-mix(in srgb, var(--paper) 60%, var(--surface)); border: 1px solid var(--rule);
+}
+.cv-ready-steps li > span {
+  width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: var(--signal); background: var(--signal-soft);
+}
+.cv-ready-steps strong { display: block; color: var(--ink); font-size: var(--s-15); }
+.cv-ready-steps p { margin: 4px 0 0; color: var(--muted); font-size: var(--s-12); line-height: 1.5; }
+@media (max-width: 900px) { .cv-ready { grid-template-columns: minmax(0, 1fr); min-height: 0; } }
+
+/* ---- adding a candidate: upload, then proceed or re-upload, in one place ------------------------ */
+
+.add-cand { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(320px, 1fr); gap: clamp(16px, 2.5vw, 32px); align-items: start; }
+@media (max-width: 960px) { .add-cand { grid-template-columns: minmax(0, 1fr); } }
+.add-cand-card {
+  display: flex; flex-direction: column; gap: 18px; padding: clamp(22px, 3vw, 36px); border-radius: 20px;
+  background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--brief-shadow);
+}
+.add-cand-card.done {
+  align-items: flex-start; gap: 12px;
+  background:
+    radial-gradient(70% 90% at 0% 0%, color-mix(in srgb, var(--neon-a) 10%, transparent), transparent 70%),
+    var(--surface);
+  border-color: color-mix(in srgb, var(--good) 30%, var(--rule));
+}
+.add-cand-side { display: flex; flex-direction: column; gap: 12px; }
+
+/* ---- the HR questions, leading the page until the HR round ------------------------------------- */
+
+.hrq-lead {
+  display: flex; flex-direction: column; gap: 14px; padding: 22px 24px; border-radius: 18px;
+  background: linear-gradient(160deg, var(--signal-soft), var(--surface) 62%);
+  border: 1px solid color-mix(in srgb, var(--signal) 32%, var(--rule));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--neon-a) 6%, transparent), var(--brief-shadow);
+}
+.hrq-lead h2 { font-family: var(--serif); font-weight: 500; font-size: var(--s-26); color: var(--ink); }
+.hrq-lead header p { margin-top: 4px; color: var(--muted); font-size: var(--s-15); max-width: 72ch; }
+.hrq-lead ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 24px; }
+@media (max-width: 900px) { .hrq-lead ol { grid-template-columns: minmax(0, 1fr); } }
+.hrq-lead li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 12px 0; border-top: 1px solid color-mix(in srgb, var(--signal) 14%, var(--rule)); }
+.hrq-num { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--signal); color: #fff; font-size: var(--s-12); font-weight: 700; }
+.hrq-text { display: block; font-size: var(--s-15); line-height: 1.5; color: var(--ink); font-weight: 500; }
+.hrq-why { display: block; margin-top: 3px; font-size: var(--s-12); line-height: 1.5; color: var(--muted); }
+.sg.one { grid-template-columns: minmax(0, 1fr); }

@@ -104,9 +104,39 @@ class BotRegistry:
             f"({len(self._bots)}/{max_concurrent()} interviews running)"
         )
 
+    def adopt(self, interview_id: str, pid: int) -> None:
+        """Count a live bot this process did not start (it outlived the web
+        process that did; app/startup.py). Not our child, so it is watched by
+        asking whether its process still exists."""
+        self._bots[interview_id] = AdoptedBot(pid)
+        logger.info(f"[{interview_id}] live bot adopted after a restart (pid {pid})")
+
+    def is_running(self, interview_id: str) -> bool:
+        """Whether this interview's bot process is alive in this container
+        (wave 1: a rejoin is admitted only while the interviewer is there)."""
+        process = self._bots.get(interview_id)
+        return process is not None and process.returncode is None
+
     def release(self, interview_id: str) -> None:
         self._bots.pop(interview_id, None)
 
 
 #: One registry per container, matching the one-replica deployment.
+class AdoptedBot:
+    """A bot process found alive at start-up, not a child of this process."""
+
+    def __init__(self, pid: int):
+        self.pid = pid
+
+    @property
+    def returncode(self) -> int | None:
+        try:
+            os.kill(self.pid, 0)
+        except ProcessLookupError:
+            return -1
+        except PermissionError:
+            return None  # exists, owned by someone else: still alive
+        return None
+
+
 registry = BotRegistry()

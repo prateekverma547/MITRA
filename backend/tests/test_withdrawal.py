@@ -15,6 +15,7 @@ import pytest
 
 from bot.brain.brain import InterviewBrain
 from bot.brain.withdrawal import (
+    CONFIRMATION_QUESTION,
     StopIntent,
     asked_explicitly,
     asked_to_skip_question,
@@ -260,15 +261,23 @@ def test_what_was_actually_said_is_an_instruction_not_a_hint(said):
     assert asked_explicitly(said) is True
 
 
-def test_an_explicit_instruction_ends_it_without_asking_again():
+def test_an_explicit_instruction_gets_one_confirmation_then_ends():
+    """Changed for decision 11 (docs/DEV_PLAN.md:85). This test used to assert
+    that an explicit instruction ended the interview without asking. Decision
+    11 supersedes that: every request is confirmed exactly once (spoken by
+    code), and any yes, or a second request, ends it. Never asked twice."""
     brain = brain_for()
     brain.observe(bot_text="So, tell me what you're working on at the moment.")
     brain.observe(candidate_text="I don't want to continue this interview. Just end this interview.")
 
+    assert brain.withdrew is False
+    assert brain.take_confirmation_due() is True
+    assert brain.take_confirmation_due() is False, "spoken once, never twice"
+
+    brain.observe(bot_text=CONFIRMATION_QUESTION)
+    brain.observe(candidate_text="I said, end the interview.")  # a second request is a yes
     assert brain.withdrew is True
     assert brain.current_section.kind == "closing"
-    # Not an offer. They already told us.
-    assert "THEY HAVE ASKED TO STOP" not in brain.plan_turn().system_instruction
 
     brain.observe(bot_text="Thank you for your time. Take care.")
     assert brain.is_finished is True
@@ -280,6 +289,11 @@ def test_the_interviewer_never_asks_a_new_question_after_being_told_to_stop():
     brain = brain_for()
     brain.observe(bot_text="Tell me about a project you led.")
     brain.observe(candidate_text="Just end the interview.")
+    # Changed for decision 11: the request is confirmed once by code first
+    # (no new question); the yes then moves to the closing.
+    assert brain.take_confirmation_due() is True
+    brain.observe(bot_text=CONFIRMATION_QUESTION)
+    brain.observe(candidate_text="yes")
 
     instruction = brain.plan_turn().system_instruction
 

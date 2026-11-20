@@ -74,7 +74,7 @@ async def test_hr_books_a_round_and_gets_credentials_to_send(org_client):
     assert view["candidate"]["stage"] == "hr_booked"
     r = view["round"]
     assert r["status"] == "scheduled" and r["meeting_id"] and r["password"]
-    assert r["join_url"].endswith("/join") and r["can_cancel"] and not r["can_end"]
+    assert r["join_url"].endswith(f"/meet?id={r['meeting_id']}") and r["can_cancel"] and not r["can_end"]
     assert len(view["questions"]) == 10
 
     assert org_client.post(f"/api/candidates/{cid}/hr-round").status_code == 409
@@ -127,11 +127,10 @@ async def test_hr_joins_as_the_rooms_owner_and_notes_are_saved(org_client, stub_
     assert ended["status"] == "completed" and ended["ended_at"] and not ended["can_join"]
 
 
-async def test_a_round_nobody_joined_can_be_cancelled_with_a_reason(org_client):
+async def test_a_round_nobody_joined_can_be_cancelled(org_client):
     cid = await ready_candidate(org_client)
     sign_in(org_client, "hr@mitra.local")
     org_client.post(f"/api/candidates/{cid}/hr-round")
-    assert org_client.post(f"/api/candidates/{cid}/hr-round/cancel", json={"reason": " "}).status_code == 422
 
     cancelled = org_client.post(f"/api/candidates/{cid}/hr-round/cancel", json={"reason": "Candidate asked to move it."})
     assert cancelled.status_code == 200
@@ -141,6 +140,10 @@ async def test_a_round_nobody_joined_can_be_cancelled_with_a_reason(org_client):
 
     rebooked = org_client.post(f"/api/candidates/{cid}/hr-round")
     assert rebooked.status_code == 201
+    # No reason is needed to cancel an invitation.
+    again = org_client.post(f"/api/candidates/{cid}/hr-round/cancel", json={})
+    assert again.status_code == 200
+    assert org_client.get(f"/api/candidates/{cid}/decisions").json()["decisions"][-1]["reason"] == "Cancelled by HR"
 
 
 async def test_a_started_round_cannot_be_cancelled(org_client):
@@ -162,5 +165,130 @@ async def test_only_hr_sees_the_password_and_runs_the_round(org_client):
         assert r["password"] is None and r["meeting_id"] is None and not r["can_join"]
         assert org_client.post(f"/api/candidates/{cid}/hr-round/join").status_code == 403
 
-    sign_in(org_client, "finance.head@mitra.local")
+    sign_in(org_client, "sales.head@mitra.local")
     assert org_client.get(f"/api/candidates/{cid}/hr-round").status_code == 404
+
+
+async def test_the_live_transcript_is_kept_and_the_evaluation_starts_from_it(org_client, stub_daily):
+    cid = await ready_candidate(org_client)
+    sign_in(org_client, "hr@mitra.local")
+    org_client.post(f"/api/candidates/{cid}/hr-round")
+    assert org_client.post(f"/api/candidates/{cid}/hr-round/join").json()["transcribe"] is True
+
+    lines = [
+        {"id": "a1", "speaker": "hr", "text": "What led you to move to Noida?", "start": 3.0, "end": 5.2},
+        {"id": "a2", "speaker": "candidate", "text": "My team moved there last year.", "start": 6.0, "end": 8.4},
+    ]
+    assert org_client.post(f"/api/candidates/{cid}/hr-round/transcript", json={"lines": lines}).json()["stored"] == 2
+    # A resend is not stored twice; an empty line is ignored.
+    again = lines + [{"id": "a3", "speaker": "candidate", "text": "  ", "start": 9, "end": 9}]
+    assert org_client.post(f"/api/candidates/{cid}/hr-round/transcript", json={"lines": again}).json()["stored"] == 2
+
+    r = org_client.get(f"/api/candidates/{cid}/hr-round").json()["round"]
+    assert [t["speaker"] for t in r["transcript"]] == ["hr", "candidate"] and r["attribution"]["method"] == "live"
+
+    ended = org_client.post(f"/api/candidates/{cid}/hr-round/end").json()["round"]
+    # No waiting for the recording: the live transcript goes straight to evaluation.
+    assert ended["eval_status"] == "evaluating"
+
+
+async def test_without_a_live_transcript_the_recording_is_used(org_client, stub_daily):
+    cid = await ready_candidate(org_client)
+    sign_in(org_client, "hr@mitra.local")
+    org_client.post(f"/api/candidates/{cid}/hr-round")
+    org_client.post(f"/api/candidates/{cid}/hr-round/join")
+    assert org_client.post(f"/api/candidates/{cid}/hr-round/end").json()["round"]["eval_status"] == "waiting_recording"
+
+
+# ---- skipping the HR round (product owner, 2026-11-20) ----------------------------------------
+
+
+async def test_hr_can_skip_the_hr_round_and_the_candidate_goes_to_the_mitra_round(org_client, stub_daily):
+    cid = await ready_candidate(org_client)
+    sign_in(org_client, "hr@mitra.local")
+    r = org_client.post(f"/api/candidates/{cid}/hr-round/skip", json={})
+    assert r.status_code == 200 and r.json()["stage"] == "ready_for_technical"
+    last = org_client.get(f"/api/candidates/{cid}/decisions").json()["decisions"][-1]
+    assert last["from"] == "ready_for_hr" and last["to"] == "ready_for_technical" and last["reason"] == "HR round skipped"
+    results = org_client.get(f"/api/candidates/{cid}/results").json()
+    assert results["hr_skipped"]["reason"] is None and results["hr_round"] is None
+
+
+async def test_a_booked_but_unjoined_round_can_be_skipped_with_a_reason(org_client, stub_daily):
+    cid = await ready_candidate(org_client)
+    sign_in(org_client, "hr@mitra.local")
+    org_client.post(f"/api/candidates/{cid}/hr-round")
+    r = org_client.post(f"/api/candidates/{cid}/hr-round/skip", json={"reason": "Referred by the BU head"})
+    assert r.status_code == 200
+    assert org_client.get(f"/api/candidates/{cid}/results").json()["hr_skipped"]["reason"] == "Referred by the BU head"
+
+
+async def test_a_round_in_progress_cannot_be_skipped_and_only_hr_skips(org_client, stub_daily):
+    cid = await ready_candidate(org_client)
+    sign_in(org_client, "ai.head@mitra.local")
+    assert org_client.post(f"/api/candidates/{cid}/hr-round/skip", json={}).status_code == 403
+    sign_in(org_client, "hr@mitra.local")
+    org_client.post(f"/api/candidates/{cid}/hr-round")
+    org_client.post(f"/api/candidates/{cid}/hr-round/join")
+    r = org_client.post(f"/api/candidates/{cid}/hr-round/skip", json={})
+    assert r.status_code == 409 and "started" in r.json()["detail"]
+
+
+# ---- listen mode: HR's phone call, MITRA listens (product owner, 2026-11-20) -------------------
+
+
+async def test_a_phone_call_round_needs_the_candidates_consent_ticked_before_mitra_listens(org_client, stub_daily):
+    cid = await ready_candidate(org_client)
+    sign_in(org_client, "hr@mitra.local")
+    booked = org_client.post(f"/api/candidates/{cid}/hr-round", json={"mode": "listen"}).json()["round"]
+    # The candidate never joins MITRA's room, so there are no credentials to send.
+    assert booked["mode"] == "listen" and booked["meeting_id"] is None and booked["password"] is None
+    refused = org_client.post(f"/api/candidates/{cid}/hr-round/join", json={})
+    assert refused.status_code == 422 and "agreed" in refused.json()["detail"]
+    joined = org_client.post(f"/api/candidates/{cid}/hr-round/join", json={"phone_consent": True}).json()
+    assert joined["mode"] == "listen" and joined["transcribe"] is True
+    r = org_client.get(f"/api/candidates/{cid}/hr-round").json()["round"]
+    assert r["phone_consent_at"] and r["status"] == "in_progress"
+
+
+async def test_a_phone_calls_live_lines_are_labelled_by_voice_not_by_device(org_client, stub_daily):
+    cid = await ready_candidate(org_client)
+    sign_in(org_client, "hr@mitra.local")
+    org_client.post(f"/api/candidates/{cid}/hr-round", json={"mode": "listen"})
+    org_client.post(f"/api/candidates/{cid}/hr-round/join", json={"phone_consent": True})
+    lines = [{"id": "p1", "speaker": "hr", "text": "Walk me through your profile.", "start": 2, "end": 4},
+             {"id": "p2", "speaker": "candidate", "text": "I build retrieval systems.", "start": 5, "end": 8}]
+    org_client.post(f"/api/candidates/{cid}/hr-round/transcript", json={"lines": lines})
+    r = org_client.get(f"/api/candidates/{cid}/hr-round").json()["round"]
+    assert r["attribution"]["method"] == "live_one_mic" and r["attribution"]["confidence"] == "likely"
+    # The live lines still count for the evaluation's fallback.
+    assert org_client.post(f"/api/candidates/{cid}/hr-round/end").json()["round"]["eval_status"] == "evaluating"
+
+
+async def test_a_room_round_is_unchanged(org_client, stub_daily):
+    cid = await ready_candidate(org_client)
+    sign_in(org_client, "hr@mitra.local")
+    booked = org_client.post(f"/api/candidates/{cid}/hr-round").json()["round"]
+    assert booked["mode"] == "room" and booked["meeting_id"] and booked["password"]
+    assert org_client.post(f"/api/candidates/{cid}/hr-round/join").status_code == 200
+
+
+async def test_hr_can_swap_a_phone_calls_speakers_when_the_voices_were_mixed_up(org_client, stub_daily):
+    cid = await ready_candidate(org_client)
+    sign_in(org_client, "hr@mitra.local")
+    org_client.post(f"/api/candidates/{cid}/hr-round", json={"mode": "listen"})
+    org_client.post(f"/api/candidates/{cid}/hr-round/join", json={"phone_consent": True})
+    org_client.post(f"/api/candidates/{cid}/hr-round/transcript", json={"lines": [
+        {"id": "p1", "speaker": "hr", "text": "Hello?", "start": 1, "end": 2},
+        {"id": "p2", "speaker": "candidate", "text": "Hi, this is HR from the company.", "start": 3, "end": 5}]})
+    assert org_client.post(f"/api/candidates/{cid}/hr-round/transcript/swap").json()["swapped"] == 2
+    r = org_client.get(f"/api/candidates/{cid}/hr-round").json()["round"]
+    assert [t["speaker"] for t in r["transcript"]] == ["candidate", "hr"]
+
+
+async def test_a_room_rounds_speakers_cannot_be_swapped(org_client, stub_daily):
+    cid = await ready_candidate(org_client)
+    sign_in(org_client, "hr@mitra.local")
+    org_client.post(f"/api/candidates/{cid}/hr-round")
+    org_client.post(f"/api/candidates/{cid}/hr-round/join")
+    assert org_client.post(f"/api/candidates/{cid}/hr-round/transcript/swap").status_code == 409

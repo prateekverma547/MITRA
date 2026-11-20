@@ -22,9 +22,11 @@ speak in compound sentences, apologise first, repeat themselves, and get
 mangled by speech recognition. "Just end in the interview" is what the
 transcript actually contained.
 
-**Being asked twice is the insult.** An explicit instruction to end is acted on
-at once. Only a softer, more ambiguous signal gets the courtesy of an offer, and
-the same person saying it a second time is not asked a third time.
+**One confirmation, never two (decision 11, docs/DEV_PLAN.md:85).** Every
+request to stop, soft or explicit, is answered with one fixed question spoken by
+code (CONFIRMATION_QUESTION). Any yes, or a second request, ends the interview;
+the same person is never asked a second time. This supersedes the earlier rule
+that an explicit instruction was acted on at once.
 
 The safety property is no longer strict matching. It is that every pattern here
 names the interview, the call, or the session. "I don't want to continue down
@@ -36,6 +38,13 @@ import re
 from enum import StrEnum
 
 from bot.brain.refusal import _normalise as _base_normalise
+
+
+#: Decision 11 (docs/DEV_PLAN.md:85): every request to stop gets exactly one
+#: confirmation. The PIPELINE engine (the fallback) speaks this through TTS. The
+#: realtime engine does not use this module's detection or lines (round 14: Mitra
+#: asks in her own words and ends with end_interview).
+CONFIRMATION_QUESTION = "Do you want to end the interview here?"
 
 
 class StopIntent(StrEnum):
@@ -159,7 +168,11 @@ def wants_to_stop(text: str) -> bool:
 
 
 def asked_explicitly(text: str) -> bool:
-    """True when they instructed rather than hinted. Acted on without asking."""
+    """True when they instructed rather than hinted.
+
+    Used to corroborate the model's tool call and to tell a stop from a skip.
+    Since decision 11 an explicit request is confirmed once like any other.
+    """
     return classify(text) is StopIntent.EXPLICIT
 
 
@@ -258,3 +271,32 @@ def asked_to_skip_question(text: str) -> bool:
     if any(re.search(_SKIP_IMPERATIVE, form) for form in forms):
         return True
     return any(re.search(pattern, normalised) for pattern in _SKIP_PATTERNS)
+
+
+#: "Can we skip ahead to the system design part" asks to jump to another topic,
+#: not to leave this question; it reads as a skip to asked_to_skip_question,
+#: which is tuned to fail towards a skip on the stop path.
+_SKIP_TO_ELSEWHERE = r"\b(?:skip|move|jump)\s+(?:ahead|forward|on|over|straight)?\s*to\b"
+
+
+#: A whole utterance that only passes or skips: "Pass.", "I'll pass.", "Skip, please.",
+#: "I'll pass on this one." (A-53). asked_to_skip_question needs a frame or an object, so
+#: these were recorded as declines; "pass" asks for the next question, so it is a skip.
+_BARE_SKIP = (r"(?:(?:okay|ok|sorry|um|uh)\s+)?(?:(?:ill|i\s+will|let\s+me|can\s+i|could\s+i|may\s+i)\s+)?"
+              r"(?:just\s+)?(?:pass|skip)(?:\s+on\s+(?:this|that|it)(?:\s+one)?)?(?:\s+please)?")
+
+
+def skipped_this_question(text: str) -> bool:
+    """True when the candidate declines THIS question and wants the next one.
+
+    Used only to RECORD a skip (realtime_coordinator `question_skipped`), so it is
+    stricter than asked_to_skip_question, which stays a negative guard on the
+    stop path and is not changed: a recorded skip is a statement about the
+    interview's coverage, and a false one would say a question was refused
+    when the candidate asked to move to something else.
+    """
+    if re.fullmatch(_BARE_SKIP, _normalise(text).strip()):
+        return True
+    if not asked_to_skip_question(text):
+        return False
+    return not re.search(_SKIP_TO_ELSEWHERE, _normalise(text))

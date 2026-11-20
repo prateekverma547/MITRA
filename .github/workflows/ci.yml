@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    name: Backend tests (deterministic suite)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version-file: .python-version
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync
+
+      # The after-call speaker model (26.5 MB, pinned in aftercall/models.py).
+      # Cached by its checksum, so a new pin is a new cache; `fetch` keeps a
+      # cached file only if its checksum still matches, and `check` verifies it
+      # and the VAD model. Without it Session D's smoke stage and model tests fail.
+      - name: Cache the after-call speaker model
+        uses: actions/cache@v4
+        with:
+          path: backend/aftercall/models/wespeaker_en_voxceleb_resnet34_LM.onnx
+          key: aftercall-speaker-${{ hashFiles('backend/aftercall/models.py') }}
+
+      - name: Fetch and verify the after-call speaker model
+        run: uv run python -m aftercall.models fetch && uv run python -m aftercall.models check
+
+      # The behaviour suite (real model calls) stays out exactly as it does
+      # locally: pyproject.toml sets addopts = "-m 'not behavior'", and
+      # tests/test_behavior.py also skips unless RUN_BEHAVIOR_TESTS is set.
+      # No secrets: the deterministic suite needs no keys.
+      - name: Run tests
+        run: uv run pytest -q
+
+      # One replayed interview through every backend stage with the real code
+      # (scripts/smoke_interview.py): deterministic, no keys, no paid calls,
+      # about 3 s. It prints one line per stage and fails on any FAIL.
+      - name: Integration smoke test
+        run: uv run python scripts/smoke_interview.py
+
+  frontend:
+    name: Frontend (console)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Pinned to the version the apps were built and tested with.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.23.2
+          cache: npm
+          cache-dependency-path: frontend/console/package-lock.json
+
+      # The console is the product's one UI (the candidate's room at #/meet
+      # included). Track I's frontend/ui and candidate-app are their test apps
+      # and are checked on their own branch, not here.
+      - name: Install frontend/console
+        working-directory: frontend/console
+        run: npm ci
+
+      - name: console type check
+        working-directory: frontend/console
+        run: npm run typecheck
+
+      - name: console tests
+        working-directory: frontend/console
+        run: npm test
+
+      - name: console build
+        working-directory: frontend/console
+        run: npx vite build

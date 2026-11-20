@@ -37,6 +37,7 @@ from sqlalchemy import select
 
 from app.db import Candidate, Interview, Job, RecordingStatus, get_sessionmaker
 from bot.config import _TRUTHY, Settings
+from hiring import usage
 from hiring.models import HRRound, Screening
 from hiring.stages import StageError, move
 from screening.fit import _normalise, _sampling
@@ -45,7 +46,7 @@ from shared.contracts import EvidenceQuote, Speaker
 from shared.screening import HRRecommendation, HRRoundEvaluation, SoftSkillRating
 from shared.stages import CandidateStage
 
-PROMPT_VERSION = "hr-eval-2026-11-19"
+PROMPT_VERSION = "hr-eval-2026-11-19-probe-only"
 TRANSCRIBE_MODEL = "gpt-4o-transcribe-diarize"
 #: OpenAI's upload limit for one transcription request.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -110,12 +111,15 @@ class Transcriber:
             audio = prepare_audio(recording, Path(tmp))
             if audio.stat().st_size > MAX_UPLOAD_BYTES:
                 raise HREvaluationError("Even as compressed speech, the recording is over the 25 MB upload limit.")
+            t0 = usage.started()
             try:
                 with audio.open("rb") as handle:
                     response = await client.audio.transcriptions.create(
                         model=self.model, file=handle, response_format="diarized_json", chunking_strategy="auto",
                     )
             except Exception as exc:  # noqa: BLE001
+                await usage.record(stage="hr_transcription", purpose="Transcribing the HR round", model=self.model,
+                                   started_at=t0, error=exc)
                 raise HREvaluationError(f"Transcription failed: {exc}") from exc
         raw = getattr(response, "segments", None) or (response.get("segments") if isinstance(response, dict) else None) or []
         out = []
@@ -125,9 +129,90 @@ class Transcriber:
             if text:
                 out.append({"speaker": str(get("speaker") or "?"), "text": text,
                             "start": float(get("start") or 0), "end": float(get("end") or 0)})
+        duration = getattr(response, "duration", None) or (response.get("duration") if isinstance(response, dict) else None)
+        seconds = float(duration) if duration else (max((o["end"] for o in out), default=0.0) or None)
+        await usage.record(
+            stage="hr_transcription", purpose="Transcribing the HR round", model=self.model, started_at=t0,
+            response=response, audio_seconds=seconds,
+            status="ok" if out else "schema_error", error=None if out else "Empty transcription",
+            summary={"segments": len(out), "speakers": len({o["speaker"] for o in out})},
+        )
         if not out:
             raise HREvaluationError("The transcription came back empty. Was anyone speaking?")
         return out
+
+
+#: Deepgram's newest model, in its mixed-language mode, so Indian English and
+#: Hindi-English code-switching are heard as spoken. Measured on two real HR
+#: rounds (2026-11-19): far closer to what was said than the live feed, and,
+#: unlike OpenAI's file models, it invented no sentences on quiet stretches.
+DEEPGRAM_MODEL = "nova-3"
+DEEPGRAM_LANGUAGE = "multi"
+DEEPGRAM_URL = "https://api.deepgram.com/v1/listen"
+
+
+def deepgram_key() -> str:
+    return os.environ.get("DEEPGRAM_API_KEY", "").strip()
+
+
+@dataclass
+class DeepgramTranscriber:
+    """The recording, transcribed after the call, one segment per speaker turn."""
+
+    api_key: str
+    model: str = DEEPGRAM_MODEL
+    language: str = DEEPGRAM_LANGUAGE
+
+    async def segments(self, recording: Path) -> list[dict]:
+        """Speaker-labelled segments: speaker, text, start, end (seconds)."""
+        import httpx
+
+        label = f"deepgram/{self.model}"
+        params = {"model": self.model, "language": self.language, "diarize": "true", "utterances": "true",
+                  "punctuate": "true", "smart_format": "true"}
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = prepare_audio(recording, Path(tmp))
+            t0 = usage.started()
+            try:
+                async with httpx.AsyncClient(timeout=600) as client:
+                    response = await client.post(
+                        DEEPGRAM_URL, params=params, content=audio.read_bytes(),
+                        headers={"Authorization": f"Token {self.api_key}", "Content-Type": "application/octet-stream"},
+                    )
+                if response.status_code != 200:
+                    raise HREvaluationError(f"Deepgram answered {response.status_code}: {response.text[:200]}")
+                body = response.json()
+            except Exception as exc:  # noqa: BLE001
+                await usage.record(stage="hr_transcription", purpose="Transcribing the HR round", model=label,
+                                   started_at=t0, error=exc)
+                if isinstance(exc, HREvaluationError):
+                    raise
+                raise HREvaluationError(f"Transcription failed: {exc}") from exc
+        out = [
+            {"speaker": str(u.get("speaker", "?")), "text": (u.get("transcript") or "").strip(),
+             "start": float(u.get("start") or 0), "end": float(u.get("end") or 0)}
+            for u in (body.get("results") or {}).get("utterances") or []
+            if (u.get("transcript") or "").strip()
+        ]
+        seconds = (body.get("metadata") or {}).get("duration")
+        await usage.record(
+            stage="hr_transcription", purpose="Transcribing the HR round", model=label, started_at=t0,
+            audio_seconds=float(seconds) if seconds else None,
+            status="ok" if out else "schema_error", error=None if out else "Empty transcription",
+            summary={"segments": len(out), "speakers": len({o["speaker"] for o in out}), "language": self.language},
+        )
+        if not out:
+            raise HREvaluationError("The transcription came back empty. Was anyone speaking?")
+        return out
+
+
+def prefers_recording() -> bool:
+    """Whether the HR round is evaluated from the recording's transcript rather
+    than the live lines. On when Deepgram is configured: it was measured far
+    more accurate than the live feed and invents nothing. OpenAI's file models
+    stay the fallback transcriber but are not preferred over the live lines,
+    because they can invent a sentence on a quiet stretch."""
+    return bool(deepgram_key())
 
 
 # ---- who said what ----------------------------------------------------------------------------
@@ -217,8 +302,14 @@ HR's notes are given for context. They are not evidence: never quote them and
 never let them stand in for what the candidate said.
 
 Then recommend one of: proceed_to_technical, reject, discuss (the evidence
-points neither way). And list up to four topics the technical interview should
-probe or need not repeat, each as a topic, never a verdict about the person.
+points neither way). And list up to four things the MITRA interview round
+should probe: something about the candidate's work or skills that this
+conversation left thin, unclear or unchecked. Each becomes one neutral
+question in MITRA's plan, so write each as a gap in the evidence, never as a
+verdict about the person ("how they sized and ended an A/B test was not
+covered", not "weak at experimentation"). Leave out anything that is not about
+the work itself, such as notice period, salary or location, and anything that
+was already answered well. An empty list is a fine answer.
 
 Never infer emotion, confidence or personality from tone; judge what was said.
 
@@ -250,6 +341,8 @@ class Evaluator:
             + f"\n\nHR'S NOTES (context only, not evidence):\n{notes.strip() or '(none)'}"
         )
         client = AsyncOpenAI(api_key=self.api_key)
+        t0 = usage.started()
+        response = None
         try:
             response = await client.chat.completions.create(
                 model=self.model, response_format={"type": "json_object"},
@@ -258,9 +351,24 @@ class Evaluator:
             )
             payload = json.loads(response.choices[0].message.content or "{}")
         except Exception as exc:  # noqa: BLE001
+            await usage.record(stage="hr_evaluation", purpose="Evaluating the HR round", model=self.model,
+                               started_at=t0, response=response, error=exc, prompt_version=PROMPT_VERSION,
+                               status="schema_error" if response is not None else "error",
+                               candidate_id=candidate_id, interview_id=interview_id)
             raise HREvaluationError(f"The evaluation model call failed: {exc}") from exc
-        return build_evaluation(payload, candidate_id=candidate_id, interview_id=interview_id, turns=turns,
-                                asked=asked, attribution=attribution, model=self.model)
+        evaluation = build_evaluation(payload, candidate_id=candidate_id, interview_id=interview_id, turns=turns,
+                                      asked=asked, attribution=attribution, model=self.model)
+        await usage.record(
+            stage="hr_evaluation", purpose="Evaluating the HR round", model=self.model, started_at=t0,
+            response=response, prompt_version=PROMPT_VERSION, candidate_id=candidate_id, interview_id=interview_id,
+            summary={
+                "turns": len(turns), "skills_rated": sum(1 for r in evaluation.ratings if r.rating is not None),
+                "quotes_kept": sum(len(r.evidence) for r in evaluation.ratings),
+                "recommendation": evaluation.recommendation.value,
+            },
+            output_preview=evaluation.summary,
+        )
+        return evaluation
 
 
 def build_evaluation(payload: dict, *, candidate_id: str, interview_id: str, turns: list[dict], asked: list[str],
@@ -306,22 +414,66 @@ def build_evaluation(payload: dict, *, candidate_id: str, interview_id: str, tur
     )
 
 
+async def findings_for_technical(candidate_id: str) -> list[str]:
+    """What MITRA's plan should probe, from the candidate's latest evaluated HR round.
+
+    Read by Track I's plan preparation (live/hr_hook.py) when MITRA's plan is
+    prepared. Only the model's findings: HR's own notes are never findings. An
+    HR round completed on notes alone, or not evaluated, gives none.
+    """
+    async with get_sessionmaker()() as session:
+        hr = (
+            await session.scalars(
+                select(HRRound)
+                .where(HRRound.candidate_id == candidate_id, HRRound.evaluation.isnot(None))
+                .order_by(HRRound.id.desc())
+            )
+        ).first()
+    if hr is None:
+        return []
+    evaluation = HRRoundEvaluation.model_validate(hr.evaluation)
+    return [f.strip() for f in evaluation.findings_for_technical if f and f.strip()]
+
+
 def recommendation_text(evaluation: HRRoundEvaluation) -> str:
-    word = {"proceed_to_technical": "proceed to the technical round", "reject": "reject", "discuss": "discuss: the evidence points neither way"}
+    word = {"proceed_to_technical": "proceed to the MITRA interview round", "reject": "reject", "discuss": "discuss: the evidence points neither way"}
     return f"HR round evaluation recommends: {word[evaluation.recommendation.value]}."
 
 
 # ---- the pipeline -------------------------------------------------------------------------------
 
 
-def _transcriber() -> Transcriber:
+def _collector():
+    """Downloads one finished HR round recording from Daily."""
+    return collect_recording
+
+
+async def collect_recording(interview_id: str) -> str:
+    """Fetch this round's finished recording from Daily.
+
+    The app-wide collector does it (app/recordings.collect_one): it claims the
+    recording first, so this loop and the recording sweep never both download
+    it or both delete Daily's copy, checks the file plays, and stores its path
+    where the rest of the app looks for it. Answers `stored`, `waiting`,
+    `unavailable`, `busy` (the sweep has it right now) or `error`.
+    """
+    from app.recordings import collect_one
+
+    return await collect_one(interview_id, api_key=Settings.load().daily_api_key)
+
+
+def _transcriber() -> Transcriber | DeepgramTranscriber:
+    """Deepgram when DEEPGRAM_API_KEY is set (the same switch as the bot's STT),
+    else OpenAI's diarizing transcription."""
+    if deepgram_key():
+        return DeepgramTranscriber(api_key=deepgram_key())
     settings = Settings.load()
     return Transcriber(api_key=settings.openai_api_key, model=os.environ.get("OPENAI_TRANSCRIBE_MODEL") or TRANSCRIBE_MODEL)
 
 
 def _evaluator() -> Evaluator:
     settings = Settings.load()
-    return Evaluator(api_key=settings.openai_api_key, model=os.environ.get("OPENAI_HR_EVAL_MODEL") or settings.blueprint_model)
+    return Evaluator(api_key=settings.openai_api_key, model=os.environ.get("OPENAI_HR_EVAL_MODEL") or settings.legacy_blueprint_model)
 
 
 async def _fail(interview_id: str, message: str) -> None:
@@ -330,6 +482,13 @@ async def _fail(interview_id: str, message: str) -> None:
         hr.eval_status, hr.eval_error = FAILED, message
         await session.commit()
     logger.warning(f"[{interview_id}] HR round evaluation failed: {message}")
+
+
+def has_live_lines(hr: HRRound) -> bool:
+    """The round was transcribed live (Daily, one transcription per person) and the candidate spoke."""
+    return (hr.attribution or {}).get("method") in ("live", "live_one_mic") and any(
+        t.get("speaker") == "candidate" for t in (hr.transcript or [])
+    )
 
 
 async def advance(interview_id: str) -> str:
@@ -352,30 +511,63 @@ async def advance(interview_id: str) -> str:
                 hr.eval_status = status = TRANSCRIBING
                 await session.commit()
             elif interview.recording_status in (RecordingStatus.UNAVAILABLE, RecordingStatus.NOT_RECORDED, RecordingStatus.DELETED, RecordingStatus.EXPIRED):
-                await _fail(interview_id, interview.recording_error or "No recording of this HR round is available.")
-                return FAILED
+                if has_live_lines(hr):
+                    # No recording after all: the live lines are the transcript.
+                    hr.attribution = {**(hr.attribution or {}), "recording_check": "no recording; the live lines were used"}
+                    hr.eval_status = status = EVALUATING
+                    await session.commit()
+                else:
+                    await _fail(interview_id, interview.recording_error or "No recording of this HR round is available.")
+                    return FAILED
             else:
-                return WAITING
-        path = stored_path(interview)
-        candidate = await session.get(Candidate, interview.candidate_id)
-        job = await session.get(Job, candidate.job_id) if candidate else None
-        screening = (await session.execute(select(Screening).where(Screening.candidate_id == interview.candidate_id))).scalar_one_or_none()
-        questions = (screening.hr_questions or {}).get("questions", []) if screening else []
-        asked, notes = list(hr.questions_asked or []), hr.notes or ""
+                status = "collect"
+        if status != "collect":
+            path = stored_path(interview)
+            candidate = await session.get(Candidate, interview.candidate_id)
+            job = await session.get(Job, candidate.job_id) if candidate else None
+            screening = (await session.execute(select(Screening).where(Screening.candidate_id == interview.candidate_id))).scalar_one_or_none()
+            questions = (screening.hr_questions or {}).get("questions", []) if screening else []
+            asked, notes = list(hr.questions_asked or []), hr.notes or ""
+
+    if status == "collect":
+        # Fetch the recording now rather than waiting for the app-wide sweep,
+        # which runs every five minutes: HR is watching this screen.
+        outcome = await _collector()(interview_id)
+        if outcome in ("stored", "unavailable"):
+            return await advance(interview_id)
+        return WAITING
 
     if status == TRANSCRIBING:
         if path is None or not path.exists():
             await _fail(interview_id, "The recording file is missing from storage.")
             return FAILED
-        try:
-            segments = await _transcriber().segments(path)
-            turns, attribution = attribute(segments, questions)
-        except HREvaluationError as exc:
-            await _fail(interview_id, str(exc))
-            return FAILED
         async with get_sessionmaker()() as session:
             hr = (await session.execute(select(HRRound).where(HRRound.interview_id == interview_id))).scalar_one()
-            hr.transcript, hr.attribution, hr.eval_status = turns, attribution, EVALUATING
+            live = has_live_lines(hr)
+        try:
+            with usage.context(interview_id=interview_id):
+                segments = await _transcriber().segments(path)
+            turns, attribution = attribute(segments, questions)
+        except HREvaluationError as exc:
+            if not live:
+                await _fail(interview_id, str(exc))
+                return FAILED
+            turns, attribution = None, {"recording_check": f"the recording could not be transcribed ({exc}); the live lines were used"}
+        if live and turns is not None and attribution.get("confidence") == "uncertain":
+            # The recording is one mixed track, so its voices are told apart by
+            # guesswork; the live lines name each speaker for certain. When the
+            # guess is unsure, the certain speakers win over the better words.
+            turns, attribution = None, {"recording_check": f"the recording's voices could not be told apart ({attribution.get('method')}); the live lines were used"}
+        async with get_sessionmaker()() as session:
+            hr = (await session.execute(select(HRRound).where(HRRound.interview_id == interview_id))).scalar_one()
+            if turns is None:
+                hr.attribution = {**(hr.attribution or {}), **attribution}
+            else:
+                if live:
+                    # Kept, not thrown away: what HR watched during the call.
+                    attribution = {**attribution, "live_transcript": hr.transcript}
+                hr.transcript, hr.attribution = turns, attribution
+            hr.eval_status = EVALUATING
             await session.commit()
         status = EVALUATING
 
@@ -432,11 +624,15 @@ def pipeline_enabled() -> bool:
 
 
 async def hr_pipeline_forever() -> None:
-    """The background loop, started by the app's lifespan."""
+    """The background loop, started by the app's lifespan: HR rounds, then MITRA interview rounds."""
     while True:
         await asyncio.sleep(LOOP_SECONDS)
         try:
             await run_once()
+            # The technical round's after-call bookkeeping rides the same loop.
+            from hiring.technical import sweep_once
+
+            await sweep_once()
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001

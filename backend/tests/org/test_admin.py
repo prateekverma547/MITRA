@@ -52,7 +52,7 @@ async def test_an_invited_person_signs_in_with_the_password_shown_once(org_clien
 
 async def test_the_bu_rule_holds_for_invites_and_changes(org_client):
     admin(org_client)
-    bu = org_client.demo.bu_ids["AI"]
+    bu = org_client.demo.bu_ids["AI, ML & Data Science"]
     no_bu = org_client.post("/api/admin/users", json={"name": "X", "email": "x@mitra.local", "role": "bu_head"})
     assert no_bu.status_code == 422 and "business unit" in no_bu.json()["detail"]
     hr_with_bu = org_client.post("/api/admin/users", json={"name": "Y", "email": "y@mitra.local", "role": "hr", "bu_id": bu})
@@ -61,7 +61,7 @@ async def test_the_bu_rule_holds_for_invites_and_changes(org_client):
     hr = user_id(org_client, "hr@mitra.local")
     assert org_client.post(f"/api/admin/users/{hr}", json={"role": "bu_head"}).status_code == 422
     moved = org_client.post(f"/api/admin/users/{hr}", json={"role": "bu_head", "bu_id": bu}).json()["user"]
-    assert moved["role"] == "bu_head" and moved["bu_name"] == "AI"
+    assert moved["role"] == "bu_head" and moved["bu_name"] == "AI, ML & Data Science"
     # Back to HR: the BU goes with the role.
     back = org_client.post(f"/api/admin/users/{hr}", json={"role": "hr"}).json()["user"]
     assert back["bu_id"] is None
@@ -108,11 +108,11 @@ async def test_a_deactivated_person_is_refused_and_a_reset_password_works(org_cl
 
 async def test_business_units_are_created_renamed_and_kept_unique(org_client):
     admin(org_client)
-    made = org_client.post("/api/admin/business-units", json={"name": "Design"})
+    made = org_client.post("/api/admin/business-units", json={"name": "Quality Assurance"})
     assert made.status_code == 200
-    assert org_client.post("/api/admin/business-units", json={"name": "design"}).status_code == 409
-    ai = org_client.demo.bu_ids["AI"]
-    assert org_client.post(f"/api/admin/business-units/{ai}", json={"name": "Finance"}).status_code == 409
+    assert org_client.post("/api/admin/business-units", json={"name": "quality assurance"}).status_code == 409
+    ai = org_client.demo.bu_ids["AI, ML & Data Science"]
+    assert org_client.post(f"/api/admin/business-units/{ai}", json={"name": "Sales"}).status_code == 409
     assert org_client.post(f"/api/admin/business-units/{ai}", json={"name": "AI Research"}).status_code == 200
 
     units = {b["name"]: b for b in org_client.get("/api/admin/business-units").json()["business_units"]}
@@ -133,7 +133,7 @@ async def closed_candidate(client, tmp_path, monkeypatch, *, days_ago: int) -> t
     from app.db import Candidate, Interview, RecordingStatus
     from hiring.models import DecisionRecord, HRRound, Screening
 
-    monkeypatch.setattr(recordings, "SESSIONS_DIR", tmp_path)
+    monkeypatch.setenv(recordings.RECORDINGS_DIR_ENV, str(tmp_path / "rec"))
     (tmp_path / "rec").mkdir(exist_ok=True)
     (tmp_path / "rec" / "round.mp4").write_bytes(b"video")
     cid = client.demo.candidate_ids["ai"]
@@ -149,7 +149,7 @@ async def closed_candidate(client, tmp_path, monkeypatch, *, days_ago: int) -> t
             id="int_test_1", candidate_id=cid, meeting_id="123456", password="pw", daily_room_name="r",
             daily_room_url="https://example.daily.co/r", room_expires_at=when, status="completed",
             round="hr", transcript={"turns": []}, consent_accepted_at=when,
-            recording_status=RecordingStatus.STORED, recording_path="rec/round.mp4", org_id=client.demo.org_id,
+            recording_status=RecordingStatus.STORED, recording_path="round.mp4", org_id=client.demo.org_id,
         )
         session.add(interview)
         await session.flush()

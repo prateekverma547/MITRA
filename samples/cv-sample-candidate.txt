@@ -1,0 +1,36 @@
+ANANYA VERMA
+AI Engineer
+
+This CV is invented, for trying MITRA. The person, employers and numbers are
+made up.
+
+SUMMARY
+Four years building LLM and machine learning features for business clients.
+Most recently owned a document extraction service end to end, from the client's
+first sample files to the service in production.
+
+EXPERIENCE
+
+AI Engineer, Northwind Analytics (2023 to now)
+- Built a retrieval and extraction pipeline over insurance claim documents. It
+  reads about 40,000 documents a month.
+- Built the evaluation set with the client: 300 documents, each labelled by two
+  people, a third deciding when they disagreed. Date extraction reached 94% on
+  the client's own documents; we reported the failure cases alongside it.
+- Owned the rollback plan for the launch. The launch slipped a week because the
+  rollback test failed once; it was the right call.
+- Ran a weekly review with the client's product manager, explaining what the
+  model could and could not do yet.
+
+Machine Learning Engineer, Brightline Retail (2021 to 2023)
+- Built a demand forecasting model for 1,200 stores, served behind a FastAPI
+  service on AWS.
+- Added monitoring and alerts after an outage; wrote the runbook the on-call
+  team uses.
+
+SKILLS
+Python, FastAPI, PostgreSQL, AWS, retrieval, evaluation design, prompt design,
+basic fine-tuning of small models.
+
+EDUCATION
+B.Tech in Computer Science, 2021.

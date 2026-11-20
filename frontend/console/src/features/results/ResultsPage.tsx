@@ -1,25 +1,26 @@
 // The BU head's results page. Everything here is evidence Track H already
 // holds (the CV against the job, the HR round), plus a bounded slot for
-// Track I's technical report. The BU head decides at the bottom; HR and admins
+// Track I's MITRA interview report. The BU head decides at the bottom; HR and admins
 // read the same page without the decision.
 
 import { Columns3, PauseCircle, ScrollText, Star, Undo2, XCircle } from "lucide-react";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
 import { STAGE_LABELS, STAGE_TONES, type CandidateStage } from "../../contracts";
-import { BackButton } from "../../shell/ui/BackButton";
+import { BackButton, useGoBack } from "../../shell/ui/BackButton";
 import { Button, ButtonLink } from "../../shell/ui/Button";
 import { Pips } from "../../shell/ui/Pips";
 import { PageSkeleton } from "../../shell/ui/Skeleton";
 import { useToast } from "../../shell/ui/Toast";
+import { MoreInsight } from "../../shell/ui/MoreInsight";
 import { ChartCard } from "../../shell/viz/ChartCard";
 import { TooltipLayer } from "../../shell/viz/Tooltip";
-import { ScoreMeter } from "../screening/ScoreMeter";
 import { Rubric, RubricTable } from "./Rubric";
-import { TechnicalReportSlot } from "./TechnicalReportSlot";
+import { TechnicalReport } from "./TechnicalReport";
 import { HR_RECOMMENDATION, TECHNICAL_SIGNAL, type Results, type StrengthOrGap } from "./types";
 import "./results.css";
+import "../screening/candidate.css";
 
 const SOURCE = { cv: "CV", hr_round: "HR round" };
 const ACTORS = { system: "MITRA", hr: "HR", bu_head: "BU head" };
@@ -33,31 +34,47 @@ function when(iso: string | null) {
 function Glance({ r }: { r: Results }) {
   const hr = r.hr_round ? HR_RECOMMENDATION[r.hr_round.recommendation] : null;
   const tech = r.technical.report?.recommendation;
+  const m = r.jd_match;
+  const passes = m ? m.enough_evidence && m.passes_screen : false;
   return (
-    <div className="glance">
-      <section className="glance-item">
-        <h2 className="glance-label">Against the job description</h2>
-        {r.jd_match ? (
-          <>
-            <ScoreMeter score={r.jd_match.score_percent} threshold={r.jd_match.threshold_percent} enoughEvidence={r.jd_match.enough_evidence} />
-            <p className="glance-note">
-              Judged on {r.jd_match.assessed_weight_percent}% of the job's weight. The cut-off is {r.jd_match.threshold_percent}%.
-            </p>
-          </>
-        ) : (
-          <p className="glance-empty">Not screened</p>
-        )}
-      </section>
-      <section className="glance-item">
-        <h2 className="glance-label">HR round</h2>
-        {hr ? <p className={`glance-value tone-${hr.tone}`}>{hr.label}</p> : <p className="glance-empty">No evaluation recorded</p>}
-        {r.hr_round?.attribution_confidence === "uncertain" && <p className="glance-note">Voices were hard to tell apart; check the transcript.</p>}
-      </section>
-      <section className="glance-item">
-        <h2 className="glance-label">Technical round</h2>
-        {tech ? <p className="glance-value">{TECHNICAL_SIGNAL[tech]}</p> : <p className="glance-empty">No report yet</p>}
-      </section>
-    </div>
+    <section className="glance" aria-label="At a glance">
+      <div className={`glance-tile${m ? (passes ? " g-good" : " g-attention") : " g-muted"}`}>
+        <span className="glance-title">CV fit to the job</span>
+        <span className="glance-value">
+          {m ? `${Math.round(m.score_percent)}%` : "Not screened"}
+          {m && (
+            <span className="glance-meter" aria-hidden="true">
+              <span style={{ width: `${Math.min(100, m.score_percent)}%` }} className={passes ? "on" : "off"} />
+              <i style={{ left: `${m.threshold_percent}%` }} />
+            </span>
+          )}
+        </span>
+        {m && <span className="glance-note">{!m.enough_evidence ? "Too little evidence to judge" : passes ? `At or above the ${m.threshold_percent}% cut-off` : `Below the ${m.threshold_percent}% cut-off`}</span>}
+      </div>
+      <div className={`glance-tile${hr ? ` g-${hr.tone === "closed" ? "attention" : hr.tone}` : " g-muted"}`}>
+        <span className="glance-title">HR round</span>
+        <span className="glance-value">{hr ? hr.label : r.hr_skipped ? "Skipped" : "No evaluation"}</span>
+        <span className="glance-note">
+          {r.hr_round?.attribution_confidence === "uncertain"
+            ? "Voices were hard to tell apart"
+            : hr
+              ? "MITRA's recommendation"
+              : r.hr_skipped
+                ? (r.hr_skipped.reason ?? `Skipped by ${r.hr_skipped.by ?? "HR"}`)
+                : "None recorded"}
+        </span>
+      </div>
+      <div className={`glance-tile${tech ? "" : " g-muted"}`}>
+        <span className="glance-title">MITRA interview round</span>
+        <span className="glance-value">{tech ? TECHNICAL_SIGNAL[tech] : "No report yet"}</span>
+        <span className="glance-note">{tech ? "MITRA's report, below" : "Appears when the interview is scored"}</span>
+      </div>
+      <div className="glance-tile">
+        <span className="glance-title">Sent to you</span>
+        <span className="glance-value">{r.sent_to_bu_head ? r.sent_to_bu_head.by ?? "HR" : "Not yet"}</span>
+        <span className="glance-note">{r.sent_to_bu_head?.note ? `"${r.sent_to_bu_head.note}"` : r.sent_to_bu_head?.at ? when(r.sent_to_bu_head.at) : "HR sends it after the MITRA interview round"}</span>
+      </div>
+    </section>
   );
 }
 
@@ -127,7 +144,7 @@ function HRRound({ hr, candidateId }: { hr: NonNullable<Results["hr_round"]>; ca
       </ol>
       {hr.findings_for_technical.length > 0 && (
         <>
-          <h3 className="brief-sub">Raised for the technical round</h3>
+          <h3 className="brief-sub">Raised for the MITRA interview round</h3>
           <ul className="dealbreakers">
             {hr.findings_for_technical.map((f, i) => (
               <li key={i}>{f}</li>
@@ -187,8 +204,9 @@ const CHOICES: Choice[] = [
   { to: "rejected", label: "Reject", done: "Rejected", icon: <XCircle size={17} />, variant: "danger", prompt: "Why reject? This is kept on their record.", reasonRequired: true },
 ];
 
-function Decision({ r, onDone }: { r: Results; onDone: () => void }) {
+function Decision({ r }: { r: Results }) {
   const toast = useToast();
+  const goBack = useGoBack(`/candidates/${r.candidate.id}`);
   const [picked, setPicked] = useState<Choice | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -201,10 +219,10 @@ function Decision({ r, onDone }: { r: Results; onDone: () => void }) {
     setError(null);
     try {
       await api.post(`/candidates/${r.candidate.id}/move`, { to: choice.to, reason: reason.trim() || undefined });
-      toast(`${r.candidate.name}: ${choice.done}`);
+      toast(`${r.candidate.name}: ${choice.done}. Saved.`, choice.to === "rejected" ? "urgent" : choice.to === "on_hold" ? "warn" : "ok");
       setPicked(null);
       setReason("");
-      onDone();
+      goBack();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -213,13 +231,23 @@ function Decision({ r, onDone }: { r: Results; onDone: () => void }) {
   }
 
   const reading = r.technical.report?.recommendation
-    ? `Technical report: ${TECHNICAL_SIGNAL[r.technical.report.recommendation].toLowerCase()}.`
+    ? `MITRA interview report: ${TECHNICAL_SIGNAL[r.technical.report.recommendation].toLowerCase()}.`
     : r.hr_round
-      ? `No technical report yet. The HR round recommended: ${HR_RECOMMENDATION[r.hr_round.recommendation].label.toLowerCase()}.`
-      : "No technical report yet.";
+      ? `No MITRA interview report yet. The HR round recommended: ${HR_RECOMMENDATION[r.hr_round.recommendation].label.toLowerCase()}.`
+      : "No MITRA interview report yet.";
 
   return (
-    <div className="decision-bar decision-stack">
+    <section className="next-step decide-block" aria-labelledby="decide-title">
+      <div className="next-copy">
+        <h2 id="decide-title" className="next-title">
+          Your decision
+        </h2>
+        <p className="next-text">
+          <span className="next-who yours">Your move</span>
+          MITRA's reading: {reading} MITRA recommends; the decision is yours.
+        </p>
+      </div>
+      <div className="next-actions">
       {picked ? (
         <form
           className="reason"
@@ -241,7 +269,6 @@ function Decision({ r, onDone }: { r: Results; onDone: () => void }) {
         </form>
       ) : (
         <div className="actions">
-          <span className="decision-q">{r.candidate.stage === "on_hold" ? "On hold. Your decision" : "Your decision"}</span>
           {choices.map((c) => (
             <Button key={c.to} variant={c.variant} icon={c.icon} disabled={busy} onClick={() => setPicked(c)}>
               {c.label}
@@ -249,13 +276,13 @@ function Decision({ r, onDone }: { r: Results; onDone: () => void }) {
           ))}
         </div>
       )}
-      <p className="decision-reading">MITRA's reading: {reading} MITRA recommends; the decision is yours.</p>
       {error && (
         <p className="error" role="alert">
           {error}
         </p>
       )}
-    </div>
+      </div>
+    </section>
   );
 }
 
@@ -263,16 +290,18 @@ function Decision({ r, onDone }: { r: Results; onDone: () => void }) {
 
 export function ResultsPage() {
   const { candidateId } = useParams();
+  const [params, setParams] = useSearchParams();
+  const round = params.get("round");
   const [r, setR] = useState<Results | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      setR(await api.get<Results>(`/candidates/${candidateId}/results`));
+      setR(await api.get<Results>(`/candidates/${candidateId}/results${round ? `?interview=${encodeURIComponent(round)}` : ""}`));
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [candidateId]);
+  }, [candidateId, round]);
 
   useEffect(() => {
     load();
@@ -307,59 +336,56 @@ export function ResultsPage() {
           </div>
         </header>
 
-        {r.sent_to_bu_head && (
-          <div className="sent-note">
-            <p>
-              Sent to the BU head by {r.sent_to_bu_head.by ?? "HR"}
-              {r.sent_to_bu_head.at ? ` on ${when(r.sent_to_bu_head.at)}` : ""}.
-            </p>
-            {r.sent_to_bu_head.note && <blockquote>{r.sent_to_bu_head.note}</blockquote>}
-          </div>
-        )}
-
+        <Decision r={r} />
         <Glance r={r} />
 
-        {r.rubric.length > 0 && (
-          <ChartCard
-            title="Against what the job asks for"
-            caption="Each competency, heaviest first: its weight in the job, and what the CV shows on a 0–4 scale."
-            table={<RubricTable rows={r.rubric} />}
-          >
-            <Rubric rows={r.rubric} />
-          </ChartCard>
+        {r.technical.rounds.length > 1 && (
+          <nav className="round-switch" aria-label="MITRA interview rounds">
+            <span className="muted small">MITRA rounds:</span>
+            {r.technical.rounds.map((x) => {
+              const current = x.interview_id === r.technical.interview_id;
+              return (
+                <button
+                  key={x.interview_id}
+                  type="button"
+                  className={current ? "round-chip on" : "round-chip"}
+                  aria-current={current ? "page" : undefined}
+                  onClick={() => setParams(x.number === r.technical.rounds.length ? {} : { round: x.interview_id })}
+                >
+                  Round {x.number}
+                  {x.number === r.technical.rounds.length ? " (latest)" : ""}
+                </button>
+              );
+            })}
+          </nav>
         )}
-
-        {(r.jd_match?.summary || r.jd_match?.experience_note) && (
-          <section className="results-summary">
-            <h2 className="section-title">Summary of the CV</h2>
-            {r.jd_match?.summary && <p className="fit-summary">{r.jd_match.summary}</p>}
-            {r.jd_match?.experience_note && <p className="fit-experience">{r.jd_match.experience_note}</p>}
-          </section>
-        )}
+        <TechnicalReport technical={r.technical} />
 
         <div className="split-2">
           <Points title="Strengths" caption="Rated 3 or 4, from the CV and the HR round." items={r.strengths} empty="Nothing rated 3 or above yet." />
-          <Points
-            title="Gaps"
-            caption="Rated 0 or 1, or a weighty competency the CV says nothing about."
-            items={r.gaps}
-            empty="No low ratings, and the CV speaks to everything weighty."
-          />
+          <Points title="Gaps to probe" caption="Rated low, or a weighty competency the CV says nothing about." items={r.gaps} empty="No low ratings, and the CV speaks to everything weighty." />
         </div>
 
-        {r.hr_round ? (
-          <HRRound hr={r.hr_round} candidateId={r.candidate.id} />
-        ) : (
-          <section className="card-viz">
-            <h2 className="card-title">The HR round</h2>
-            <p className="empty-note">No evaluation of the HR round is recorded for this candidate.</p>
-          </section>
-        )}
-
-        <TechnicalReportSlot technical={r.technical} />
-
-        <History entries={r.decisions} />
-        <Decision r={r} onDone={load} />
+        <MoreInsight id="results" hint="The CV against the job, the HR round, and the history">
+          {r.rubric.length > 0 && (
+            <ChartCard
+              title="The CV against the job"
+              caption="Each competency, heaviest first: its weight in the job, and what the CV shows on a 0–4 scale."
+              table={<RubricTable rows={r.rubric} />}
+            >
+              <Rubric rows={r.rubric} />
+            </ChartCard>
+          )}
+          {(r.jd_match?.summary || r.jd_match?.experience_note) && (
+            <section className="card-viz">
+              <h2 className="card-title">MITRA's summary of the CV</h2>
+              {r.jd_match?.summary && <p className="side-text">{r.jd_match.summary}</p>}
+              {r.jd_match?.experience_note && <p className="side-text muted">{r.jd_match.experience_note}</p>}
+            </section>
+          )}
+          {r.hr_round && <HRRound hr={r.hr_round} candidateId={r.candidate.id} />}
+          <History entries={r.decisions} />
+        </MoreInsight>
       </div>
     </TooltipLayer>
   );

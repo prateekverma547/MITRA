@@ -166,7 +166,7 @@ export function Compare() {
           <div className="compare-scroll" tabIndex={0} role="region" aria-label="Comparison table, scrolls sideways">
             <table className="compare-table">
               <caption className="visually-hidden">
-                Candidates for {data.job.title}: screening fit, each competency rated 0 to 4 from the CV, the HR round and the technical round.
+                Candidates for {data.job.title}: screening fit, each competency rated 0 to 4 from the CV, the HR round and the MITRA interview round.
               </caption>
               <thead>
                 <tr>
@@ -245,7 +245,7 @@ export function Compare() {
                               {c.hr_round.recommendation === "proceed_to_technical" ? "Proceed" : c.hr_round.recommendation === "reject" ? "Reject" : "Discuss"}
                             </span>
                           ) : (
-                            <span className="muted">Not evaluated</span>
+                            <span className="muted">{c.hr_skipped ? "Skipped" : "Not evaluated"}</span>
                           )}
                         </td>
                       ))}
@@ -263,7 +263,7 @@ export function Compare() {
 
                 <tr className="compare-group">
                   <th scope="rowgroup" colSpan={span}>
-                    Technical round
+                    MITRA interview round
                   </th>
                 </tr>
                 <tr>

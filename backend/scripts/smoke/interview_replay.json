@@ -1,0 +1,334 @@
+{
+ "_about": "Constructed from Session A's round 10 replay (track_i_notes/A_checks/round10/replay_after3.json): Mitra's turns 8-16 (texts, labels, question ids), the auditor's skips and declines (question_id, after_turn, area, area_source) are copied from it. Turns 0-7 and 18, every candidate's words, and all timings are CONSTRUCTED here. Label area_id is the area the turn was spoken in (A's labels: area 3), as the auditor sends it. For the smoke test (backend/scripts/smoke_interview.py), CONSTRUCTED: turn 3 says 'Razapay' (the cleaning stand-in declares the fix to 'Razorpay'), turn 5 says 'thirty-eight percent' (a quote of '38%' matches by number value), and the stand-in adds a number to turn 13 (the guard must keep the raw text). The ending and the live skip events are A's replay values (live_skip_events).",
+ "interview_id": "int_round10replay",
+ "transcript": {
+  "interview_id": "int_round10replay",
+  "turns": [
+   {
+    "index": 0,
+    "speaker": "interviewer",
+    "text": "Hello, I'm Mitra. Shall we begin?",
+    "at_seconds": 0.0,
+    "audio_start_seconds": 0.0
+   },
+   {
+    "index": 1,
+    "speaker": "candidate",
+    "text": "Yes, let's begin.",
+    "at_seconds": 15.0,
+    "audio_start_seconds": 12.0
+   },
+   {
+    "index": 2,
+    "speaker": "interviewer",
+    "text": "Tell me about a product strategy you personally set.",
+    "at_seconds": 20.0,
+    "audio_start_seconds": 20.0
+   },
+   {
+    "index": 3,
+    "speaker": "candidate",
+    "text": "Um, I set the strategy for our payments product at Razapay.",
+    "at_seconds": 35.0,
+    "audio_start_seconds": 32.0
+   },
+   {
+    "index": 4,
+    "speaker": "interviewer",
+    "text": "What was the bet behind it?",
+    "at_seconds": 40.0,
+    "audio_start_seconds": 40.0
+   },
+   {
+    "index": 5,
+    "speaker": "candidate",
+    "text": "The bet was faster settlement, and it grew revenue by thirty-eight percent.",
+    "at_seconds": 55.0,
+    "audio_start_seconds": 52.0
+   },
+   {
+    "index": 6,
+    "speaker": "interviewer",
+    "text": "How did you secure approval for that strategy?",
+    "at_seconds": 60.0,
+    "audio_start_seconds": 60.0
+   },
+   {
+    "index": 7,
+    "speaker": "candidate",
+    "text": "I built the case with finance and got sign-off.",
+    "at_seconds": 75.0,
+    "audio_start_seconds": 72.0
+   },
+   {
+    "index": 8,
+    "speaker": "interviewer",
+    "text": "What did you believe about the market that others on your team did not?",
+    "at_seconds": 80.0,
+    "audio_start_seconds": 80.0
+   },
+   {
+    "index": 9,
+    "speaker": "candidate",
+    "text": "Can we skip this one?",
+    "at_seconds": 95.0,
+    "audio_start_seconds": 92.0
+   },
+   {
+    "index": 10,
+    "speaker": "interviewer",
+    "text": "What options did you weigh in the hardest prioritization call you have made?",
+    "at_seconds": 100.0,
+    "audio_start_seconds": 100.0
+   },
+   {
+    "index": 11,
+    "speaker": "candidate",
+    "text": "Can we skip this one too?",
+    "at_seconds": 115.0,
+    "audio_start_seconds": 112.0
+   },
+   {
+    "index": 12,
+    "speaker": "interviewer",
+    "text": "What did it cost you when you decided not to build something significant?",
+    "at_seconds": 120.0,
+    "audio_start_seconds": 120.0
+   },
+   {
+    "index": 13,
+    "speaker": "candidate",
+    "text": "We decided not to build an in-house fraud model.",
+    "at_seconds": 135.0,
+    "audio_start_seconds": 132.0
+   },
+   {
+    "index": 14,
+    "speaker": "interviewer",
+    "text": "Looking back at that strategy now, what part of it turned out to be wrong?",
+    "at_seconds": 140.0,
+    "audio_start_seconds": 140.0
+   },
+   {
+    "index": 15,
+    "speaker": "candidate",
+    "text": "I'd rather not answer that.",
+    "at_seconds": 155.0,
+    "audio_start_seconds": 152.0
+   },
+   {
+    "index": 16,
+    "speaker": "interviewer",
+    "text": "Okay. What is one smaller assumption from that strategy you would revisit today?",
+    "at_seconds": 160.0,
+    "audio_start_seconds": 160.0
+   },
+   {
+    "index": 17,
+    "speaker": "candidate",
+    "text": "Probably the pricing assumption.",
+    "at_seconds": 175.0,
+    "audio_start_seconds": 172.0
+   },
+   {
+    "index": 18,
+    "speaker": "interviewer",
+    "text": "Thank you for your time today. That's the end of the interview.",
+    "at_seconds": 180.0,
+    "audio_start_seconds": 180.0
+   },
+   {
+    "index": 19,
+    "speaker": "candidate",
+    "text": "Thank you.",
+    "at_seconds": 195.0,
+    "audio_start_seconds": 192.0
+   }
+  ],
+  "duration_seconds": 200.0
+ },
+ "labels": [
+  {
+   "turn_index": 0,
+   "label": "opening",
+   "question_id": null,
+   "follow_up_number": null,
+   "area_id": "opening",
+   "at_seconds": 4.0
+  },
+  {
+   "turn_index": 2,
+   "label": "plan",
+   "question_id": "Q2.1",
+   "follow_up_number": null,
+   "area_id": "product_strategy",
+   "at_seconds": 24.0
+  },
+  {
+   "turn_index": 4,
+   "label": "follow_up",
+   "question_id": "Q2.1",
+   "follow_up_number": 1,
+   "area_id": "product_strategy",
+   "at_seconds": 44.0
+  },
+  {
+   "turn_index": 6,
+   "label": "plan",
+   "question_id": "Q2.2",
+   "follow_up_number": null,
+   "area_id": "product_strategy",
+   "at_seconds": 64.0
+  },
+  {
+   "turn_index": 8,
+   "label": "follow_up",
+   "question_id": "Q2.2",
+   "follow_up_number": 1,
+   "area_id": "prioritization",
+   "at_seconds": 84.0
+  },
+  {
+   "turn_index": 10,
+   "label": "plan",
+   "question_id": "Q3.1",
+   "follow_up_number": null,
+   "area_id": "prioritization",
+   "at_seconds": 104.0
+  },
+  {
+   "turn_index": 12,
+   "label": "plan",
+   "question_id": "Q3.2",
+   "follow_up_number": null,
+   "area_id": "prioritization",
+   "at_seconds": 124.0
+  },
+  {
+   "turn_index": 14,
+   "label": "plan",
+   "question_id": "Q2.3",
+   "follow_up_number": null,
+   "area_id": "prioritization",
+   "at_seconds": 144.0
+  },
+  {
+   "turn_index": 16,
+   "label": "easier_variant",
+   "question_id": "Q2.3",
+   "follow_up_number": null,
+   "area_id": "prioritization",
+   "at_seconds": 164.0
+  },
+  {
+   "turn_index": 18,
+   "label": "closing",
+   "question_id": null,
+   "follow_up_number": null,
+   "area_id": null,
+   "at_seconds": 184.0
+  }
+ ],
+ "areas": [
+  {
+   "area_id": "opening",
+   "area_name": "Opening",
+   "at_seconds": 0.0
+  },
+  {
+   "area_id": "product_strategy",
+   "area_name": "Product strategy and vision",
+   "at_seconds": 15.0
+  },
+  {
+   "area_id": "prioritization",
+   "area_name": "Prioritization and trade-offs",
+   "at_seconds": 75.0
+  },
+  {
+   "area_id": "closing",
+   "area_name": "Closing",
+   "at_seconds": 175.0
+  }
+ ],
+ "session_metrics": {
+  "engine": "realtime",
+  "coordinator_events": [
+   {
+    "kind": "question_skipped",
+    "at_seconds": 96.0,
+    "source": "coordinator",
+    "payload": {
+     "area": 3,
+     "area_name": "Prioritization and trade-offs",
+     "said": "Can we skip this one?"
+    }
+   },
+   {
+    "kind": "question_skipped",
+    "at_seconds": 116.0,
+    "source": "coordinator",
+    "payload": {
+     "area": 3,
+     "area_name": "Prioritization and trade-offs",
+     "said": "Can we skip this one too?"
+    }
+   },
+   {
+    "kind": "question_declined",
+    "at_seconds": 156.0,
+    "source": "coordinator",
+    "payload": {
+     "area": 3,
+     "area_name": "Prioritization and trade-offs",
+     "said": "I'd rather not answer that."
+    }
+   }
+  ],
+  "auditor": {
+   "status": "ok",
+   "skips": [
+    {
+     "area": 2,
+     "after_turn": 8,
+     "question_id": "Q2.2",
+     "spoken_in_area": 3,
+     "area_source": "question"
+    },
+    {
+     "area": 3,
+     "after_turn": 10,
+     "question_id": "Q3.1",
+     "spoken_in_area": 3,
+     "area_source": "question"
+    }
+   ],
+   "declines": [
+    {
+     "area": 2,
+     "after_turn": 14,
+     "question_id": "Q2.3",
+     "spoken_in_area": 3,
+     "area_source": "question"
+    }
+   ]
+  }
+ },
+ "ending": {
+  "ended_because": "interview_complete",
+  "ending": "model_spoke",
+  "hang_up_by": "bot_stopped_speaking"
+ },
+ "live_skips": [
+  {
+   "area_id": "product_strategy",
+   "question_id": "Q2.2",
+   "at_seconds": 96.0
+  },
+  {
+   "area_id": "prioritization",
+   "question_id": "Q3.1",
+   "at_seconds": 116.0
+  }
+ ]
+}

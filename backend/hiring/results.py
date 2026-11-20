@@ -2,10 +2,10 @@
 
 Built only from evidence Track H already holds: the CV fit against the job's
 weighted competencies, the HR round's evaluation, and every decision so far.
-The technical round's report belongs to Track I (`<InterviewReport>`); until it
-lands, the results page carries a bounded slot for it, and the only technical
-data shown here is the headline of a report that really exists for this
-candidate. Nothing is filled in from fixtures.
+The technical round's report is Track I's contract (`FeedbackReport`, scored
+from the interview's transcript). It is returned here in full, with that
+transcript, only when a real report exists for this candidate; the console
+shows it in its own design. Nothing is filled in from fixtures.
 
 Strengths and gaps are picked out in code from those ratings, never written by
 a model, and each one says where it came from (the CV or the HR round), so a
@@ -18,7 +18,7 @@ from sqlalchemy import select
 from app.db import Candidate, Job, get_sessionmaker
 from hiring.api import router
 from hiring.models import DecisionRecord, HRRound, Screening
-from hiring.technical import technical_report
+from hiring.technical import integrity_facts_for, technical_report, technical_rounds
 from org.auth import current_user, job_scope
 from org.models import User
 from shared.screening import MIN_ASSESSED_WEIGHT_PERCENT, FitAnalysis, HRRoundEvaluation
@@ -122,14 +122,37 @@ def _technical_headline(report: dict | None) -> dict | None:
     }
 
 
+def _turns(interview) -> list[dict]:
+    """The transcript's turns, in order: index, speaker, text and when it was said."""
+    turns = (interview.transcript or {}).get("turns") or []
+    return [
+        {
+            "index": t.get("index", i), "speaker": t.get("speaker"), "text": t.get("text", ""),
+            "at_seconds": t.get("audio_start_seconds", t.get("at_seconds")),
+        }
+        for i, t in enumerate(turns)
+    ]
+
+
 async def _names(session, ids: set[str]) -> dict[str, str]:
     if not ids:
         return {}
     return {u.id: u.name for u in (await session.execute(select(User).where(User.id.in_(ids)))).scalars()}
 
 
+def _skipped(decisions, names: dict[str, str]) -> dict | None:
+    from hiring.hr_round import SKIPPED, skip_decision
+
+    d = skip_decision(decisions)
+    if d is None:
+        return None
+    reason = (d.reason or "").removeprefix(SKIPPED).lstrip(": ").strip()
+    return {"by": names.get(d.actor_user_id) if d.actor_user_id else None,
+            "at": d.created_at.isoformat() if d.created_at else None, "reason": reason or None}
+
+
 @router.get("/candidates/{candidate_id}/results")
-async def results(candidate_id: str, user: User = Depends(current_user)) -> dict:
+async def results(candidate_id: str, interview: str | None = None, user: User = Depends(current_user)) -> dict:
     """Everything the BU head reads before deciding. HR and admins read it too."""
     async with get_sessionmaker()() as session:
         row = (
@@ -145,7 +168,9 @@ async def results(candidate_id: str, user: User = Depends(current_user)) -> dict
             await session.execute(select(Screening).where(Screening.candidate_id == candidate.id))
         ).scalar_one_or_none()
         hr = await _latest_hr(session, candidate.id)
-        technical = await technical_report(session, candidate.id)
+        # A candidate may have several MITRA rounds (retakes): the newest, or the one asked for.
+        technical = await technical_report(session, candidate.id, interview)
+        rounds = await technical_rounds(session, candidate.id)
         decisions = (
             await session.execute(
                 select(DecisionRecord).where(DecisionRecord.candidate_id == candidate.id).order_by(DecisionRecord.id)
@@ -192,9 +217,19 @@ async def results(candidate_id: str, user: User = Depends(current_user)) -> dict
             "attribution_confidence": (hr.attribution or {}).get("confidence"),
             "evaluated_at": hr.evaluated_at.isoformat() if hr.evaluated_at else None,
         } if evaluation else None,
+        # The HR round is optional: skipped by HR, with who, when and why (if given).
+        "hr_skipped": _skipped(decisions, names),
         "technical": {
+            "rounds": rounds,
             "report": _technical_headline(technical[1]) if technical else None,
             "interview_id": technical[0].id if technical else None,
+            # The full report and the transcript it quotes, for the console's
+            # own report view. Both are Track I's contracts, shown as stored.
+            "full": technical[1] if technical else None,
+            "transcript": _turns(technical[0]) if technical else [],
+            "ended_at": technical[0].ended_at.isoformat() if technical and technical[0].ended_at else None,
+            # The candidate's browser reports during the round: facts for a person, never a score.
+            "integrity": await integrity_facts_for(technical[0]) if technical else None,
         },
         "strengths": strengths,
         "gaps": gaps,
@@ -244,6 +279,14 @@ async def compare(
             )
         ).scalars().all() if ids else []
         latest_hr = {h.candidate_id: h for h in hr_rows}
+        from hiring.hr_round import skip_decision
+
+        moves = (
+            await session.execute(
+                select(DecisionRecord).where(DecisionRecord.candidate_id.in_(ids)).order_by(DecisionRecord.id)
+            )
+        ).scalars().all() if ids else []
+        skipped_hr = {cid for cid in ids if skip_decision(m for m in moves if m.candidate_id == cid)}
         reports = {}
         for cid in ids:
             found = await technical_report(session, cid)
@@ -293,6 +336,7 @@ async def compare(
                 "recommendation": evaluation.recommendation.value,
                 "ratings": {r.name: r.rating for r in evaluation.ratings},
             } if evaluation else None,
+            "hr_skipped": c.id in skipped_hr,
             "technical": {"recommendation": report.get("recommendation")} if report else None,
         })
 

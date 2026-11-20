@@ -17,6 +17,7 @@ from blueprint.generate import (
     CLOSING_MINUTES,
     MIN_SECTION_MINUTES,
     OPENING_MINUTES,
+    opening_minutes_for,
     BlueprintGenerationError,
     allocate_minutes,
     build_blueprint,
@@ -68,8 +69,14 @@ def test_budgets_always_sum_to_the_available_time(duration):
     spec = spec_with(duration=duration)
     minutes = allocate_minutes(spec=spec, plans_by_id={})
 
-    available = duration - OPENING_MINUTES - CLOSING_MINUTES
+    available = duration - opening_minutes_for(duration) - CLOSING_MINUTES
     assert sum(minutes.values()) == pytest.approx(available, abs=0.01)
+
+
+def test_the_opening_grows_with_the_interview_within_three_to_six_minutes():
+    """2026-11-20: the opening is an exploratory conversation about their work; a fixed
+    two minutes made the interview feel compact."""
+    assert [opening_minutes_for(d) for d in (20, 25, 30, 40, 60, 90)] == [3.0, 4.0, 4.5, 6.0, 6.0, 6.0]
 
 
 def test_time_follows_employer_weight_when_emphasis_is_flat():
@@ -112,7 +119,7 @@ def test_every_competency_gets_a_usable_slot():
 
     assert min(minutes.values()) >= MIN_SECTION_MINUTES - 0.5
     assert sum(minutes.values()) == pytest.approx(
-        spec.duration_minutes - OPENING_MINUTES - CLOSING_MINUTES, abs=0.01
+        spec.duration_minutes - opening_minutes_for(spec.duration_minutes) - CLOSING_MINUTES, abs=0.01
     )
     # Weighting still applies above the floor.
     assert minutes["a"] > minutes["b"] > minutes["e"]
@@ -123,7 +130,7 @@ def test_too_many_competencies_for_the_clock_still_splits_evenly():
     spec = spec_with(duration=20, weights={c: 1 / 7 for c in "abcdefg"})
     minutes = allocate_minutes(spec=spec, plans_by_id=payload_by_id(spec))
 
-    available = 20 - OPENING_MINUTES - CLOSING_MINUTES
+    available = 20 - opening_minutes_for(20) - CLOSING_MINUTES
     assert sum(minutes.values()) == pytest.approx(available, abs=0.01)
     assert min(minutes.values()) >= 1.5
 

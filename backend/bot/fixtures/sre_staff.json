@@ -68,8 +68,8 @@
       "seed_questions": [
         "Take me through the worst production incident you have personally been paged for. Start from the moment you were paged.",
         "Your background mentions leading incident command for a multi-hour regional outage. Walk me through that one.",
-        "At what point during that incident did you realise your first hypothesis was wrong, and what did you do about it?",
-        "What did the postmortem change, and did that change actually hold six months later?"
+        "What did you do when you realised your first hypothesis about that incident was wrong?",
+        "Which change from the postmortem actually held six months later?"
       ]
     },
     {
@@ -78,10 +78,10 @@
       "target_depth": "Reasons about a real system's failure modes concretely: blast radius, degradation, backpressure, and what a given reliability target actually cost to reach.",
       "time_budget_minutes": 19.0,
       "seed_questions": [
-        "Describe the multi-region setup you ran. What failure did it genuinely protect against, and what did it not?",
-        "Where was the largest blast radius in that system, and why did you accept it?",
+        "What failure did your multi-region setup genuinely protect against?",
+        "Why did you accept the largest blast radius in that system?",
         "How did that system behave when a dependency got slow rather than failing outright?",
-        "What reliability target were you held to, and what did the last nine cost you?"
+        "What did the last nine of your reliability target cost you?"
       ]
     },
     {
@@ -91,7 +91,7 @@
       "time_budget_minutes": 13.0,
       "seed_questions": [
         "Your background mentions cutting paging volume by around seventy percent. How was that measured?",
-        "What was the single biggest source of pages, and what did you actually change?",
+        "What did you actually change about your single biggest source of pages?",
         "What manual work did you decide was not worth automating?",
         "Tell me about something you automated that turned out to be a mistake."
       ]

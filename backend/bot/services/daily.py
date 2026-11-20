@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import aiohttp
+from yarl import URL
 from loguru import logger
 from pipecat.transports.daily.transport import DailyParams, DailyTransport
 
@@ -114,6 +115,7 @@ async def create_meeting_token(
     expiry_seconds: int,
     is_owner: bool = False,
     user_name: str | None = None,
+    user_id: str | None = None,
     start_cloud_recording: bool = False,
 ) -> str:
     """Mint a short-lived meeting token for a room.
@@ -130,6 +132,9 @@ async def create_meeting_token(
     }
     if user_name:
         properties["user_name"] = user_name
+    if user_id:
+        # How the bot recognises the candidate (bot/presence.candidate_user_id).
+        properties["user_id"] = user_id
     if start_cloud_recording:
         # Recording starts when this token's holder joins. Used for the HR
         # round, where no bot is in the room to start it (hiring/hr_round.py).
@@ -146,6 +151,59 @@ async def create_meeting_token(
             if response.status != 200:
                 raise RuntimeError(f"Daily token creation failed ({response.status}): {body}")
 
+    return body["token"]
+
+
+async def create_watcher_token(
+    *,
+    api_key: str,
+    room_name: str,
+    user_id: str,
+    expires_at: int,
+    user_name: str = "Live view",
+) -> str:
+    """A meeting token for a hidden, receive-only watcher (live view, task 22).
+
+    Every property is checked against Daily's create-meeting-token reference
+    (docs.daily.co/reference/rest-api/meeting-tokens/create-meeting-token) and
+    the permissions type (docs.daily.co/reference/daily-js/types/
+    daily-participant-permissions):
+    - `is_owner: False`: no owner privileges (muting others, admin actions).
+    - `permissions.hasPresence: False`: "the participant is hidden from all
+      other participants. They do not appear in participants() for others,
+      cannot be seen or heard, and their events are not broadcast."
+    - `permissions.canSend: False` ("false blocks all"), `canAdmin: False`.
+      Receiving is left at the default, so they can watch.
+    - `enable_screenshare: False`, `start_video_off` and `start_audio_off`.
+    - `exp` plus `eject_at_token_exp: True`: "Kick this user out of the
+      meeting at the time this meeting token expires." The caller ties `exp`
+      to the interview's hard stop.
+    - `user_id` marks them as a watcher; Daily allows 36 characters.
+    The token is never logged.
+    """
+    if len(user_id) > 36:
+        raise ValueError(f"user_id is {len(user_id)} characters; Daily allows 36")
+    properties = {
+        "room_name": room_name,
+        "exp": int(expires_at),
+        "eject_at_token_exp": True,
+        "is_owner": False,
+        "user_id": user_id,
+        "user_name": user_name,
+        "enable_screenshare": False,
+        "start_video_off": True,
+        "start_audio_off": True,
+        "permissions": {"hasPresence": False, "canSend": False, "canAdmin": False},
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{DAILY_API_URL}/meeting-tokens",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"properties": properties},
+        ) as response:
+            body = await response.json()
+            if response.status != 200:
+                raise RuntimeError(f"Daily watcher token creation failed ({response.status}): {body}")
     return body["token"]
 
 
@@ -316,13 +374,26 @@ async def download_recording(*, api_key: str, recording_id: str, destination: Pa
         destination.parent.mkdir(parents=True, exist_ok=True)
         partial = destination.with_suffix(destination.suffix + ".part")
         written = 0
-        async with session.get(url) as response:
+        # The link is signed and already percent-encoded: passed as is (C-89). Left to
+        # aiohttp, it is re-encoded, the signature no longer matches, and Daily's
+        # storage answers 403 for every recording.
+        async with session.get(URL(url, encoded=True)) as response:
             if response.status != 200:
                 raise RuntimeError(f"Downloading the recording failed ({response.status}).")
-            with partial.open("wb") as handle:
-                async for chunk in response.content.iter_chunked(_DOWNLOAD_CHUNK_BYTES):
-                    handle.write(chunk)
-                    written += len(chunk)
+            expected = response.content_length
+            try:
+                with partial.open("wb") as handle:
+                    async for chunk in response.content.iter_chunked(_DOWNLOAD_CHUNK_BYTES):
+                        handle.write(chunk)
+                        written += len(chunk)
+            except BaseException:
+                partial.unlink(missing_ok=True)
+                raise
+        if expected is not None and written != expected:
+            # A short (or long) body is a failed download: nothing at the real path,
+            # so the sweep never verifies it and never deletes Daily's copy.
+            partial.unlink(missing_ok=True)
+            raise RuntimeError(f"The recording download was incomplete ({written} of {expected} bytes).")
 
     if written == 0:
         partial.unlink(missing_ok=True)

@@ -34,9 +34,10 @@ from blueprint.clarify import (
 )
 from blueprint.documents import DocumentError, extract_text
 from bot.config import Settings
+from hiring import usage
 from hiring.api import router
 from hiring.stages import audit
-from org.auth import current_user, job_scope, require_role, visible_job_or_404
+from org.auth import current_user, job_scope, require_role
 from org.models import BusinessUnit, User
 from org.users import new_id
 from shared.stages import Role
@@ -47,11 +48,13 @@ _bu_head = require_role(Role.BU_HEAD)
 
 #: The longest title a request can have; the column holds 256.
 MAX_TITLE = 200
+#: A typed or pasted job description. Long JDs run to a few thousand words.
+MAX_JD_CHARS = 30_000
 
 
 def _chat() -> ClarificationChat:
     settings = Settings.load()
-    return ClarificationChat(api_key=settings.openai_api_key, model=settings.blueprint_model)
+    return ClarificationChat(api_key=settings.openai_api_key, model=settings.legacy_blueprint_model)
 
 
 class ChatMessage(BaseModel):
@@ -100,7 +103,11 @@ async def _view(session, user: User, job: Job) -> dict:
         ],
         "can_chat": is_owner and not ready,
         "can_edit": is_owner and ready,
+        # Mid-edit with a summary already agreed: leave without changing it.
+        "can_keep": is_owner and not ready and job.evaluation_spec is not None,
         "can_approve": is_owner and ready and job.request_status == DRAFT,
+        # A request HR has not received can be withdrawn by the BU head who raised it.
+        "can_delete": is_owner and job.request_status == DRAFT and not candidates,
     }
 
 
@@ -125,6 +132,7 @@ async def list_jobs(user: User = Depends(current_user)) -> list[dict]:
 async def create_job_request(
     title: str = Form(...),
     file: UploadFile | None = File(None),
+    jd: str | None = Form(None),
     user: User = Depends(_bu_head),
 ) -> dict:
     """Start a job request in the BU head's own BU, and ask the first question."""
@@ -141,16 +149,24 @@ async def create_job_request(
         except DocumentError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         filename = file.filename
+    elif jd and jd.strip():
+        # Typed or pasted into the form instead of uploaded.
+        if len(jd) > MAX_JD_CHARS:
+            raise HTTPException(status_code=422, detail=f"Keep the job description under {MAX_JD_CHARS:,} characters.")
+        jd_text = jd.strip()
 
+    # The id is chosen first, so the model call it costs is recorded against it.
+    job_id = new_id("job")
     try:
-        turn = await _chat().next_turn(jd_text=jd_text, history=[], role_title=title)
+        with usage.context(job_id=job_id):
+            turn = await _chat().next_turn(jd_text=jd_text, history=[], role_title=title)
     except ClarificationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     async with get_sessionmaker()() as session:
         bu = await session.get(BusinessUnit, user.bu_id)
         job = Job(
-            id=new_id("job"),
+            id=job_id,
             title=title,
             business_unit=bu.name if bu else None,
             source_filename=filename,
@@ -201,7 +217,8 @@ async def chat(
         history.append({"role": EMPLOYER_ROLE, "content": message})
 
         try:
-            turn = await _chat().next_turn(jd_text=job.jd_text, history=history, role_title=job.title or "")
+            with usage.context(job_id=job.id):
+                turn = await _chat().next_turn(jd_text=job.jd_text, history=history, role_title=job.title or "")
         except ClarificationError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -243,6 +260,52 @@ async def edit(job_id: str, user: User = Depends(_bu_head)) -> dict:
         await audit(session, "job_request_edit_started", by=user, subject_type="job", subject_id=job.id)
         await session.commit()
         return await _view(session, user, await _load(session, user, job_id))
+
+
+@router.post("/jobs/{job_id}/keep")
+async def keep(job_id: str, user: User = Depends(_bu_head)) -> dict:
+    """Leave an edit without changing anything: the summary agreed before stands.
+
+    Anything said in the reopened chat stays in the conversation record, but it
+    changes nothing: the spec, its version and every candidate's plan are as
+    they were.
+    """
+    async with get_sessionmaker()() as session:
+        job = await _load(session, user, job_id)
+        if job.spec_status == SpecStatus.READY:
+            raise HTTPException(status_code=409, detail="This request is not being edited.")
+        if job.evaluation_spec is None:
+            raise HTTPException(status_code=409, detail="There is no earlier summary to keep. Finish describing the role.")
+        job.spec_status = SpecStatus.READY
+        await audit(session, "job_request_edit_cancelled", by=user, subject_type="job", subject_id=job.id)
+        await session.commit()
+        return await _view(session, user, await _load(session, user, job_id))
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_job_request(job_id: str, user: User = Depends(_bu_head)) -> dict:
+    """Delete a job request that was never sent to HR.
+
+    Only the BU head who owns it, and only while it is a draft: once HR has it,
+    candidates and decisions hang off it, and it is part of the record. The
+    deletion itself is audited with the title, so the record says it existed.
+    """
+    async with get_sessionmaker()() as session:
+        job = await _load(session, user, job_id)
+        is_owner = user.bu_id is not None and user.bu_id == job.bu_id
+        if not is_owner:
+            raise HTTPException(status_code=403, detail="Only the BU head who raised this request can delete it.")
+        if job.request_status != DRAFT:
+            raise HTTPException(status_code=409, detail="This request is already with HR, so it can no longer be deleted.")
+        count = await session.scalar(select(func.count()).select_from(Candidate).where(Candidate.job_id == job.id))
+        if count:
+            raise HTTPException(status_code=409, detail="This request has candidates, so it can no longer be deleted.")
+        await audit(session, "job_request_deleted", by=user, subject_type="job", subject_id=job.id,
+                    detail={"title": job.title})
+        await session.delete(job)
+        await session.commit()
+        logger.info(f"[{job_id}] job request deleted by {user.id}")
+        return {"deleted": job_id}
 
 
 @router.post("/jobs/{job_id}/approve")

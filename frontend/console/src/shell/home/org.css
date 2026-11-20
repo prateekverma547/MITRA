@@ -1,0 +1,50 @@
+/* The org admin's home. Small, precise figures; titles and captions say what
+   each section is for. Uses the shell's tokens only. */
+
+.org-home { gap: 16px; }
+.org-home .page-head { align-items: center; }
+.section-head { margin-bottom: 10px; }
+
+/* What needs your attention: sentences you can act on. */
+.insights { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.insight {
+  width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center;
+  padding: 10px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text);
+  font: inherit; text-align: left; cursor: pointer; transition: background-color 160ms ease;
+}
+.insight:hover, .insight:focus-visible { background: color-mix(in srgb, var(--paper) 70%, var(--surface)); }
+.insight > svg { flex: none; }
+.insight-attention > svg { color: var(--attention); }
+.insight-info > svg { color: var(--signal); }
+.insight-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.insight-text { font-size: var(--s-15); line-height: 1.45; }
+.insight-basis { font-size: var(--s-12); color: var(--faint); }
+.insight-go { display: inline-flex; align-items: center; gap: 4px; font-size: var(--s-12); font-weight: 600; color: var(--signal); white-space: nowrap; }
+.insight:hover .insight-go svg { transform: translateX(2px); }
+.insight-go svg { transition: transform 160ms ease; }
+
+/* Health of hiring: four small, exact tiles. */
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.kpi { background: var(--surface); border: 1px solid var(--rule); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.kpi-title { font-size: var(--s-12); font-weight: 500; color: var(--muted); }
+.kpi-value { font-family: var(--sans); font-size: 1.35rem; font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
+.kpi-sub { font-size: var(--s-12); color: var(--muted); line-height: 1.4; }
+.kpi-change { display: inline-flex; align-items: center; gap: 4px; font-size: var(--s-12); font-weight: 600; margin-top: 2px; }
+.kpi-change.good { color: var(--good); }
+.kpi-change.bad { color: var(--attention); }
+.kpi-change.flat, .kpi-change.muted { color: var(--faint); font-weight: 500; }
+@media (max-width: 1000px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .kpis { grid-template-columns: minmax(0, 1fr); } }
+
+/* Business units: a compact comparison table. */
+.units { width: 100%; border-collapse: collapse; font-size: var(--s-15); min-width: 620px; }
+.units th { text-align: left; font-size: var(--s-12); font-weight: 600; color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--rule); }
+.units td { padding: 9px 10px; border-bottom: 1px solid var(--rule); }
+.units .num { text-align: right; font-variant-numeric: tabular-nums; }
+.units tbody tr { cursor: pointer; transition: background-color 140ms ease; }
+.units tbody tr:hover, .units tbody tr:focus-visible { background: color-mix(in srgb, var(--paper) 70%, var(--surface)); outline: none; }
+.units tbody tr.on { background: var(--signal-soft); }
+.units tbody tr.on .unit-name { color: var(--signal); }
+.unit-name { font-weight: 600; }
+.units td.worst { color: var(--prio-red-ink); font-weight: 650; }
+.units td.worst::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--prio-red); box-shadow: 0 0 8px var(--prio-red-glow); margin-right: 6px; vertical-align: 2px; }

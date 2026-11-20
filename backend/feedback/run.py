@@ -73,10 +73,14 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
 
         transcript_payload = interview.transcript
         metrics = interview.session_metrics or {}
+        from feedback.clean import stored_cleaned_transcript
+
+        cleaned_payload = stored_cleaned_transcript(interview)  # C-A6 column, or the old place
         outcomes = interview.section_outcomes or []
         blueprint_payload = candidate.blueprint
         blueprint_id = candidate.id
 
+    scorer = None
     try:
         settings = Settings.load()
         transcript = Transcript.model_validate(transcript_payload)
@@ -95,6 +99,12 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
         # cannot be written down about the candidate.
         questioning = assess_questioning(transcript)
 
+        # The cleaned transcript's declared name fixes (A-52): a quote that spells
+        # a name the way the cleaner fixed it is the same words, for that turn only.
+        from feedback.clean import declared_name_fixes
+
+        declared_fixes = declared_name_fixes(cleaned_payload)
+
         report = await scorer.score(
             interview_id=interview_id,
             blueprint_id=blueprint_id,
@@ -105,7 +115,14 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
             health=health,
             judgment_health=judgment_health,
             questioning=questioning,
+            declared_fixes=declared_fixes,
         )
+        # Phase 3 wave 1: every drop and return, as the bot recorded it (bot/rejoin.py).
+        # Evidence about the connection, never about the candidate.
+        if metrics.get("connection"):
+            from shared.contracts import ConnectionRecord
+
+            report = report.model_copy(update={"connection": ConnectionRecord.model_validate(metrics["connection"])})
     except (FeedbackError, Exception) as exc:  # noqa: BLE001
         logger.error(f"[{interview_id}] feedback generation failed: {exc}")
         async with sessionmaker() as session:
@@ -113,6 +130,7 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
             if interview is not None:
                 interview.feedback_status = FeedbackStatus.FAILED
                 interview.feedback_error = str(exc)
+                _record_usage(interview, scorer)
                 await session.commit()
         return None
 
@@ -124,6 +142,7 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
         interview.feedback_status = FeedbackStatus.READY
         interview.feedback_error = None
         interview.feedback_generated_at = datetime.now(UTC)
+        _record_usage(interview, scorer)
         await session.commit()
 
     scored = sum(1 for s in report.competency_scores if s.score is not None)
@@ -132,6 +151,22 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
         f"competencies scored, {len(report.coverage_gaps)} gaps"
     )
     return report
+
+
+def _record_usage(interview, scorer) -> None:
+    """Append the scoring call's usage to the interview's session metrics.
+
+    session_metrics is a stored JSON blob, not a contract, so this needs no
+    schema change. Reassigned rather than mutated, so SQLAlchemy sees the
+    change. Nothing is recorded when no model was called (an empty transcript
+    is reported without one).
+    """
+    record = getattr(scorer, "last_usage", None)
+    if record is None:
+        return
+    metrics = dict(interview.session_metrics or {})
+    metrics["text_model_calls"] = [*(metrics.get("text_model_calls") or []), record.to_dict()]
+    interview.session_metrics = metrics
 
 
 def _repairs(metrics: dict) -> int:

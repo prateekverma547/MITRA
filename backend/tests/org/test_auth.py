@@ -62,7 +62,7 @@ async def test_signing_in_returns_the_role_the_account_has(org_client):
     assert response.status_code == 200
     me = response.json()
     assert me["role"] == "bu_head"
-    assert me["bu_name"] == "AI"
+    assert me["bu_name"] == "AI, ML & Data Science"
     assert "password_hash" not in me
     assert org_client.get("/api/auth/me").json()["email"] == "ai.head@mitra.local"
 
@@ -143,8 +143,8 @@ def home_jobs(client) -> dict[str, list[str]]:
 async def test_a_bu_head_sees_only_their_own_bu(org_client):
     await make_legacy_job()
     sign_in(org_client, "ai.head@mitra.local")
-    assert home_jobs(org_client) == {"AI": ["AI Engineer"]}
-    assert [bu["name"] for bu in org_client.get("/api/business-units").json()] == ["AI"]
+    assert home_jobs(org_client) == {"AI, ML & Data Science": ["AI Engineer"]}
+    assert [bu["name"] for bu in org_client.get("/api/business-units").json()] == ["AI, ML & Data Science"]
 
 
 async def test_hr_and_admin_see_every_bu_and_old_admin_jobs(org_client):
@@ -152,15 +152,15 @@ async def test_hr_and_admin_see_every_bu_and_old_admin_jobs(org_client):
     for email in ("hr@mitra.local", "admin@mitra.local"):
         sign_in(org_client, email)
         jobs = home_jobs(org_client)
-        assert jobs["AI"] == ["AI Engineer"]
-        assert jobs["Finance"] == ["Financial Analyst"]
+        assert jobs["AI, ML & Data Science"] == ["AI Engineer"]
+        assert jobs["Sales"] == ["Sales Executive"]
         assert jobs["Unassigned"] == ["Old admin job"]
 
 
 async def test_home_counts_candidates_by_stage(org_client):
     sign_in(org_client, "hr@mitra.local")
     home = org_client.get("/api/home").json()
-    ai = next(bu for bu in home["business_units"] if bu["name"] == "AI")
+    ai = next(bu for bu in home["business_units"] if bu["name"] == "AI, ML & Data Science")
     assert ai["jobs"][0]["candidates_by_stage"] == {"screened": 1}
 
 
@@ -241,7 +241,7 @@ async def test_hr_cannot_reject_after_the_technical_round_but_the_bu_head_can(or
     assert org_client.post(f"/api/candidates/{candidate}/move", json=reject).status_code == 409
     assert org_client.post(f"/api/candidates/{candidate}/move", json={"to": "with_bu_head"}).status_code == 200
 
-    sign_in(org_client, "finance.head@mitra.local")
+    sign_in(org_client, "sales.head@mitra.local")
     assert org_client.post(f"/api/candidates/{candidate}/move", json=reject).status_code == 404
 
     sign_in(org_client, "ai.head@mitra.local")
@@ -278,7 +278,24 @@ def console_routes():
     return [r for r in api_routes(app.routes) if r.path.startswith("/api/")]
 
 
-PUBLIC = {("POST", "/api/auth/login"), ("POST", "/api/auth/logout"), ("GET", "/api/auth/demo")}
+PUBLIC = {
+    ("POST", "/api/auth/login"),
+    ("POST", "/api/auth/logout"),
+    ("GET", "/api/auth/demo"),
+    # The candidate's room: their meeting ID and password are the credential
+    # (hiring/room.py; tested in tests/hiring/test_room.py).
+    ("POST", "/api/room/lookup"),
+    # Track I's candidate-side routes. The rejoin exchange's credential is the
+    # single-use rejoin pass; the security-policy report is size-capped and
+    # rate-limited; the proctoring routes take the purpose-bound bearer token
+    # from the join (tests/test_interviews.py lists the same).
+    ("POST", "/api/live/rejoin"),
+    ("POST", "/api/room/diagnostics/{interview_id}"),  # measurement only; the proctoring token
+    ("POST", "/api/live/csp-report"),
+    ("POST", "/api/proctoring/interviews/{interview_id}/events"),
+    ("POST", "/api/proctoring/interviews/{interview_id}/status"),
+    ("GET", "/api/proctoring/interviews/{interview_id}/clock"),
+}
 
 
 def _url(path: str) -> str:
@@ -325,7 +342,7 @@ async def test_account_rules_keep_scoping_sound(org_client):
     from app import db
     from org.users import UserError, create_user
 
-    org_id, ai_bu = org_client.demo.org_id, org_client.demo.bu_ids["AI"]
+    org_id, ai_bu = org_client.demo.org_id, org_client.demo.bu_ids["AI, ML & Data Science"]
     cases = [
         dict(role=Role.BU_HEAD, bu_id=None, email="a@x.io", password="long-enough-1"),
         dict(role=Role.HR, bu_id=ai_bu, email="b@x.io", password="long-enough-1"),

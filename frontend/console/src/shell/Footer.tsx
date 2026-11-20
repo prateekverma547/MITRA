@@ -11,10 +11,8 @@ export function Footer() {
     <footer className="site-footer">
       <span className="built-by">
         Built by
-        <picture>
-          <source srcSet={logoDark} media="(prefers-color-scheme: dark)" />
-          <img src={logoLight} alt="Appinventiv" width={104} height={26} />
-        </picture>
+        <img className="logo-light" src={logoLight} alt="Appinventiv" width={156} height={38} />
+        <img className="logo-dark" src={logoDark} alt="Appinventiv" width={156} height={38} />
       </span>
       <span className="footer-note">MITRA gathers the evidence. A person makes every decision.</span>
     </footer>

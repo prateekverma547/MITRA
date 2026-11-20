@@ -5,7 +5,7 @@ history behind their current stage. The other route modules register on the
 same router (`hiring/api.py`) and are imported at the bottom of this file.
 """
 
-from fastapi import Depends, HTTPException
+from fastapi import BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
@@ -40,7 +40,7 @@ async def _visible_candidate(session, user: User, candidate_id: str) -> Candidat
 
 @router.post("/candidates/{candidate_id}/move")
 async def move_candidate(
-    candidate_id: str, body: MoveRequest, user: User = Depends(_hr_or_bu_head)
+    candidate_id: str, body: MoveRequest, background: BackgroundTasks, user: User = Depends(_hr_or_bu_head)
 ) -> dict:
     async with get_sessionmaker()() as session:
         candidate = await _visible_candidate(session, user, candidate_id)
@@ -53,7 +53,12 @@ async def move_candidate(
         except StageError as exc:
             raise HTTPException(status_code=exc.status, detail=exc.message) from exc
         await session.commit()
-        return {"candidate_id": candidate.id, "stage": candidate.stage, "decision_id": record.id}
+    if body.to is CandidateStage.READY_FOR_TECHNICAL:
+        # MITRA's plan for the technical round is built as soon as HR says go.
+        from hiring.technical import prepare_plan
+
+        background.add_task(prepare_plan, candidate.id)
+    return {"candidate_id": candidate.id, "stage": candidate.stage, "decision_id": record.id}
 
 
 @router.get("/candidates/{candidate_id}/decisions")
@@ -90,11 +95,14 @@ async def candidate_decisions(candidate_id: str, user: User = Depends(_anyone_si
 # Route modules that register on the same router. Imported for their effect.
 from hiring import (  # noqa: E402,F401
     candidates,
+    diagnostics,
     hr_round,
     insights,
     jobs,
     results,
+    room,
     technical,
     transparency,
+    usage,
 )
 from hiring.candidates import gate_rules  # noqa: E402

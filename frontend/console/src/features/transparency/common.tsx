@@ -11,6 +11,8 @@ const TABS = [
   { to: "/transparency", label: "Decisions" },
   { to: "/transparency/records", label: "Records" },
   { to: "/transparency/ai", label: "AI usage register" },
+  { to: "/transparency/calls", label: "AI calls" },
+  { to: "/transparency/cost", label: "Cost" },
   { to: "/transparency/audit", label: "Audit trail" },
 ];
 

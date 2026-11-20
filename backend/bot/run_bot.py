@@ -62,7 +62,7 @@ from bot.persona import build_system_instruction
 from bot.services.daily import build_transport, start_recording, stop_recording
 from bot.ending import SessionEnder
 from bot.tools import TOOLS, register as register_tools
-from bot.presence import RoomPresence, attach as attach_presence
+from bot.presence import RoomPresence, attach as attach_presence, candidate_user_id
 from bot.silence import SilenceEscalation
 from bot.services.llm import build_llm
 from bot.services.stt import build_stt, stt_provider
@@ -244,13 +244,19 @@ async def run_bot(
     # It is told when the interview is over for the same reason the ladder is:
     # an interview ends with the candidate leaving, so counting that departure
     # recorded a dropped call on every interview that ever ran.
+    # Only the candidate drives the interview (F-028 fix); see bot/presence.py.
+    # The callbacks are defined below, once the worker exists.
+    ended = {"because": None}
     presence = attach_presence(
         transport,
         RoomPresence(
             interview_over=(lambda: brain.is_finished or brain.withdrew)
             if use_brain
-            else None
+            else None,
+            candidate_mark=candidate_user_id(interview_id) if interview_id else None,
         ),
+        on_candidate_arrived=lambda participant: start_interview(participant),
+        on_candidate_gone=lambda departure: candidate_gone(departure),
     )
     silence = SilenceEscalation(
         session_id=session_id,
@@ -295,7 +301,9 @@ async def run_bot(
             judge=OpenAIJudge(
                 api_key=settings.openai_api_key,
                 # Off the critical path, so it gets the reasoning tier.
-                model=settings.blueprint_model,
+                # Pinned: the judge passes temperature=0.0 (drivers.py), which a
+                # reasoning model rejects. See bot/config.py LEGACY_BLUEPRINT_DEFAULT.
+                model=settings.legacy_blueprint_model,
             ),
             session_id=session_id,
         )
@@ -432,8 +440,8 @@ async def run_bot(
             clock_zero=transcript_clock_zero,
         )
 
-    @transport.event_handler("on_client_connected")
-    async def on_client_connected(transport, client):
+    async def start_interview(participant):
+        """The candidate's first connection only (bot/presence.py attach)."""
         logger.info(f"[{session_id}] candidate connected")
 
         if use_brain:
@@ -465,9 +473,13 @@ async def run_bot(
         )
         await worker.queue_frames([LLMRunFrame()])
 
-    @transport.event_handler("on_client_disconnected")
-    async def on_client_disconnected(transport, client):
-        logger.info(f"[{session_id}] candidate disconnected — ending session")
+    async def candidate_gone(departure):
+        """The last candidate connection left. Watchers never get here."""
+        if departure.interview_over:
+            logger.info(f"[{session_id}] candidate left after the interview ended")
+        else:
+            logger.info(f"[{session_id}] candidate dropped mid-interview — ending session")
+            ended["because"] = "candidate_dropped"
         await worker.cancel()
 
     @worker.event_handler("on_pipeline_error")
@@ -529,11 +541,21 @@ async def run_bot(
                     # The judge runs on the blueprint model, not the live one.
                     # Recorded because a bad value here degrades the interview
                     # while looking like an offline-only setting.
-                    "judge_model": settings.blueprint_model,
+                    "judge_model": settings.legacy_blueprint_model,
                     # Which vendor produced these latency numbers. Without
                     # it a comparison across sessions depends on somebody
                     # remembering when the key was added.
                     "stt_provider": stt_provider(),
+                    # Same field and values as the realtime engine, so a dropped
+                    # call is never read as a completed interview.
+                    "ended_because": ended["because"]
+                    or (
+                        "candidate_withdrew"
+                        if director and brain.withdrew
+                        else "interview_complete"
+                        if director and brain.is_finished
+                        else "session_ended"
+                    ),
                 },
             )
 
@@ -560,15 +582,28 @@ def configure_logging(level: str) -> None:
     verification, and the per-turn latency lines visible.
 
     Set LOG_LEVEL=DEBUG when diagnosing the pipeline itself.
+
+    LOG_JSON=1 (or true/yes/on), as for the web process (app/logs.py, C-131): every
+    line on standard error is one JSON object (loguru's serialised record). Nothing
+    new is logged; the same lines change form. Off by default.
     """
     logger.remove()
-    logger.add(sys.stderr, level=level.upper())
+    as_json = os.environ.get("LOG_JSON", "").strip().lower() in {"1", "true", "yes", "on"}
+    logger.add(sys.stderr, level=level.upper(), serialize=as_json)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run one interview bot session.")
     parser.add_argument("--room-url", required=True, help="Daily room URL to join.")
-    parser.add_argument("--token", default=None, help="Daily meeting token, if the room is private.")
+    parser.add_argument(
+        "--token-stdin",
+        action="store_true",
+        help=(
+            "Read the Daily meeting token (private rooms) from the first line of "
+            "standard input. Never on the command line, where `ps` shows it to "
+            "everything on the machine (D-42)."
+        ),
+    )
     parser.add_argument(
         "--session-id",
         default=None,
@@ -619,11 +654,17 @@ def main() -> None:
 
     session_id = args.session_id or f"session-{uuid.uuid4().hex[:8]}"
 
+    token = None
+    if args.token_stdin:
+        token = sys.stdin.readline().strip() or None
+        logger.info(f"[{session_id}] meeting token read from standard input "
+                    f"({'present' if token else 'MISSING'})")
+
     try:
         asyncio.run(
             run_bot(
                 room_url=args.room_url,
-                token=args.token,
+                token=token,
                 session_id=session_id,
                 blueprint_id=args.blueprint_id,
                 interview_id=args.interview_id,
@@ -633,6 +674,17 @@ def main() -> None:
         )
     except (MissingConfig, VoiceUnavailable, BlueprintUnavailable, FileNotFoundError) as exc:
         logger.error(str(exc))
+        if args.interview_id:
+            # F-017: never leave the interview in_progress. The web process's
+            # exit watcher is the backstop for a bot that dies without this.
+            from bot.persistence import mark_failed_if_unfinished
+            from shared.interview_contracts import EndReason
+
+            asyncio.run(mark_failed_if_unfinished(
+                interview_id=args.interview_id,
+                reason=f"The interviewer could not start: {exc}",
+                ended_because=EndReason.FAILED_TO_START.value,
+            ))
         sys.exit(1)
     except KeyboardInterrupt:
         logger.info(f"[{session_id}] interrupted by user")

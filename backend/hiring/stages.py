@@ -17,7 +17,7 @@ from app.db import Candidate, Job
 from hiring.models import AuditEvent, DecisionRecord
 from org.auth import can_see_job
 from org.models import User
-from shared.stages import REASON_REQUIRED, ALLOWED_MOVES, Actor, CandidateStage, Role
+from shared.stages import ALLOWED_MOVES, REASON_REQUIRED, Actor, CandidateStage, Role
 
 
 @dataclass

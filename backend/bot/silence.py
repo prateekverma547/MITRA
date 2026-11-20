@@ -152,19 +152,16 @@ class SilenceEscalation(BaseObserver):
         presence=None,
         patience=None,
         interview_over=None,
-        speak=None,
-        prompt=None,
+        notify=None,
         close=None,
     ):
         super().__init__()
-        #: Optional async callables for engines with no separate TTS (the
-        #: realtime engine). Without them the ladder speaks through TTS and the
-        #: LLM context exactly as before.
-        #: speak(text): say these words. prompt(instruction): reply following
-        #: this instruction. close(text, reason): say goodbye, then end the call
-        #: once it has been heard.
-        self._speak = speak
-        self._prompt = prompt
+        #: The realtime engine (round 14: one voice). The ladder decides WHEN; Mitra
+        #: decides what to say. notify(stage, dead_air_seconds): a private note that
+        #: the candidate has been quiet (stages 1 and 2). close(reason): code's
+        #: long-silence close; a note asks her to say it, and the call ends after.
+        #: Without them (the pipeline engine) the ladder speaks through TTS as before.
+        self._notify = notify
         self._close = close
         self._ladder = ladder or SilenceLadder()
         self._session_id = session_id
@@ -218,6 +215,12 @@ class SilenceEscalation(BaseObserver):
             detail=detail,
         )
         self._events.append(event)
+        listener = getattr(self, "on_event", None)
+        if listener is not None:
+            try:
+                listener(event)  # live events (bot/live_events.py); never raises into the ladder
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[{self._session_id}] silence listener failed: {exc!r}")
         logger.info(
             f"[{self._session_id}] silence stage {stage}: {action} "
             f"(after ~{self._dead_air_before_stage:.0f}s dead air)"
@@ -266,6 +269,10 @@ class SilenceEscalation(BaseObserver):
         # a network blip.
         if self._presence is not None and not self._presence.candidate_present:
             self._record(stage + 1, "waiting_for_rejoin", "the candidate is not in the call")
+            if getattr(self._presence, "rejoin_pending", False):
+                # Phase 3 wave 1: the rejoin grace window owns the ending
+                # (bot/rejoin.py); the ladder only waits.
+                return
             if self._dead_air_before_stage >= self._ladder.close_at_seconds:
                 self._record(3, "ended_call_dropped", self._ladder.left_the_call_text)
                 await self._inject(UserIdleTimeoutUpdateFrame(timeout=0))
@@ -278,17 +285,18 @@ class SilenceEscalation(BaseObserver):
             return
 
         if stage == 0:
-            self._record(1, "nudge", self._ladder.nudge_text)
-            if self._speak is not None:
-                await self._speak(self._ladder.nudge_text)
+            if self._notify is not None:
+                self._record(1, "quiet_note", "")
+                await self._notify(1, self._dead_air_before_stage)
             else:
+                self._record(1, "nudge", self._ladder.nudge_text)
                 await self._inject(TTSSpeakFrame(self._ladder.nudge_text))
             await self._inject(UserIdleTimeoutUpdateFrame(timeout=gaps[1]))
 
         elif stage == 1:
             self._record(2, "rephrase_and_audio_check")
-            if self._prompt is not None:
-                await self._prompt(self._ladder.audio_check_instruction)
+            if self._notify is not None:
+                await self._notify(2, self._dead_air_before_stage)
             else:
                 await self._inject(
                     LLMMessagesAppendFrame(
@@ -299,16 +307,17 @@ class SilenceEscalation(BaseObserver):
             await self._inject(UserIdleTimeoutUpdateFrame(timeout=gaps[2]))
 
         else:
-            self._record(3, "graceful_close", self._ladder.closing_text)
             # Stop the ladder before we begin closing, so a late timer cannot
             # fire again while the goodbye is still being spoken.
             await self._inject(UserIdleTimeoutUpdateFrame(timeout=0))
             if self._close is not None:
-                # The engine speaks the goodbye and hangs up once it is heard.
-                # An EndWorkerFrame queued now would end the call before a
-                # realtime model had produced a single word of it.
-                await self._close(self._ladder.closing_text, "abandoned_by_candidate")
+                # Code's close; Mitra says it (a note), then the engine hangs up once
+                # it is heard. An EndWorkerFrame queued now would end the call before
+                # she had said a word of it.
+                self._record(3, "graceful_close", "")
+                await self._close("abandoned_by_candidate")
                 return
+            self._record(3, "graceful_close", self._ladder.closing_text)
             await self._inject(TTSSpeakFrame(self._ladder.closing_text))
             # EndWorkerFrame flushes queued frames before shutting down, so the
             # goodbye is actually heard rather than cut off by the disconnect.

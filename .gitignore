@@ -38,3 +38,9 @@ BURJK-main/
 
 # Personal Claude instructions, one per engineer (docs/DEV_PLAN.md section 9).
 CLAUDE.local.md
+
+# Local database backups (scripts/reset_local.py)
+*.db.bak-*
+
+# TypeScript incremental build cache
+*.tsbuildinfo

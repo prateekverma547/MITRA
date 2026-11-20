@@ -78,7 +78,7 @@
       "target_depth": "Can describe a strategy they personally set or materially shaped, the market reasoning behind it, what alternatives they rejected, and how it held up over time.",
       "time_budget_minutes": 7.5,
       "seed_questions": [
-        "Tell me about a product strategy you personally set or substantially shaped. What was the bet?",
+        "What was the bet behind a product strategy you personally set or substantially shaped?",
         "What did you believe about the market that others on your team did not?",
         "Looking back at that strategy now, what part of it turned out to be wrong?",
         "How did you decide what your product was deliberately not going to be?"
@@ -90,8 +90,8 @@
       "target_depth": "Can name a specific hard call, the options on the table, the reasoning, who disagreed, and what was sacrificed \u2014 not just a prioritization framework.",
       "time_budget_minutes": 7.0,
       "seed_questions": [
-        "Walk me through the hardest prioritization call you have made. What were the options?",
-        "Tell me about something significant you decided not to build. What did that cost you?",
+        "What options did you weigh in the hardest prioritization call you have made?",
+        "What did it cost you when you decided not to build something significant?",
         "How did you handle a quarter where you could not deliver everything that had been promised?",
         "When you and your engineering lead disagreed on sequencing, how did that get resolved?"
       ]
@@ -115,7 +115,7 @@
       "time_budget_minutes": 5.5,
       "seed_questions": [
         "What was the single metric you held yourself to in your last role, and why that one?",
-        "Tell me about an experiment whose result surprised you. What did you do about it?",
+        "What did you do after an experiment's result surprised you?",
         "How do you tell the difference between a metric moving and a product actually being better?",
         "Describe a time you shipped something that moved the numbers in the wrong direction."
       ]
@@ -127,8 +127,8 @@
       "time_budget_minutes": 7.0,
       "seed_questions": [
         "Take me through the product you are proudest of shipping. Start from where the idea came from.",
-        "What went wrong during that launch, and what did you personally do about it?",
-        "Tell me about a project that slipped badly. What was the real cause?",
+        "What did you personally do when something went wrong during that launch?",
+        "What was the real cause when a project of yours slipped badly?",
         "What was your role in the two weeks immediately before a major release?"
       ]
     },
@@ -141,7 +141,7 @@
         "Tell me about a time you had to get a team to do something when you had no authority over them.",
         "How have you built credibility with an engineering team that was sceptical of product?",
         "Describe a time you influenced a decision well above your level.",
-        "Who have you mentored, and what changed for them?"
+        "What changed for someone you have mentored?"
       ]
     }
   ],

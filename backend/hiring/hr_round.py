@@ -19,19 +19,28 @@ can be booked again and the history says why.
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import BackgroundTasks, Depends, HTTPException
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app.db import Candidate, Interview, InterviewStatus, Job, RecordingStatus, get_sessionmaker
+from app.db import (
+    Candidate,
+    Interview,
+    InterviewStatus,
+    Job,
+    RecordingStatus,
+    get_sessionmaker,
+)
 from app.meeting import new_meeting_id, new_password
 from bot.config import Settings
 from bot.services import daily
-from hiring.api import router
 from hiring import hr_evaluation as pipeline
+from hiring.api import router
 from hiring.models import HRRound, Screening
+from hiring.presence import in_room
 from hiring.stages import StageError, audit, move
 from org.auth import current_user, job_scope, require_role
 from org.models import User
@@ -45,7 +54,16 @@ ROOM_TTL_HOURS = 24
 #: HR's own token into the room. Long enough for a round that runs over.
 HR_TOKEN_MINUTES = 120
 
-LIVE = (InterviewStatus.SCHEDULED, InterviewStatus.IN_PROGRESS)
+LIVE = (InterviewStatus.SCHEDULED, InterviewStatus.IN_PROGRESS, InterviewStatus.NO_SHOW)
+#: Track I's recording sweep marks any room nobody joined before it expired as
+#: `no_show` (live/phase4.py), HR rounds included. For HR that is still a
+#: booked round nobody came to: HR can cancel it and invite again, exactly as
+#: before the status existed. So it reads as `scheduled` everywhere here.
+UNJOINED = (InterviewStatus.SCHEDULED, InterviewStatus.NO_SHOW)
+
+
+def _shown_status(interview: Interview) -> str:
+    return InterviewStatus.SCHEDULED if interview.status == InterviewStatus.NO_SHOW else interview.status
 
 
 class Progress(BaseModel):
@@ -53,16 +71,59 @@ class Progress(BaseModel):
     notes: str = ""
 
 
+class LiveLine(BaseModel):
+    """One finished line of the live transcript, as HR's room heard it from Daily."""
+
+    #: The room's own id for the line, so a resend is not stored twice.
+    id: str = Field(max_length=80)
+    speaker: Literal["hr", "candidate", "other"]
+    text: str = Field(max_length=4000)
+    #: Seconds since HR joined the room.
+    start: float = Field(ge=0)
+    end: float = Field(ge=0)
+
+
+class LiveTranscript(BaseModel):
+    lines: list[LiveLine] = Field(default_factory=list, max_length=200)
+
+
+#: A defensive ceiling: a 40-minute conversation is a few hundred lines.
+MAX_LIVE_LINES = 4000
+
+#: How a live transcript is attributed: Daily tags every line with the
+#: participant who spoke it, so who said what is known, not inferred.
+LIVE_ATTRIBUTION = {"method": "live", "confidence": "clear", "voices": 2, "other_voices": 0}
+#: A phone call MITRA listens to (mode "listen"): both voices reach one microphone,
+#: so the live lines tell them apart by voice (Deepgram), not by who is speaking into
+#: which device. Likely, not certain; after the call the recording is checked too.
+LISTEN_ATTRIBUTION = {"method": "live_one_mic", "confidence": "likely", "voices": 2, "other_voices": 0}
+MODES = ("room", "listen")
+
+
+class BookRequest(BaseModel):
+    #: "room" (the candidate joins MITRA's voice room) or "listen" (a phone call MITRA listens to).
+    mode: Literal["room", "listen"] = "room"
+
+
+class JoinRequest(BaseModel):
+    #: Listen mode only: HR confirms the candidate was told the call is recorded and
+    #: transcribed by MITRA, and agreed. Required before MITRA listens.
+    phone_consent: bool = False
+
+
 class CancelRequest(BaseModel):
-    reason: str
+    #: Optional: a cancelled invitation needs no explanation to be undone.
+    reason: str = ""
 
 
 class NotesCompletion(BaseModel):
     reason: str
 
 
-def _join_url() -> str:
-    return f"{(os.environ.get('APP_BASE_URL') or '').rstrip('/')}/join"
+def _join_url(meeting_id: str) -> str:
+    """The candidate's room (`/meet`, the console's `#/meet`). The meeting ID
+    rides along so the page fills it in; the password never goes in a link."""
+    return f"{(os.environ.get('APP_BASE_URL') or '').rstrip('/')}/meet?id={meeting_id}"
 
 
 async def _candidate(session, user: User, candidate_id: str) -> tuple[Candidate, Job]:
@@ -78,15 +139,21 @@ async def _candidate(session, user: User, candidate_id: str) -> tuple[Candidate,
 
 
 async def _latest(session, candidate_id: str) -> tuple[Interview, HRRound] | None:
-    row = (
+    """The live round if there is one, else the newest. Two rounds booked in the
+    same second would otherwise sort by their random ids."""
+    rows = (
         await session.execute(
             select(Interview, HRRound)
             .join(HRRound, HRRound.interview_id == Interview.id)
             .where(Interview.candidate_id == candidate_id, Interview.round == "hr")
             .order_by(Interview.created_at.desc(), Interview.id.desc())
         )
-    ).first()
-    return (row[0], row[1]) if row else None
+    ).all()
+    if not rows:
+        return None
+    live = next((r for r in rows if r[0].status in LIVE), None)
+    row = live or rows[0]
+    return (row[0], row[1])
 
 
 async def _view(session, user: User, candidate: Candidate, job: Job) -> dict:
@@ -109,11 +176,15 @@ async def _view(session, user: User, candidate: Candidate, job: Job) -> dict:
     return base | {
         "round": {
             "interview_id": interview.id,
-            "status": interview.status,
-            # The password is for the person who sends it. Nobody else sees it.
-            "meeting_id": interview.meeting_id if is_hr else None,
-            "password": interview.password if is_hr else None,
-            "join_url": _join_url() if is_hr else None,
+            "status": _shown_status(interview),
+            # "room" or "listen" (a phone call MITRA listens to; the candidate never joins).
+            "mode": hr.mode,
+            "phone_consent_at": hr.phone_consent_at.isoformat() if hr.phone_consent_at else None,
+            # The password is for the person who sends it. Nobody else sees it, and
+            # nobody is sent it for a phone call.
+            "meeting_id": interview.meeting_id if is_hr and hr.mode == "room" else None,
+            "password": interview.password if is_hr and hr.mode == "room" else None,
+            "join_url": _join_url(interview.meeting_id) if is_hr and hr.mode == "room" else None,
             "expires_at": interview.room_expires_at.isoformat() if interview.room_expires_at else None,
             "asked": hr.questions_asked or [],
             "notes": hr.notes or "",
@@ -121,9 +192,14 @@ async def _view(session, user: User, candidate: Candidate, job: Job) -> dict:
             "ended_at": (hr.ended_at or interview.ended_at).isoformat() if (hr.ended_at or interview.ended_at) else None,
             "can_join": is_hr and live,
             "can_end": is_hr and interview.status == InterviewStatus.IN_PROGRESS,
-            "can_cancel": is_hr and interview.status == InterviewStatus.SCHEDULED,
+            "can_cancel": is_hr and interview.status in UNJOINED,
             "can_edit_notes": is_hr and interview.status != InterviewStatus.EXPIRED,
             "recording_status": interview.recording_status,
+            # Who is in the room now (Daily presence): HR counts among `others`.
+            "presence": (
+                (await in_room(interview.daily_room_name, candidate.name)).as_dict()
+                if interview.status == InterviewStatus.IN_PROGRESS else None
+            ),
             "eval_status": hr.eval_status,
             "eval_error": hr.eval_error,
             "attribution": hr.attribution,
@@ -151,8 +227,13 @@ async def get_hr_round(candidate_id: str, user: User = Depends(current_user)) ->
 
 
 @router.post("/candidates/{candidate_id}/hr-round", status_code=201)
-async def book_hr_round(candidate_id: str, user: User = Depends(_hr)) -> dict:
-    """Book the room and credentials, and move the candidate to `hr_booked`."""
+async def book_hr_round(candidate_id: str, body: BookRequest | None = None, user: User = Depends(_hr)) -> dict:
+    """Book the room and credentials, and move the candidate to `hr_booked`.
+
+    `mode: "listen"`: HR will call the candidate on their own phone and MITRA listens
+    through HR's microphone. The room is still made (it records and transcribes), but
+    the candidate is never sent its meeting ID and password."""
+    mode = (body or BookRequest()).mode
     async with get_sessionmaker()() as session:
         candidate, _ = await _candidate(session, user, candidate_id)
         if candidate.stage != CandidateStage.READY_FOR_HR:
@@ -182,24 +263,33 @@ async def book_hr_round(candidate_id: str, user: User = Depends(_hr)) -> dict:
         )
         session.add(interview)
         await session.flush()
-        session.add(HRRound(interview_id=interview.id, candidate_id=candidate.id, booked_by=user.id))
+        session.add(HRRound(interview_id=interview.id, candidate_id=candidate.id, booked_by=user.id, mode=mode))
         try:
             await move(session, candidate, CandidateStage.HR_BOOKED, by=user)
         except StageError as exc:
             raise HTTPException(status_code=exc.status, detail=exc.message) from exc
         await audit(session, "hr_round_booked", by=user, subject_type="candidate", subject_id=candidate.id,
-                    detail={"interview_id": interview.id})
+                    detail={"interview_id": interview.id, "mode": mode})
         await session.commit()
-        logger.info(f"[{interview.id}] HR round booked for {candidate.id} by {user.id}")
+        logger.info(f"[{interview.id}] HR round booked for {candidate.id} by {user.id} ({mode})")
         return await _view(session, user, candidate, job)
 
 
 @router.post("/candidates/{candidate_id}/hr-round/join")
-async def join_hr_round(candidate_id: str, user: User = Depends(_hr)) -> dict:
-    """HR's way into the room: an owner token, so HR runs the call."""
+async def join_hr_round(candidate_id: str, body: JoinRequest | None = None, user: User = Depends(_hr)) -> dict:
+    """HR's way into the room: an owner token, so HR runs the call.
+
+    In listen mode HR must first confirm the candidate agreed to the call being
+    recorded and transcribed: they never see MITRA's consent screen."""
+    body = body or JoinRequest()
     async with get_sessionmaker()() as session:
         await _candidate(session, user, candidate_id)
         interview, hr = await _live_round(session, candidate_id)
+        if hr.mode == "listen":
+            if not body.phone_consent and hr.phone_consent_at is None:
+                raise HTTPException(status_code=422, detail="Confirm that the candidate agreed to the call being "
+                                                            "recorded and transcribed before MITRA listens.")
+            hr.phone_consent_at = hr.phone_consent_at or datetime.now(UTC)
         if interview.status == InterviewStatus.SCHEDULED:
             interview.status = InterviewStatus.IN_PROGRESS
             interview.started_at = datetime.now(UTC)
@@ -210,7 +300,7 @@ async def join_hr_round(candidate_id: str, user: User = Depends(_hr)) -> dict:
             interview.recording_status = RecordingStatus.RECORDING
             interview.recording_started_at = datetime.now(UTC)
         await session.commit()
-        room_name, room_url = interview.daily_room_name, interview.daily_room_url
+        room_name, room_url, mode = interview.daily_room_name, interview.daily_room_url, hr.mode
 
     settings = Settings.load()
     token = await daily.create_meeting_token(
@@ -218,7 +308,10 @@ async def join_hr_round(candidate_id: str, user: User = Depends(_hr)) -> dict:
         expiry_seconds=HR_TOKEN_MINUTES * 60, is_owner=True, user_name=user.name,
         start_cloud_recording=True,
     )
-    return {"room_url": room_url, "token": token}
+    # HR's room starts Daily's live transcription with this owner token. In listen
+    # mode both voices reach HR's one microphone: the room asks Deepgram to tell
+    # the voices apart (diarize).
+    return {"room_url": room_url, "token": token, "transcribe": True, "mode": mode}
 
 
 @router.post("/candidates/{candidate_id}/hr-round/progress")
@@ -236,6 +329,56 @@ async def save_progress(candidate_id: str, body: Progress, user: User = Depends(
         return {"saved_at": datetime.now(UTC).isoformat()}
 
 
+@router.post("/candidates/{candidate_id}/hr-round/transcript")
+async def save_live_transcript(candidate_id: str, body: LiveTranscript, user: User = Depends(_hr)) -> dict:
+    """Append finished lines of the live transcript, sent by HR's room as they are spoken.
+
+    Daily transcribes the call and tags each line with the participant who
+    said it, so HR and the candidate are told apart for certain. When the
+    round ends, the evaluation reads this transcript directly instead of
+    waiting for the recording and transcribing it again.
+    """
+    async with get_sessionmaker()() as session:
+        await _candidate(session, user, candidate_id)
+        interview, hr = await _live_round(session, candidate_id)
+        stored = list(hr.transcript or [])
+        seen = {t.get("id") for t in stored if t.get("id")}
+        fresh = [line for line in body.lines if line.id not in seen and line.text.strip()]
+        for line in fresh[: max(0, MAX_LIVE_LINES - len(stored))]:
+            stored.append({
+                "index": len(stored), "id": line.id, "speaker": line.speaker, "text": line.text.strip(),
+                "start": round(line.start, 2), "end": round(max(line.end, line.start), 2),
+            })
+        # Reassigned, not mutated: SQLAlchemy does not see changes inside a JSON value.
+        hr.transcript = stored
+        others = {line.speaker for line in body.lines if line.speaker == "other"}
+        base = LISTEN_ATTRIBUTION if hr.mode == "listen" else LIVE_ATTRIBUTION
+        hr.attribution = {**base, "other_voices": max((hr.attribution or {}).get("other_voices", 0), len(others))}
+        await session.commit()
+        return {"stored": len(stored)}
+
+
+@router.post("/candidates/{candidate_id}/hr-round/transcript/swap")
+async def swap_live_speakers(candidate_id: str, user: User = Depends(_hr)) -> dict:
+    """Listen mode: HR says the two voices are labelled the wrong way round. Both
+    voices reach one microphone, so who is who is a guess the room makes; HR fixes it
+    for the lines saved so far (the room fixes the ones still to come)."""
+    async with get_sessionmaker()() as session:
+        await _candidate(session, user, candidate_id)
+        interview, hr = await _live_round(session, candidate_id)
+        if hr.mode != "listen":
+            raise HTTPException(status_code=409, detail="Only a phone call's speakers can be swapped.")
+        flip = {"hr": "candidate", "candidate": "hr"}
+        lines = [{**t, "speaker": flip.get(t.get("speaker"), t.get("speaker"))} for t in (hr.transcript or [])]
+        hr.transcript = lines
+        await session.commit()
+        return {"swapped": len(lines)}
+
+
+def has_live_transcript(hr: HRRound) -> bool:
+    return pipeline.has_live_lines(hr)
+
+
 @router.post("/candidates/{candidate_id}/hr-round/end")
 async def end_hr_round(candidate_id: str, user: User = Depends(_hr)) -> dict:
     """HR has finished talking. The evaluation step picks it up from here."""
@@ -248,7 +391,16 @@ async def end_hr_round(candidate_id: str, user: User = Depends(_hr)) -> dict:
         interview.status = InterviewStatus.COMPLETED
         interview.ended_at = now
         hr.ended_at = now
-        if interview.recording_status == RecordingStatus.RECORDING:
+        if has_live_transcript(hr) and not (
+            pipeline.prefers_recording() and interview.recording_status == RecordingStatus.RECORDING
+        ):
+            # Transcribed live, and no better transcriber for the recording:
+            # evaluate the live lines now.
+            hr.eval_status = pipeline.EVALUATING
+        elif interview.recording_status == RecordingStatus.RECORDING:
+            # The recording is transcribed after the call (Deepgram nova-3,
+            # measured far more accurate than the live feed) and evaluated from
+            # that. The live lines stay as the fallback (hr_evaluation.advance).
             hr.eval_status = pipeline.WAITING
         else:
             hr.eval_status = pipeline.FAILED
@@ -261,14 +413,12 @@ async def end_hr_round(candidate_id: str, user: User = Depends(_hr)) -> dict:
 
 @router.post("/candidates/{candidate_id}/hr-round/cancel")
 async def cancel_hr_round(candidate_id: str, body: CancelRequest, user: User = Depends(_hr)) -> dict:
-    """Cancel a round nobody has joined yet. The candidate can be booked again."""
-    reason = body.reason.strip()
-    if not reason:
-        raise HTTPException(status_code=422, detail="Say why the round is cancelled.")
+    """Cancel a round nobody has joined yet. The candidate can be invited again."""
+    reason = body.reason.strip() or "Cancelled by HR"
     async with get_sessionmaker()() as session:
         candidate, job = await _candidate(session, user, candidate_id)
         interview, _ = await _live_round(session, candidate_id)
-        if interview.status != InterviewStatus.SCHEDULED:
+        if interview.status not in UNJOINED:
             raise HTTPException(status_code=409, detail="This round has started, so it can no longer be cancelled.")
         interview.status = InterviewStatus.EXPIRED
         try:
@@ -277,6 +427,57 @@ async def cancel_hr_round(candidate_id: str, body: CancelRequest, user: User = D
             raise HTTPException(status_code=exc.status, detail=exc.message) from exc
         await session.commit()
         return await _view(session, user, candidate, job)
+
+
+#: The decision's reason when HR skips the round; results find a skip by it and by the move.
+SKIPPED = "HR round skipped"
+
+
+class SkipRequest(BaseModel):
+    reason: str = Field(default="", max_length=1000)
+
+
+def skip_decision(decisions) -> object | None:
+    """The decision that skipped the HR round, if it was skipped (newest first)."""
+    for d in reversed(list(decisions)):
+        if d.to_stage == CandidateStage.READY_FOR_TECHNICAL.value and d.from_stage in (
+            CandidateStage.READY_FOR_HR.value, CandidateStage.HR_BOOKED.value
+        ):
+            return d
+    return None
+
+
+@router.post("/candidates/{candidate_id}/hr-round/skip")
+async def skip_hr_round(candidate_id: str, body: SkipRequest, background: BackgroundTasks,
+                        user: User = Depends(_hr)) -> dict:
+    """Skip the HR round: the candidate goes straight to the MITRA interview round.
+
+    Allowed before the round is booked, or while its room is still unjoined (the room
+    is cancelled). Recorded as a decision by HR, with the optional reason."""
+    note = body.reason.strip()
+    async with get_sessionmaker()() as session:
+        candidate, job = await _candidate(session, user, candidate_id)
+        stage = CandidateStage(candidate.stage)
+        if stage not in (CandidateStage.READY_FOR_HR, CandidateStage.HR_BOOKED):
+            raise HTTPException(status_code=409, detail="The HR round can only be skipped before it has taken place.")
+        if stage is CandidateStage.HR_BOOKED:
+            interview, _ = await _live_round(session, candidate_id)
+            if interview.status not in UNJOINED:
+                raise HTTPException(status_code=409, detail="This round has started, so it can no longer be skipped.")
+            interview.status = InterviewStatus.EXPIRED
+        try:
+            await move(session, candidate, CandidateStage.READY_FOR_TECHNICAL, by=user,
+                       reason=f"{SKIPPED}: {note}" if note else SKIPPED)
+        except StageError as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+        await audit(session, "hr_round_skipped", by=user, subject_type="candidate", subject_id=candidate.id,
+                    detail={"reason": note or None, "from": stage.value})
+        await session.commit()
+    # MITRA's plan is built at once, as when HR proceeds after an HR round.
+    from hiring.technical import prepare_plan
+
+    background.add_task(prepare_plan, candidate_id)
+    return {"candidate_id": candidate_id, "stage": CandidateStage.READY_FOR_TECHNICAL.value}
 
 
 @router.post("/candidates/{candidate_id}/hr-round/retry")

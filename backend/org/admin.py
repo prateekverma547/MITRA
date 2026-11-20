@@ -444,15 +444,40 @@ async def _remove_recordings(candidate_ids: list[str], status: RecordingStatus) 
     from app.recordings import remove_recording
 
     async with get_sessionmaker()() as session:
-        interview_ids = [
-            i.id for i in (await session.execute(
-                select(Interview).where(Interview.candidate_id.in_(candidate_ids))
-            )).scalars()
-            if i.recording_status in (RecordingStatus.STORED, RecordingStatus.RECORDING) or i.recording_path
-        ]
+        interviews = list((await session.execute(
+            select(Interview).where(Interview.candidate_id.in_(candidate_ids))
+        )).scalars())
+    interview_ids = [
+        i.id for i in interviews
+        if i.recording_status in (RecordingStatus.STORED, RecordingStatus.RECORDING) or i.recording_path
+    ]
     for interview_id in interview_ids:
         await remove_recording(interview_id, status=status, api_key=os.environ.get("DAILY_API_KEY", ""))
+    _remove_audio_captures([i.id for i in interviews])
     return len(interview_ids)
+
+
+def _remove_audio_captures(interview_ids: list[str]) -> None:
+    """The candidate's own audio track and the after-call check's files.
+
+    MITRA's interviewer saves the candidate's audio for the after-call check
+    (bot/capture.py, `capture/<id>`), and the check writes its results beside
+    it (`aftercall/<id>`). They are recordings of the candidate too, so they go
+    with the recording. Raises if a folder survives, like `remove_recording`.
+    """
+    import shutil
+
+    from app.recordings import AFTERCALL_FOLDERS, recordings_root
+
+    root = recordings_root().resolve()
+    for interview_id in interview_ids:
+        for name in AFTERCALL_FOLDERS:
+            folder = (root / name / interview_id).resolve()
+            if not folder.is_relative_to(root) or not folder.exists():
+                continue
+            shutil.rmtree(folder, ignore_errors=True)
+            if folder.exists():
+                raise RuntimeError(f"{folder} is still on disk after being deleted.")
 
 
 async def _clear(session: AsyncSession, candidate_ids: list[str], kinds: set[str]) -> None:

@@ -33,7 +33,10 @@ from loguru import logger
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 
-from bot.brain.withdrawal import asked_explicitly, asked_to_skip_question
+from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.services.llm_service import FunctionCallResultProperties
+
+from bot.brain.withdrawal import CONFIRMATION_QUESTION, asked_explicitly, asked_to_skip_question
 
 END_INTERVIEW = "end_interview"
 
@@ -57,8 +60,8 @@ _END_INTERVIEW_SCHEMA = FunctionSchema(
         "Do NOT call it when they want to leave THIS QUESTION and carry on: "
         "'can we skip it', 'I don't know this one, can we skip it', 'can we "
         "move on', 'next question', 'can we come back to that'. Asking to skip "
-        "a question is asking for a different question, not for the interview "
-        "to end. Acknowledge it and ask something else.\n\n"
+        "a question is asking for the next question, not for the interview "
+        "to end. Say that is fine and ask the next numbered question.\n\n"
         "If you are unsure whether they mean this interview or something they "
         "are describing, do not call it. Ask them."
     ),
@@ -114,13 +117,12 @@ def register(llm, brain, on_called=None) -> None:
         # that project early because of budget". The patterns produced no false
         # positives at all but only catch wording somebody thought of first.
         #
-        # So: recall from the model, precision from the patterns. When both
-        # agree the interview ends at once. When only the model does, they are
-        # asked once, which costs a sentence if it was wrong and an interview
-        # if it was not.
+        # So: recall from the model, precision from the patterns. Since decision
+        # 11 the patterns no longer decide whether to end at once (every request
+        # is confirmed once); they still tell a real request to stop from a
+        # request to skip a question.
         heard = brain.last_candidate_text()
         corroborated = asked_explicitly(said) or asked_explicitly(heard)
-        act_now = explicit and corroborated
 
         # **A third outcome, because the offer itself was the bug.** Live in
         # `int_7e31aaff4ab2` the candidate said "right now, I don't know the
@@ -130,9 +132,8 @@ def register(llm, brain, on_called=None) -> None:
         # leaving is not a free sentence when all they wanted was a different
         # question.
         #
-        # Only ever consulted when the patterns did NOT corroborate, so the
-        # explicit path above is untouched: a candidate who plainly asks to stop
-        # still stops here, immediately, exactly as before. And
+        # Only ever consulted when the patterns did NOT corroborate, so a
+        # candidate who plainly asks to stop is never mistaken for a skip. And
         # `asked_to_skip_question` refuses to call anything a skip if it names
         # the interview, carries an end verb, or holds any stop phrasing at all.
         skipping = not corroborated and (
@@ -163,30 +164,52 @@ def register(llm, brain, on_called=None) -> None:
             )
             return
 
+        # Decision 11 (docs/DEV_PLAN.md:85): every request gets one
+        # confirmation, spoken by code word for word; any yes, or a second
+        # request, ends it. The brain decides which of those this call is.
+        outcome = brain.candidate_asked_to_stop(said=said, explicit=explicit)
         logger.info(
             f"interviewer called {END_INTERVIEW}: model_explicit={explicit} "
-            f"patterns_agree={corroborated} -> {'ending' if act_now else 'asking'} "
-            f"| said={said!r}"
+            f"patterns_agree={corroborated} -> {outcome} | said={said!r}"
         )
-        brain.candidate_asked_to_stop(said=said, explicit=act_now)
         if on_called is not None:
             on_called(said=said, explicit=explicit)
 
+        if outcome == "offered":
+            # Spoken by code, not by the model, and the model does not reply
+            # this turn (run_llm=False), so it cannot add a second question.
+            brain.take_confirmation_due()
+            await params.llm.push_frame(TTSSpeakFrame(CONFIRMATION_QUESTION))
+            await params.result_callback(
+                {"ended": False, "confirmation_spoken": CONFIRMATION_QUESTION},
+                properties=FunctionCallResultProperties(run_llm=False),
+            )
+            return
+
+        if outcome == "declined":
+            # They have just said no to the confirmation. Neither end nor ask
+            # again: carry on.
+            await params.result_callback(
+                {
+                    "ended": False,
+                    "next": "They said they want to carry on. Continue the "
+                    "interview with your next question. Do not mention stopping.",
+                }
+            )
+            return
+
+        # "withdrew" or "already_withdrawn": the brain is in the closing.
         # Truthy, or Pipecat never runs the completion that speaks the
         # goodbye. See the docstring: returning None is silence.
         await params.result_callback(
             {
-                "ended": act_now,
+                "ended": True,
                 "next": (
                     "The interview is over. Thank them for their time in one or "
                     "two short sentences and say goodbye. Do not ask anything."
-                )
-                if act_now
-                else (
-                    "Ask, in one short sentence, whether they would like to end "
-                    "here or carry on. Do not ask why."
                 ),
-            }
+            },
+            properties=FunctionCallResultProperties(run_llm=outcome == "withdrew"),
         )
 
     llm.register_function(END_INTERVIEW, handle_end_interview)

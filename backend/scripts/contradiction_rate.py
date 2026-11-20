@@ -43,7 +43,7 @@ async def trial(model: str, settings: Settings) -> dict:
         brain,
         interviewer=OpenAIInterviewer(api_key=settings.openai_api_key, model=model),
         candidate=contradicting_candidate(),
-        judge=OpenAIJudge(api_key=settings.openai_api_key, model=settings.blueprint_model),
+        judge=OpenAIJudge(api_key=settings.openai_api_key, model=settings.legacy_blueprint_model),
         seconds_per_turn=40,
         max_turns=14,
         stop_after_section=TARGET_SECTION,

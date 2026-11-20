@@ -4,19 +4,9 @@
 // and the history. What this person may do comes from the server (`next`,
 // `can_proceed`, `can_reupload`). Track H.
 
-import {
-  ArrowRightCircle,
-  CalendarPlus,
-  Clock3,
-  ScanSearch,
-  Undo2,
-  Upload,
-  UserCheck,
-  Video,
-  XCircle,
-} from "lucide-react";
+import { ArrowRightCircle, Clock3, FileCheck2, ScanSearch, SkipForward, Undo2, Upload, UserCheck, Video, XCircle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api } from "../../api";
 import {
   STAGE_LABELS,
@@ -25,13 +15,14 @@ import {
   type CandidateStage,
   type DecisionEntry,
 } from "../../contracts";
-import { BackButton } from "../../shell/ui/BackButton";
+import { BackButton, useGoBack } from "../../shell/ui/BackButton";
 import { Button, ButtonLink } from "../../shell/ui/Button";
 import { PageSkeleton } from "../../shell/ui/Skeleton";
 import { Spinner } from "../../shell/ui/Spinner";
 import { useToast } from "../../shell/ui/Toast";
 import { useSession } from "../../session";
 import { TechnicalEntry } from "../results/TechnicalEntry";
+import { ScreeningSteps } from "./AddCandidate";
 import type { Results } from "../results/types";
 import { CandidateEvidence, Glance, History, NextStepText, Sidebar } from "./CandidateParts";
 import "./candidate.css";
@@ -72,50 +63,51 @@ function CheckCv({ c, onUpdate }: { c: CandidateDetail; onUpdate: (c: CandidateD
     }
   }
 
+  const first = c.name.split(/\s+/)[0] || c.name;
   return (
-    <section className="check-cv">
-      <div className="check-cv-head">
-        <h2 className="section-title">Check the CV MITRA read</h2>
-        <p className="muted">
-          This is the text MITRA took from {c.source_filename ?? "the file"}. If it is the wrong file or reads badly,
-          upload it again. Nothing is screened until you choose Proceed.
-        </p>
-      </div>
-      <pre className="cv-text" tabIndex={0} aria-label="Text read from the CV">
-        {c.cv_text}
-      </pre>
-      {c.screening_status === "failed" && c.screening_error && (
-        <p className="notice notice-attention">Screening did not finish: {c.screening_error} You can try again.</p>
-      )}
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-      {(c.can_proceed || c.can_reupload) && (
-        <div className="decision-bar">
-          {c.can_proceed && (
-            <Button variant="primary" icon={<ScanSearch size={17} />} loading={busy === "proceed"} disabled={busy !== null} onClick={proceed}>
-              {c.screening_status === "failed" ? "Try screening again" : "Proceed to screening"}
-            </Button>
-          )}
-          {c.can_reupload && (
-            <>
-              <Button icon={<Upload size={16} />} loading={busy === "replace"} disabled={busy !== null} onClick={() => input.current?.click()}>
-                Re-upload CV
+    <section className="cv-ready" aria-labelledby="cv-ready-title">
+      <div className="cv-ready-main">
+        <span className="cv-ready-icon" aria-hidden="true">
+          <FileCheck2 size={44} strokeWidth={1.6} />
+        </span>
+        <h2 id="cv-ready-title" className="cv-ready-title">
+          {first}'s résumé is uploaded
+        </h2>
+        <p className="cv-ready-file">{c.source_filename ?? "CV"}</p>
+        {c.screening_status === "failed" && c.screening_error && (
+          <p className="notice notice-attention">Screening did not finish: {c.screening_error} You can try again.</p>
+        )}
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        {(c.can_proceed || c.can_reupload) && (
+          <div className="cv-ready-actions">
+            {c.can_proceed && (
+              <Button variant="primary" icon={<ScanSearch size={18} />} loading={busy === "proceed"} disabled={busy !== null} onClick={proceed}>
+                {c.screening_status === "failed" ? "Try screening again" : "Proceed to screening"}
               </Button>
-              <input
-                ref={input}
-                type="file"
-                accept=".pdf,.docx,.txt,.md"
-                className="visually-hidden"
-                aria-label="Replacement CV"
-                onChange={(e) => e.target.files?.[0] && replace(e.target.files[0])}
-              />
-            </>
-          )}
-        </div>
-      )}
+            )}
+            {c.can_reupload && (
+              <>
+                <Button icon={<Upload size={17} />} loading={busy === "replace"} disabled={busy !== null} onClick={() => input.current?.click()}>
+                  Re-upload
+                </Button>
+                <input
+                  ref={input}
+                  type="file"
+                  accept=".pdf,.docx,.txt,.md"
+                  className="visually-hidden"
+                  aria-label="Replacement CV"
+                  onChange={(e) => e.target.files?.[0] && replace(e.target.files[0])}
+                />
+              </>
+            )}
+          </div>
+        )}
+      </div>
+      <ScreeningSteps />
     </section>
   );
 }
@@ -163,17 +155,24 @@ function choicesFor(c: CandidateDetail): Choice[] {
     parked: { to: "parked", label: "Not now", icon: <Clock3 size={16} />, needsReason: true, prompt: "Why not now? HR and the BU head will read this." },
     rejected: { to: "rejected", label: "Reject", icon: <XCircle size={17} />, danger: true, needsReason: true, prompt: "Why reject? This is kept on their record." },
   };
-  const order: CandidateStage[] = below ? ["rejected", "ready_for_hr"] : ["ready_for_hr", "parked"];
+  // No "Not now": a person proceeds or rejects (product decision, 2026-11-19).
+  const order: CandidateStage[] = c.stage === "ready_for_hr" ? ["rejected"] : below ? ["rejected", "ready_for_hr"] : ["ready_for_hr", "rejected"];
   return order.filter((s) => c.next.includes(s)).map((s) => all[s]);
 }
 
-function Decide({ c, onDone }: { c: CandidateDetail; onDone: () => void }) {
+/**
+ * The decision at this stage. A rejection is the end of the work here, so it
+ * returns to the list; going ahead stays on the page, which then shows the
+ * next step (for "Begin HR round": open the room, or reject).
+ */
+function Decide({ c, onDone, only }: { c: CandidateDetail; onDone: () => void; only?: CandidateStage[] }) {
+  const goBack = useGoBack(`/jobs/${c.job.id}/candidates`);
   const [picked, setPicked] = useState<Choice | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
-  const choices = choicesFor(c);
+  const choices = choicesFor(c).filter((choice) => !only || only.includes(choice.to));
   if (choices.length === 0) return null;
 
   async function commit(choice: Choice) {
@@ -181,10 +180,11 @@ function Decide({ c, onDone }: { c: CandidateDetail; onDone: () => void }) {
     setError(null);
     try {
       await api.post(`/candidates/${c.id}/move`, { to: choice.to, reason: reason.trim() || undefined });
-      toast(`${c.name}: ${STAGE_LABELS[choice.to]}`);
+      toast(`${c.name}: ${STAGE_LABELS[choice.to]}. Saved.`, choice.to === "rejected" ? "urgent" : "ok");
       setPicked(null);
       setReason("");
-      onDone();
+      if (choice.to === "rejected") goBack();
+      else onDone();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -247,42 +247,75 @@ function Decide({ c, onDone }: { c: CandidateDetail; onDone: () => void }) {
 
 const AFTER_BOOKING: CandidateStage[] = ["hr_booked", "hr_done", "ready_for_technical", "technical_booked", "technical_done", "with_bu_head", "shortlisted", "on_hold"];
 
-function HRRoundEntry({ c, onBooked }: { c: CandidateDetail; onBooked: () => void }) {
-  const navigate = useNavigate();
+/** The HR round is optional: HR may skip it, with an optional reason, before it has happened. */
+function SkipHR({ c, onDone }: { c: CandidateDetail; onDone: () => void }) {
   const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isHR = c.next.length > 0 || c.can_proceed;
 
-  async function book() {
+  async function skip() {
     setBusy(true);
     setError(null);
     try {
-      await api.post(`/candidates/${c.id}/hr-round`);
-      toast(`HR round booked for ${c.name}`);
-      navigate(`/candidates/${c.id}/hr-round`, { viewTransition: true });
+      await api.post(`/candidates/${c.id}/hr-round/skip`, { reason: reason.trim() });
+      toast(`${c.name}: HR round skipped. MITRA is preparing the interview round.`);
+      onDone();
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
-      onBooked();
     }
   }
 
-  if (c.stage === "ready_for_hr") {
+  if (!open) {
     return (
-      <section className="hr-entry live-border">
-        <div>
-          <h2 className="section-title">Ready for the HR round</h2>
-          <p className="muted">Booking creates a private room and the meeting ID and password to send {c.name}.</p>
-          {error && <p className="error">{error}</p>}
-        </div>
-        {isHR && (
-          <Button variant="primary" icon={<CalendarPlus size={17} />} loading={busy} onClick={book}>
-            Book the HR round
-          </Button>
-        )}
-      </section>
+      <Button variant="ghost" icon={<SkipForward size={16} />} onClick={() => setOpen(true)}>
+        Skip HR round
+      </Button>
     );
+  }
+  return (
+    <form
+      className="reason skip-hr"
+      onSubmit={(e) => {
+        e.preventDefault();
+        skip();
+      }}
+    >
+      <label htmlFor="skip-reason">
+        Skip the HR round and go straight to the MITRA interview round? <span className="muted">Reason (optional)</span>
+      </label>
+      <textarea id="skip-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
+      <div className="actions">
+        <Button type="submit" variant="primary" icon={<SkipForward size={16} />} loading={busy}>
+          Skip HR round
+        </Button>
+        <Button variant="ghost" icon={<Undo2 size={16} />} disabled={busy} onClick={() => setOpen(false)}>
+          Back
+        </Button>
+      </div>
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function HRRoundEntry({ c, onChange }: { c: CandidateDetail; onChange: () => void }) {
+  const isHR = c.next.length > 0 || c.can_proceed;
+  if (c.stage === "ready_for_hr") {
+    // The room is started from inside it: one place to book, invite and join.
+    return isHR ? (
+      <section className="hr-entry">
+        <ButtonLink variant="primary" to={`/candidates/${c.id}/hr-round`} icon={<Video size={17} />}>
+          Open the HR round room
+        </ButtonLink>
+        <SkipHR c={c} onDone={onChange} />
+      </section>
+    ) : null;
   }
   if (AFTER_BOOKING.includes(c.stage)) {
     return (
@@ -294,6 +327,7 @@ function HRRoundEntry({ c, onBooked }: { c: CandidateDetail; onBooked: () => voi
         <ButtonLink variant={c.stage === "hr_booked" || c.stage === "hr_done" ? "primary" : "secondary"} to={`/candidates/${c.id}/hr-round`} icon={<Video size={17} />}>
           {c.stage === "hr_done" ? "Open the HR round to decide" : c.stage === "hr_booked" ? "Open the HR round" : "See the HR round"}
         </ButtonLink>
+        {c.stage === "hr_booked" && isHR && <SkipHR c={c} onDone={onChange} />}
       </section>
     );
   }
@@ -348,6 +382,9 @@ export function CandidatePage() {
   // Each stage shows only its own action in "What happens now".
   const decidesHere = screened && (c.stage === "screened" || c.stage === "parked");
   const hrStep = c.stage === "ready_for_hr" || c.stage === "hr_booked" || c.stage === "hr_done";
+  // Until the HR round has happened, its questions lead the page.
+  const beforeHR = ["screened", "parked", "ready_for_hr", "hr_booked"].includes(c.stage);
+  const questions = c.hr_questions?.questions ?? [];
   const techStep = ["ready_for_technical", "technical_booked", "technical_done", "with_bu_head", "on_hold"].includes(c.stage);
 
   return (
@@ -373,7 +410,8 @@ export function CandidatePage() {
         </div>
         <div className="next-actions">
           {decidesHere && <Decide c={c} onDone={load} />}
-          {hrStep && <HRRoundEntry c={c} onBooked={load} />}
+          {hrStep && <HRRoundEntry c={c} onChange={load} />}
+          {c.stage === "ready_for_hr" && <Decide c={c} onDone={load} only={["rejected"]} />}
           {techStep && <TechnicalEntry candidateId={c.id} stage={c.stage} isBuHead={me.role === "bu_head"} onChange={load} />}
         </div>
       </section>
@@ -385,8 +423,8 @@ export function CandidatePage() {
         <>
           <Glance c={c} results={results} history={history} />
           <div className="cand-grid">
-            <CandidateEvidence fit={c.fit!} results={results} />
-            <Sidebar fit={c.fit!} questions={c.hr_questions?.questions ?? []} history={<History entries={history} />} />
+            <CandidateEvidence fit={c.fit!} results={results} questionsFirst={beforeHR ? questions : []} />
+            <Sidebar fit={c.fit!} questions={beforeHR ? [] : questions} gaps={beforeHR ? results : null} history={<History entries={history} />} />
           </div>
         </>
       )}

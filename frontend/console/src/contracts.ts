@@ -38,9 +38,9 @@ export const STAGE_LABELS: Record<CandidateStage, string> = {
   ready_for_hr: "Ready for HR round",
   hr_booked: "HR round booked",
   hr_done: "HR round done",
-  ready_for_technical: "Ready for technical",
-  technical_booked: "Technical booked",
-  technical_done: "Technical done",
+  ready_for_technical: "Ready for MITRA interview",
+  technical_booked: "MITRA interview booked",
+  technical_done: "MITRA interview done",
   with_bu_head: "With BU head",
   shortlisted: "Shortlisted",
   on_hold: "On hold",
@@ -143,6 +143,10 @@ export interface JobRequest {
   chat: ChatTurn[];
   can_chat: boolean;
   can_edit: boolean;
+  /** Mid-edit with an earlier summary: leave the edit and keep that summary. */
+  can_keep: boolean;
+  /** A draft never sent to HR: its BU head may delete it. */
+  can_delete: boolean;
   can_approve: boolean;
 }
 
@@ -238,6 +242,10 @@ export interface DecisionEntry {
 
 export interface HRRoundState {
   interview_id: string;
+  /** "room": the candidate joins MITRA's voice room. "listen": HR phones the candidate and MITRA listens. */
+  mode: "room" | "listen";
+  /** Listen mode: when HR confirmed the candidate agreed to the call being recorded and transcribed. */
+  phone_consent_at: string | null;
   status: "scheduled" | "in_progress" | "completed" | "expired" | "failed";
   meeting_id: string | null;
   password: string | null;
@@ -252,6 +260,8 @@ export interface HRRoundState {
   can_cancel: boolean;
   can_edit_notes: boolean;
   recording_status: string;
+  /** Who is in the room now (Daily presence), while the round is in progress. HR counts among `others`. */
+  presence: { known: boolean; candidate: boolean; mitra: boolean; others: number } | null;
   eval_status: "not_started" | "waiting_recording" | "transcribing" | "evaluating" | "ready" | "failed";
   eval_error: string | null;
   attribution: { method: string; confidence: "clear" | "likely" | "uncertain"; voices: number; other_voices: number } | null;
@@ -356,6 +366,8 @@ export interface Directory {
   page_size: number;
   items: DirectoryItem[];
   facets: { groups: Record<GroupKey, number>; needs_me: number; below: number };
+  /** Each business unit's total in the filtered list, for its heading. */
+  bu_counts?: Record<string, number>;
   business_units: { id: string; name: string }[];
   groups: { key: GroupKey; label: string }[];
 }
@@ -393,4 +405,83 @@ export const GROUPS: { key: GroupKey; label: string; stages: CandidateStage[] }[
 ];
 export function groupOf(stage: CandidateStage): GroupKey {
   return GROUPS.find((g) => g.stages.includes(stage))?.key ?? "screening";
+}
+
+// ---- how a MITRA interview ended (backend/shared/interview_contracts.py, shared/contracts.py) ----
+
+/** `EndReason`: why the interview ended, as the interviewer records it. */
+export type EndReason =
+  | "interview_complete"
+  | "candidate_withdrew"
+  | "candidate_dropped"
+  | "abandoned_by_candidate"
+  | "candidate_left_the_call"
+  | "session_ended"
+  | "failed_to_start"
+  | "candidate_ended_button"
+  | "candidate_did_not_return"
+  | "rejoin_limit_reached"
+  | "interrupted_by_restart";
+
+/** `ConnectionRecord`: drops and rejoins during the interview (the fields the wording reads). */
+export interface ConnectionRecord {
+  schema_version: 1;
+  drops: unknown[];
+  rejoin_count: number;
+  rejoin_limit: number;
+  grace_seconds: number;
+  limit_reached: boolean;
+}
+
+// ---- integrity events during the MITRA round (backend/shared/interview_contracts.py) ----
+// The browser's facts for a person to review, never a score. Posted to Track I's
+// intake (proctoring/intake.py) with the proctoring token from the join.
+
+export type IntegrityKind =
+  | "distance_out_of_band"
+  | "looking_away"
+  | "face_missing"
+  | "second_face"
+  | "tab_hidden"
+  | "tab_unfocused"
+  | "share_stopped"
+  | "share_not_whole_screen"
+  | "second_monitor"
+  | "left_full_screen"
+  | "paste"
+  | "second_voice"
+  | "screen_content_flagged";
+export type ReminderState = "nudged" | "recorded_only" | "technical_prompt";
+export type IntegritySource = "browser" | "after_call";
+export interface IntegrityEvidence {
+  clip_end_seconds: number | null;
+  clip_start_seconds: number | null;
+  thumbnail_key: string | null;
+  track: string;
+}
+export interface IntegrityEvent {
+  confidence?: number | null;
+  detail: string;
+  end_seconds: number | null;
+  event_id: string;
+  evidence: IntegrityEvidence[];
+  kind: IntegrityKind;
+  received_at?: string | null;
+  received_interview_seconds?: number | null;
+  reminder: ReminderState;
+  reminder_index: number | null;
+  repeats: number;
+  source: IntegritySource;
+  start_seconds: number;
+}
+export interface IntegrityStatus {
+  distance_cm: number | null;
+  distance_in_band: boolean | null;
+  faces_in_view: number | null;
+  kind: "integrity_status";
+  page_visible: boolean | null;
+}
+export interface IntegrityAccommodation {
+  gaze_reminders_off: boolean;
+  note: string | null;
 }

@@ -30,7 +30,7 @@ export function BUHome({ state, buName }: { state: OverviewState; buName: string
       <header className="page-head">
         <div>
           <h1 className="page-title">{buName ?? "Your"} hiring</h1>
-          <p className="page-sub">The decisions that are yours, and how strong each field is.</p>
+          <p className="page-sub">The decisions that are yours, and where each of your job requests stands.</p>
         </div>
         <ButtonLink variant="primary" to="/jobs/new" icon={<Plus size={17} />}>
           New job request
@@ -39,50 +39,17 @@ export function BUHome({ state, buName }: { state: OverviewState; buName: string
       <Filters state={state} showBu={false} />
       <div className={state.refreshing ? "dash-body refreshing" : "dash-body"}>
         <div className="stats">
-          <StatTile label="Waiting for your decision" value={k.needs_you} accent={k.needs_you > 0} note={k.needs_you ? "After the technical round" : "Nothing is waiting on you"} />
+          <StatTile label="Waiting for your decision" value={k.needs_you} accent={k.needs_you > 0} note={k.needs_you ? "After the MITRA interview round" : "Nothing is waiting on you"} />
           <StatTile label="Open job requests" value={k.open_jobs} note={k.draft_jobs ? `${k.draft_jobs} still being described` : undefined} />
           <StatTile label="Shortlisted by you" value={data.mine.outcomes.shortlisted ?? 0} note={`${inFinal} with you or on hold`} />
         </div>
 
-        <div className="split-2 split-wide-left">
-          <NeedsQueue data={data} title="Your decisions to make" caption="Candidates HR has sent you after the technical round." empty="Nothing is waiting on you. HR sends candidates here after the technical round." />
-          <ChartCard
-            title="How strong is each field"
-            caption="CV fit of everyone screened, job by job. Select a dot to open them."
-            table={
-              <table>
-                <thead>
-                  <tr>
-                    <th>Job</th>
-                    <th>Candidate</th>
-                    <th className="num">Fit</th>
-                    <th>Step</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {live.flatMap((j) =>
-                    j.scores.map((s) => (
-                      <tr key={s.candidate_id}>
-                        <td>{j.title}</td>
-                        <td>{s.name}</td>
-                        <td className="num">{Math.round(s.score)}%</td>
-                        <td>{s.group}</td>
-                      </tr>
-                    )),
-                  )}
-                </tbody>
-              </table>
-            }
-          >
-            <ScoreStrip rows={live} onPick={(id) => navigate(`/candidates/${id}`, { viewTransition: true })} />
-          </ChartCard>
-        </div>
-
-
+        <div className="split-2">
+          <NeedsQueue data={data} title="Your decisions to make" caption="Candidates HR sent you after the MITRA interview round." empty="Nothing is waiting on you. HR sends candidates here after the MITRA interview round." />
         <JobRows
           jobs={data.jobs}
           title="Your job requests"
-          caption="Candidates by step. Open one to compare its candidates."
+          caption="Each request's candidates by step. Open one to see them or compare them."
           showBu={false}
           extra={(j) =>
             j.total > 1 ? (
@@ -92,8 +59,39 @@ export function BUHome({ state, buName }: { state: OverviewState; buName: string
             ) : null
           }
         />
+        </div>
 
-        <MoreInsight id="bu" hint="What you decided">
+        <MoreInsight id="bu" hint="How strong each field is, and what you decided">
+        <ChartCard
+          title="How strong is each field"
+          caption="CV fit of everyone screened, job by job. Select a dot to open them."
+          table={
+            <table>
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>Candidate</th>
+                  <th className="num">Fit</th>
+                  <th>Step</th>
+                </tr>
+              </thead>
+              <tbody>
+                {live.flatMap((j) =>
+                  j.scores.map((s) => (
+                    <tr key={s.candidate_id}>
+                      <td>{j.title}</td>
+                      <td>{s.name}</td>
+                      <td className="num">{Math.round(s.score)}%</td>
+                      <td>{s.group}</td>
+                    </tr>
+                  )),
+                )}
+              </tbody>
+            </table>
+          }
+        >
+          <ScoreStrip rows={live} onPick={(id) => navigate(`/candidates/${id}`, { viewTransition: true })} />
+        </ChartCard>
         <ChartCard
           title="What you decided"
           caption={decidedTotal ? "Your decisions in this period." : "You have not decided on anyone in this period."}

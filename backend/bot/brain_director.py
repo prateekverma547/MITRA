@@ -39,6 +39,7 @@ from pipecat.services.openai.llm import OpenAILLMService
 from bot.brain.brain import InterviewBrain
 from bot.brain.drivers import OpenAIJudge
 from bot.brain.prompting import reflect_back
+from bot.brain.withdrawal import CONFIRMATION_QUESTION
 from bot.config import FILLER_ENABLED_ENV, filler_enabled
 
 #: Turns between one spoken acknowledgement and the next.
@@ -141,6 +142,15 @@ class BrainDirector(FrameProcessor):
             self._brain.observe(candidate_text=candidate_text, bot_text=bot_text)
 
         self._note_transition()
+
+        # Decision 11: a request to stop is answered by code, word for word,
+        # with one fixed question, and the model does not speak this turn. The
+        # context frame is held back, so no inference runs; the spoken question
+        # reaches the context through the assistant aggregator like the greeting.
+        if self._brain.take_confirmation_due():
+            self._record("withdrawal_confirmation_spoken", text=CONFIRMATION_QUESTION)
+            await self.push_frame(TTSSpeakFrame(CONFIRMATION_QUESTION), direction)
+            return
 
         # The brain counts an attempt when it hears what the interviewer
         # actually said, on the next frame. Counting it here, at the moment the

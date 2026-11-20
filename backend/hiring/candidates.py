@@ -41,7 +41,7 @@ WAITING, RUNNING, READY, FAILED = "waiting", "running", "ready", "failed"
 
 def _screener() -> Screener:
     settings = Settings.load()
-    return Screener(api_key=settings.openai_api_key, model=screening_model(settings.blueprint_model))
+    return Screener(api_key=settings.openai_api_key, model=screening_model(settings.legacy_blueprint_model))
 
 
 async def _job(session, user: User, job_id: str) -> Job:

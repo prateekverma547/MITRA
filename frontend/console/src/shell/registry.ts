@@ -13,6 +13,12 @@ export interface FeatureRoute {
   element: ReactNode;
   /** Public routes render without signing in (welcome, sign-in). */
   public?: boolean;
+  /**
+   * Open routes render for everyone, signed in or not, outside the shell: the
+   * candidate's interview room. A signed-in HR user testing the link sees what
+   * the candidate sees instead of being sent home.
+   */
+  open?: boolean;
   /** Roles that may open it. Omitted means every signed-in role. */
   roles?: Role[];
 }

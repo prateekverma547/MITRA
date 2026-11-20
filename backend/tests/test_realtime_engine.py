@@ -25,8 +25,8 @@ from bot import config
 from bot.brain.brain import InterviewBrain
 from bot.realtime_captions import LABEL, RealtimeCaptions
 from bot.realtime_coordinator import RealtimeCoordinator
-from bot.realtime_prompt import build_realtime_instruction
-from shared.contracts import InterviewBlueprint
+from bot.realtime_prompt import as_goal, area_count, build_area_instruction
+from shared.contracts import FIRST_COMPETENCY_AREA, InterviewBlueprint
 
 FIXTURES = sorted((pathlib.Path(__file__).parents[1] / "bot" / "fixtures").glob("*.json"))
 
@@ -94,16 +94,25 @@ async def test_run_bot_hands_the_session_to_the_realtime_engine_by_default(monke
 
 
 @pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.stem)
-def test_the_whole_interview_prompt_builds_from_every_fixture(path):
+def test_every_plan_question_is_reachable_across_the_areas(path):
+    """The bot's instructions are the stable base plus the current area (decision 22,
+    bot/realtime_prompt.build_area_instruction). Across the areas, the whole interview is
+    there: every instruction carries what her own first turn must contain (round 14: no
+    fixed opening line) and names every competency, and each competency's questions are
+    all shown in that competency's own area."""
     blueprint = InterviewBlueprint.model_validate_json(path.read_text())
-    opening = InterviewBrain(blueprint, time_of_day="afternoon").opening_line()
 
-    text = build_realtime_instruction(blueprint, opening_line=opening)
+    areas = [
+        build_area_instruction(blueprint, first_name="Asha", time_of_day="afternoon", area=area)
+        for area in range(1, area_count(blueprint) + 1)
+    ]
 
-    assert opening in text
-    for plan in blueprint.competency_plans:
-        assert plan.name in text
-        assert all(question in text for question in plan.seed_questions)
+    for text in areas:
+        assert "YOUR FIRST TURN" in text and "an AI interviewer" in text and "Asha" in text
+        assert all(plan.name in text for plan in blueprint.competency_plans)
+    for index, plan in enumerate(blueprint.competency_plans):
+        own_area = areas[index + FIRST_COMPETENCY_AREA - 1]
+        assert all(as_goal(question) in own_area for question in plan.seed_questions)  # round 15: goals
 
 
 @pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.stem)
@@ -111,10 +120,10 @@ def test_the_clock_schedule_is_ordered_and_inside_the_interview(path):
     blueprint = InterviewBlueprint.model_validate_json(path.read_text())
     coordinator = RealtimeCoordinator(blueprint=blueprint, llm=None, session_id="t")
 
-    schedule = coordinator._schedule()
+    schedule = coordinator._time_marks()
 
     assert schedule, "a realtime interview with no clock notes cannot keep time"
-    times = [at for at, _ in schedule]
+    times = [at for at, _, _ in schedule]
     assert times == sorted(times)
     hard_stop = (
         blueprint.evaluation_spec.duration_minutes

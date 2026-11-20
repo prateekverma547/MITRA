@@ -6,6 +6,7 @@ import { ROLE_LABELS, ROLES, type Role } from "../../contracts";
 import { useSession } from "../../session";
 import { Brand } from "../../shell/Brand";
 import { Footer } from "../../shell/Footer";
+import { ThemeToggle } from "../../shell/theme";
 import { BackButton } from "../../shell/ui/BackButton";
 import { Button } from "../../shell/ui/Button";
 
@@ -32,6 +33,9 @@ function safeNext(next: string | null): string {
   // Only ever go somewhere inside the console.
   return next && next.startsWith("/") && !next.startsWith("//") ? next : "/home";
 }
+
+/** The names on the front door's three ways in (Welcome.tsx). */
+const DOOR_LABELS: Record<Role, string> = { hr: "HR", bu_head: "BU Head", org_admin: "Organisation admin" };
 
 export function SignIn() {
   const { signIn } = useSession();
@@ -85,16 +89,17 @@ export function SignIn() {
 
   return (
     <div className="public">
-      <header className="public-top">
+      <header className="public-top public-top-row">
         <Link to="/" className="brand-link" aria-label="MITRA home" viewTransition>
           <Brand />
         </Link>
+        <ThemeToggle />
       </header>
 
       <main className="signin-page">
         <form className="signin" onSubmit={submit} noValidate>
           <BackButton fallback="/" label="Choose a different way in" />
-          <h1>{doorRole ? `Sign in as ${ROLE_LABELS[doorRole]}` : "Sign in"}</h1>
+          <h1>{doorRole ? `Sign in as ${DOOR_LABELS[doorRole]}` : "Sign in"}</h1>
           <p className="muted">Use your work email. Your account decides what you can see.</p>
 
           <div className="field">
@@ -138,8 +143,8 @@ export function SignIn() {
 
           {demo.accounts.length > 0 && demo.password && (
             <section className="demo-accounts" aria-labelledby="demo-title">
-              <p id="demo-title" className="demo-title">Demo accounts</p>
-              <p className="demo-note">On this machine only. One click signs you in.</p>
+              <p id="demo-title" className="demo-title">Quick sign-in</p>
+              <p className="demo-note">Accounts set up on this machine. One click signs you in.</p>
               <ul>
                 {demo.accounts.map((a) => (
                   <li key={a.email}>

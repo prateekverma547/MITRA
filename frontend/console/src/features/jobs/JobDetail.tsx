@@ -3,10 +3,11 @@
 // from the server (`can_chat`, `can_edit`, `can_approve`), so HR and admins
 // see the same page read-only.
 
-import { CheckCheck, GitCompareArrows, PencilLine, SendHorizontal, Users, X } from "lucide-react";
+import { CheckCheck, GitCompareArrows, PencilLine, SendHorizontal, Trash2, Undo2, Users, X } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../api";
+import "./jobs.css";
 import { requestPhase, type JobRequest, type Understanding } from "../../contracts";
 import { BackButton } from "../../shell/ui/BackButton";
 import { Button, ButtonLink } from "../../shell/ui/Button";
@@ -186,8 +187,24 @@ export function JobDetail() {
   const [job, setJob] = useState<JobRequest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState<"edit" | "approve" | null>(null);
+  const [busy, setBusy] = useState<"edit" | "approve" | "keep" | null>(null);
   const toast = useToast();
+  const navigate = useNavigate();
+  const [deleting, setDeleting] = useState<"ask" | "busy" | null>(null);
+
+  async function remove() {
+    if (!job) return;
+    setDeleting("busy");
+    setError(null);
+    try {
+      await api.del(`/jobs/${job.id}`);
+      toast(`Deleted “${job.title}”`, "urgent");
+      navigate("/jobs", { replace: true, viewTransition: true });
+    } catch (e) {
+      setError((e as Error).message);
+      setDeleting(null);
+    }
+  }
 
   useEffect(() => {
     api
@@ -196,14 +213,31 @@ export function JobDetail() {
       .catch((e: Error) => setError(e.message));
   }, [jobId]);
 
-  async function act(path: "edit" | "approve") {
+  // When MITRA finishes, the summary and its buttons replace the chat at the
+  // top of the page: bring them into view instead of leaving you scrolled
+  // down at the end of a conversation that is no longer there.
+  const wasDescribing = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (!job) return;
+    const now = job.spec_status !== "ready";
+    if (wasDescribing.current === true && !now) window.scrollTo({ top: 0, behavior: "smooth" });
+    wasDescribing.current = now;
+  }, [job]);
+
+  async function act(path: "edit" | "approve" | "keep") {
     if (!job) return;
     setBusy(path);
     setError(null);
     try {
       setJob(await api.post<JobRequest>(`/jobs/${job.id}/${path}`));
       setConfirming(false);
-      toast(path === "approve" ? `Sent “${job.title}” to HR` : "Reopened the conversation with MITRA");
+      toast(
+        path === "approve"
+          ? `Sent “${job.title}” to HR`
+          : path === "keep"
+            ? "Kept the summary as it was"
+            : "Reopened the conversation with MITRA. Leave any time with “Keep it as it was”.",
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -238,25 +272,28 @@ export function JobDetail() {
             {job.created_by ? `, started by ${job.created_by}` : ""}. {source}.
           </p>
         </div>
-        <span className={`mark mark-lg tone-${phase.tone}`}>{phase.label}</span>
+        <div className="job-head-side">
+          <span className={`mark mark-lg tone-${phase.tone}`}>{phase.label}</span>
+          {job.can_delete &&
+            (deleting ? (
+              <span className="delete-confirm" role="group" aria-label="Delete this request">
+                <span>Delete “{job.title}”? This cannot be undone.</span>
+                <Button size="sm" variant="danger" icon={<Trash2 size={15} />} loading={deleting === "busy"} onClick={remove}>
+                  Delete
+                </Button>
+                <Button size="sm" variant="ghost" disabled={deleting === "busy"} onClick={() => setDeleting(null)}>
+                  Keep it
+                </Button>
+              </span>
+            ) : (
+              <Button size="sm" variant="ghost" icon={<Trash2 size={15} />} onClick={() => setDeleting("ask")}>
+                Delete this request
+              </Button>
+            ))}
+        </div>
       </header>
 
       {error && <p className="error">{error}</p>}
-      {job.request_status === "open" && !describing && (
-        <div className="notice notice-good notice-row">
-          <span>This request is with HR. {job.candidates === 0 ? "No candidates yet." : ""}</span>
-          <span className="actions">
-            {job.candidates > 1 && (
-              <ButtonLink size="sm" variant="ghost" to={`/jobs/${job.id}/compare`} icon={<GitCompareArrows size={15} />}>
-                Compare them
-              </ButtonLink>
-            )}
-            <ButtonLink size="sm" to={`/jobs/${job.id}/candidates`} icon={<Users size={15} />}>
-              {job.candidates === 0 ? "Open candidates" : `See ${job.candidates} ${job.candidates === 1 ? "candidate" : "candidates"}`}
-            </ButtonLink>
-          </span>
-        </div>
-      )}
       {job.request_status === "open" && describing && (
         <p className="notice notice-attention">
           You are revising a request HR already has. When MITRA summarises it again, candidates who have not been
@@ -271,19 +308,79 @@ export function JobDetail() {
             <h2 className="aside-title">What happens next</h2>
             <p>MITRA asks one question at a time. When it has enough, it summarises the role for you to confirm.</p>
             <p>Anything it assumes rather than hears from you is marked, so you can correct it before HR sees it.</p>
+            {job.can_keep && (
+              <div className="keep-box">
+                <p>Changed your mind? Leave the chat and keep the summary you agreed before. Nothing changes.</p>
+                <Button icon={<Undo2 size={16} />} loading={busy === "keep"} onClick={() => act("keep")}>
+                  Keep it as it was
+                </Button>
+              </div>
+            )}
           </aside>
         </div>
       ) : (
         <div className="understood">
           {job.understanding && <Brief u={job.understanding} inferred={job.inferred} live={job.can_approve} />}
-          <details className="conversation-record">
-            <summary>The conversation ({job.chat.length} messages)</summary>
-            <Conversation job={job} onUpdate={setJob} />
-          </details>
+          <aside className="job-side">
+            <section className="card-viz">
+              <h2 className="card-title">Where it stands</h2>
+              <p className="side-text">
+                {job.request_status === "open"
+                  ? `With HR. ${job.candidates === 0 ? "No candidates yet." : `${job.candidates} ${job.candidates === 1 ? "candidate" : "candidates"} so far.`}`
+                  : job.can_approve
+                    ? "MITRA has summarised the role. Check it, then send it to HR."
+                    : "Being described with MITRA."}
+              </p>
+              {job.request_status === "open" && (
+                <div className="actions">
+                  <ButtonLink size="sm" variant="primary" to={`/jobs/${job.id}/candidates`} icon={<Users size={15} />}>
+                    {job.candidates === 0 ? "Open candidates" : `See ${job.candidates} ${job.candidates === 1 ? "candidate" : "candidates"}`}
+                  </ButtonLink>
+                  {job.candidates > 1 && (
+                    <ButtonLink size="sm" variant="ghost" to={`/jobs/${job.id}/compare`} icon={<GitCompareArrows size={15} />}>
+                      Compare them
+                    </ButtonLink>
+                  )}
+                </div>
+              )}
+              {(job.can_edit || job.can_approve) && (
+                <div className="actions">
+                  {confirming ? (
+                    <>
+                      <span className="decision-q">Send “{job.title}” to HR?</span>
+                      <Button variant="primary" icon={<CheckCheck size={17} />} loading={busy === "approve"} onClick={() => act("approve")}>
+                        Send to HR
+                      </Button>
+                      <Button variant="ghost" icon={<X size={16} />} disabled={busy !== null} onClick={() => setConfirming(false)}>
+                        Not yet
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      {job.can_approve && (
+                        <Button variant="primary" icon={<CheckCheck size={17} />} disabled={busy !== null} onClick={() => setConfirming(true)}>
+                          Approve and send to HR
+                        </Button>
+                      )}
+                      {job.can_edit && (
+                        <Button icon={<PencilLine size={16} />} loading={busy === "edit"} onClick={() => act("edit")}>
+                          Edit with MITRA
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </section>
+            <details className="conversation-record">
+              <summary>The conversation with MITRA ({job.chat.length} messages)</summary>
+              <Conversation job={job} onUpdate={setJob} />
+            </details>
+          </aside>
         </div>
       )}
 
-      {(job.can_edit || job.can_approve) && (
+      {describing && (job.can_edit || job.can_approve) && (
         <div className="decision-bar">
           {confirming ? (
             <>

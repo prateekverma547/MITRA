@@ -1,0 +1,692 @@
+{
+ "sample": "did_not_return",
+ "real": true,
+ "code": "round 15 code",
+ "transcript": "trimmed",
+ "how_made": "A REAL call on the real route (Daily room, the real bot, OpenAI Realtime), round 15, 2026-11-19. The candidate is headless Chromium speaking synthetic clips (macOS voice 'Rishi'); the data is a seeded scratch database: no real person, no personal data. ROUND 15 CODE AND A TRIMMED TRANSCRIPT: re-running it on round 16's code was skipped to save time (Karandeep's choice); round 15's harness kept only index, speaker, text, pre_interview, timing_source, cut and the audio times of each turn, so the transcript does NOT validate as a full Transcript (no at_seconds).",
+ "interview_id": "int_1b7ddded228f",
+ "plan": "pm_senior fixture",
+ "ended_because": "candidate_did_not_return",
+ "ending": {
+  "ending": "candidate_did_not_return",
+  "hang_up_by": "no_one_to_hear",
+  "skips": 0,
+  "areas": [
+   {
+    "area": 1,
+    "entered_seconds": 0.0,
+    "left_seconds": 28.05
+   },
+   {
+    "area": 2,
+    "entered_seconds": 28.05,
+    "left_seconds": null
+   }
+  ],
+  "notes": 1,
+  "backstop_moves": 0,
+  "ended_without_goodbye": 0,
+  "end_interview_refused": 0
+ },
+ "coordinator_events": [
+  {
+   "kind": "listening",
+   "at_seconds": 7.46,
+   "after_seconds": 0.3
+  },
+  {
+   "kind": "note",
+   "at_seconds": 18.37,
+   "note_kind": "time",
+   "text": "About one more question in this area (the opening), then move on. 6 more area(s) remain after this one, about 3 minute(s) each, then the closing (about 20 minutes of booked time left in all).",
+   "reply": false
+  },
+  {
+   "kind": "move_on",
+   "at_seconds": 28.05,
+   "area": 2,
+   "by": "move_on"
+  },
+  {
+   "kind": "candidate_away",
+   "at_seconds": 58.54
+  },
+  {
+   "kind": "interview_over",
+   "at_seconds": 148.55,
+   "reason": "candidate_did_not_return",
+   "ending": "candidate_did_not_return"
+  },
+  {
+   "kind": "hang_up",
+   "at_seconds": 148.55,
+   "by": "no_one_to_hear",
+   "ending": "candidate_did_not_return"
+  }
+ ],
+ "connection": null,
+ "transcript_turns": [
+  {
+   "index": 0,
+   "speaker": "interviewer",
+   "text": "Good evening. I\u2019m Mitra, an AI interviewer. Nice to meet you. How are you doing?",
+   "pre_interview": true,
+   "timing_source": "playback",
+   "cut": false,
+   "audio_start_seconds": 7.71,
+   "audio_end_seconds": 12.66
+  },
+  {
+   "index": 1,
+   "speaker": "candidate",
+   "text": "I am doing well, thank you. Happy to be here.",
+   "pre_interview": true,
+   "timing_source": "silero",
+   "cut": false,
+   "audio_start_seconds": 14.69,
+   "audio_end_seconds": 17.63
+  },
+  {
+   "index": 2,
+   "speaker": "interviewer",
+   "text": "Good evening. I\u2019m glad you\u2019re well. What are you working on now?",
+   "pre_interview": true,
+   "timing_source": "playback",
+   "cut": false,
+   "audio_start_seconds": 20.27,
+   "audio_end_seconds": 23.92
+  },
+  {
+   "index": 3,
+   "speaker": "candidate",
+   "text": "I\u2019ll lead the payouts platform at a fintech company, mostly reliability and routing work.",
+   "pre_interview": true,
+   "timing_source": "silero",
+   "cut": false,
+   "audio_start_seconds": 26.03,
+   "audio_end_seconds": 31.52
+  },
+  {
+   "index": 4,
+   "speaker": "interviewer",
+   "text": "Thanks for sharing that. Let\u2019s begin. What was the bet behind a strategy you personally set?",
+   "pre_interview": false,
+   "timing_source": "playback",
+   "cut": false,
+   "audio_start_seconds": 35.03,
+   "audio_end_seconds": 40.68
+  },
+  {
+   "index": 5,
+   "speaker": "candidate",
+   "text": "Two years ago I said the strategy to move payouts to multi acquirer routing, because single processor outages were costing us merchants. I made the case to finance with six months of failure data.",
+   "pre_interview": false,
+   "timing_source": "silero",
+   "cut": false,
+   "audio_start_seconds": 42.51,
+   "audio_end_seconds": 54.57
+  },
+  {
+   "index": 6,
+   "speaker": "interviewer",
+   "text": "What did you believe about the market that others on your team did not?",
+   "pre_interview": false,
+   "timing_source": "playback",
+   "cut": false,
+   "audio_start_seconds": 58.13,
+   "audio_end_seconds": 62.18
+  }
+ ],
+ "events": [
+  {
+   "at_seconds": 2.285,
+   "source": "bot",
+   "kind": "participant",
+   "change": "joined",
+   "role": "candidate",
+   "participant_id": "69af2c0d-8cc4-4d61-977b-17d8dfb027a5",
+   "reason": null
+  },
+  {
+   "at_seconds": 5.609,
+   "source": "bot",
+   "kind": "interview_started",
+   "engine": "realtime",
+   "booked_minutes": 20
+  },
+  {
+   "at_seconds": 12.663,
+   "source": "bot",
+   "kind": "transcript_turn",
+   "turn_index": 0,
+   "speaker": "interviewer",
+   "text": "Good evening. I\u2019m Mitra, an AI interviewer. Nice to meet you. How are you doing?",
+   "audio_start_seconds": 7.712599039077759,
+   "audio_end_seconds": 12.662599086761475,
+   "cut": false,
+   "area_id": "opening"
+  },
+  {
+   "at_seconds": 14.191,
+   "source": "auditor",
+   "kind": "question_labelled",
+   "turn_index": 0,
+   "label": "opening",
+   "question_id": null,
+   "follow_up_number": null,
+   "area_id": "opening",
+   "auditors_reading": true
+  },
+  {
+   "at_seconds": 18.633,
+   "source": "bot",
+   "kind": "transcript_turn",
+   "turn_index": 1,
+   "speaker": "candidate",
+   "text": "I am doing well, thank you. Happy to be here.",
+   "audio_start_seconds": 14.301032781600952,
+   "audio_end_seconds": 18.63303279876709,
+   "cut": false,
+   "area_id": "opening"
+  },
+  {
+   "at_seconds": 23.98,
+   "source": "coordinator",
+   "kind": "time_note_sent",
+   "text": "About one more question in this area (the opening), then move on. 6 more area(s) remain after this one, about 3 minute(s) each, then the closing (about 20 minutes of booked time left in all)."
+  },
+  {
+   "at_seconds": 23.919,
+   "source": "bot",
+   "kind": "transcript_turn",
+   "turn_index": 2,
+   "speaker": "interviewer",
+   "text": "Good evening. I\u2019m glad you\u2019re well. What are you working on now?",
+   "audio_start_seconds": 20.269175052642822,
+   "audio_end_seconds": 23.919175148010254,
+   "cut": false,
+   "area_id": "opening"
+  },
+  {
+   "at_seconds": 25.151,
+   "source": "auditor",
+   "kind": "question_labelled",
+   "turn_index": 2,
+   "label": "opening",
+   "question_id": null,
+   "follow_up_number": null,
+   "area_id": "opening",
+   "auditors_reading": true
+  },
+  {
+   "at_seconds": 32.523,
+   "source": "bot",
+   "kind": "transcript_turn",
+   "turn_index": 3,
+   "speaker": "candidate",
+   "text": "I\u2019ll lead the payouts platform at a fintech company, mostly reliability and routing work.",
+   "audio_start_seconds": 25.661032915115356,
+   "audio_end_seconds": 32.523032903671265,
+   "cut": false,
+   "area_id": "opening"
+  },
+  {
+   "at_seconds": 33.662,
+   "source": "coordinator",
+   "kind": "area_changed",
+   "area_id": "product_strategy",
+   "area_name": "Product strategy and vision",
+   "budget_minutes": 3.3
+  },
+  {
+   "at_seconds": 33.664,
+   "source": "coordinator",
+   "kind": "tool_called",
+   "tool": "move_on",
+   "outcome": "moved"
+  },
+  {
+   "at_seconds": 40.683,
+   "source": "bot",
+   "kind": "transcript_turn",
+   "turn_index": 4,
+   "speaker": "interviewer",
+   "text": "Thanks for sharing that. Let\u2019s begin. What was the bet behind a strategy you personally set?",
+   "audio_start_seconds": 35.03276491165161,
+   "audio_end_seconds": 40.68276500701904,
+   "cut": false,
+   "area_id": "product_strategy"
+  },
+  {
+   "at_seconds": 42.394,
+   "source": "auditor",
+   "kind": "question_labelled",
+   "turn_index": 4,
+   "label": "opening",
+   "question_id": null,
+   "follow_up_number": null,
+   "area_id": "product_strategy",
+   "auditors_reading": true
+  },
+  {
+   "at_seconds": 55.423,
+   "source": "bot",
+   "kind": "transcript_turn",
+   "turn_index": 5,
+   "speaker": "candidate",
+   "text": "Two years ago I said the strategy to move payouts to multi acquirer routing, because single processor outages were costing us merchants. I made the case to finance with six months of failure data.",
+   "audio_start_seconds": 42.14103293418884,
+   "audio_end_seconds": 55.42303276062012,
+   "cut": false,
+   "area_id": "product_strategy"
+  },
+  {
+   "at_seconds": 62.183,
+   "source": "bot",
+   "kind": "transcript_turn",
+   "turn_index": 6,
+   "speaker": "interviewer",
+   "text": "What did you believe about the market that others on your team did not?",
+   "audio_start_seconds": 58.13347291946411,
+   "audio_end_seconds": 62.183472871780396,
+   "cut": false,
+   "area_id": "product_strategy"
+  },
+  {
+   "at_seconds": 64.128,
+   "source": "auditor",
+   "kind": "question_labelled",
+   "turn_index": 6,
+   "label": "plan",
+   "question_id": "Q2.2",
+   "follow_up_number": null,
+   "area_id": "product_strategy",
+   "auditors_reading": true
+  },
+  {
+   "at_seconds": 64.153,
+   "source": "bot",
+   "kind": "participant",
+   "change": "left",
+   "role": "candidate",
+   "participant_id": "69af2c0d-8cc4-4d61-977b-17d8dfb027a5",
+   "reason": "leftCall"
+  },
+  {
+   "at_seconds": 64.153,
+   "source": "bot",
+   "kind": "candidate_dropped",
+   "detected_by": "daily_left",
+   "participant_id": "69af2c0d-8cc4-4d61-977b-17d8dfb027a5"
+  },
+  {
+   "at_seconds": 63.391,
+   "source": "server",
+   "kind": "candidate_dropped",
+   "detected_by": "status_readings",
+   "participant_id": null
+  },
+  {
+   "at_seconds": 82.22,
+   "source": "bot",
+   "kind": "silence_prompt",
+   "stage": 1,
+   "action": "waiting_for_rejoin",
+   "dead_air_seconds": 20.0
+  },
+  {
+   "at_seconds": 158.475,
+   "source": "bot",
+   "kind": "reply_wait",
+   "turn_index": 2,
+   "end_of_speech_detect_seconds": 1.147,
+   "model_to_first_sound_seconds": 1.497,
+   "total_seconds": 2.644,
+   "interrupted": false
+  },
+  {
+   "at_seconds": 158.476,
+   "source": "bot",
+   "kind": "reply_wait",
+   "turn_index": 4,
+   "end_of_speech_detect_seconds": 1.157,
+   "model_to_first_sound_seconds": 2.351,
+   "total_seconds": 3.508,
+   "interrupted": false
+  },
+  {
+   "at_seconds": 158.476,
+   "source": "bot",
+   "kind": "reply_wait",
+   "turn_index": 6,
+   "end_of_speech_detect_seconds": 2.586,
+   "model_to_first_sound_seconds": 0.982,
+   "total_seconds": 3.568,
+   "interrupted": false
+  },
+  {
+   "at_seconds": 158.476,
+   "source": "bot",
+   "kind": "cost_update",
+   "component": "realtime",
+   "model": "gpt-realtime-2.1",
+   "job": null,
+   "input_tokens": 20270,
+   "cached_input_tokens": 17600,
+   "output_tokens": 756,
+   "usd": 0.0607
+  },
+  {
+   "at_seconds": 158.476,
+   "source": "bot",
+   "kind": "interview_ended",
+   "ended_because": "candidate_did_not_return",
+   "duration_seconds": 152.86627445893828,
+   "ending": "candidate_did_not_return",
+   "hang_up_by": "no_one_to_hear"
+  }
+ ],
+ "feedback_report": {
+  "schema_version": 1,
+  "interview_id": "int_1b7ddded228f",
+  "blueprint_id": "cand_a176012af8cf",
+  "role_title": "Senior Product Manager",
+  "competency_scores": [
+   {
+    "competency_id": "product_strategy",
+    "name": "Product strategy and vision",
+    "score": 3.5,
+    "coverage": "partial",
+    "rationale": "The candidate described a concrete strategic decision they personally made, including the business context and reasoning. They articulated the problem (processor outages), the solution (multi acquirer routing), and how they advocated for it using data. However, the evidence is limited to a single example and does not show how they defend reasoning under challenge.",
+    "evidence": [
+     {
+      "text": "Two years ago I said the strategy to move payouts to multi acquirer routing, because single processor outages were costing us merchants.",
+      "turn_index": 5,
+      "at_seconds": 57.55,
+      "speaker": "candidate",
+      "match": "exact",
+      "audio_start_seconds": 42.51,
+      "audio_end_seconds": 54.57
+     },
+     {
+      "text": "I made the case to finance with six months of failure data.",
+      "turn_index": 5,
+      "at_seconds": 57.55,
+      "speaker": "candidate",
+      "match": "exact",
+      "audio_start_seconds": 42.51,
+      "audio_end_seconds": 54.57
+     }
+    ],
+    "insufficient_signal": false
+   },
+   {
+    "competency_id": "prioritization",
+    "name": "Prioritization and trade-offs",
+    "score": null,
+    "coverage": "insufficient",
+    "rationale": "The interview did not reach this topic, so there is no evidence to assess the candidate's ability in prioritization or trade-offs.",
+    "evidence": [],
+    "insufficient_signal": true
+   },
+   {
+    "competency_id": "stakeholders",
+    "name": "Stakeholder and conflict management",
+    "score": null,
+    "coverage": "insufficient",
+    "rationale": "The interview did not reach this topic, so there is no evidence to assess the candidate's ability to manage stakeholders or conflict.",
+    "evidence": [],
+    "insufficient_signal": true
+   },
+   {
+    "competency_id": "metrics",
+    "name": "Metrics and experimentation fluency",
+    "score": null,
+    "coverage": "insufficient",
+    "rationale": "The interview did not reach this topic, so there is no evidence to assess the candidate's fluency with metrics or experimentation.",
+    "evidence": [],
+    "insufficient_signal": true
+   },
+   {
+    "competency_id": "execution",
+    "name": "Execution and shipping track record",
+    "score": null,
+    "coverage": "insufficient",
+    "rationale": "The interview did not reach this topic, so there is no evidence to assess the candidate's execution or shipping experience.",
+    "evidence": [],
+    "insufficient_signal": true
+   },
+   {
+    "competency_id": "leadership",
+    "name": "Leadership without authority",
+    "score": null,
+    "coverage": "insufficient",
+    "rationale": "The interview did not reach this topic, so there is no evidence to assess the candidate's leadership without authority.",
+    "evidence": [],
+    "insufficient_signal": true
+   }
+  ],
+  "red_flags_observed": [],
+  "strengths_observed": [
+   {
+    "competency_id": "product_strategy",
+    "description": "Described a specific, owned strategic decision and the business rationale behind it.",
+    "evidence": [
+     {
+      "text": "Two years ago I said the strategy to move payouts to multi acquirer routing, because single processor outages were costing us merchants.",
+      "turn_index": 5,
+      "at_seconds": 57.55,
+      "speaker": "candidate",
+      "match": "exact",
+      "audio_start_seconds": 42.51,
+      "audio_end_seconds": 54.57
+     }
+    ]
+   }
+  ],
+  "contradictions": [],
+  "dealbreakers": [
+   {
+    "dealbreaker": "Describes frameworks and process but cannot name a single concrete decision they personally made.",
+    "state": "not_reached",
+    "evidence": [],
+    "as_sentence": "The interview did not put this to the candidate, and did not observe it either way. This is a gap in the interview, not a finding about the candidate."
+   },
+   {
+    "dealbreaker": "Claims credit in 'we' terms throughout and cannot separate their own contribution from the team's.",
+    "state": "not_reached",
+    "evidence": [],
+    "as_sentence": "The interview did not put this to the candidate, and did not observe it either way. This is a gap in the interview, not a finding about the candidate."
+   },
+   {
+    "dealbreaker": "Cannot name a product bet that failed, or what they learned from it.",
+    "state": "not_reached",
+    "evidence": [],
+    "as_sentence": "The interview did not put this to the candidate, and did not observe it either way. This is a gap in the interview, not a finding about the candidate."
+   },
+   {
+    "dealbreaker": "Metrics talk stays at vanity level (signups, page views) with no connection to business outcome.",
+    "state": "not_reached",
+    "evidence": [],
+    "as_sentence": "The interview did not put this to the candidate, and did not observe it either way. This is a gap in the interview, not a finding about the candidate."
+   },
+   {
+    "dealbreaker": "Describes conflict only as other people being unreasonable.",
+    "state": "not_reached",
+    "evidence": [],
+    "as_sentence": "The interview did not put this to the candidate, and did not observe it either way. This is a gap in the interview, not a finding about the candidate."
+   }
+  ],
+  "summary": "The transcript provides limited evidence, focusing only on a single example of product strategy. The candidate described a specific strategic decision they made, including the rationale and how they advocated for it internally. However, the interview was cut short due to technical issues, and no other competencies were covered. There is not enough information to assess the candidate's abilities in prioritization, stakeholder management, metrics, execution, or leadership. Further probing is needed, especially on trade-offs, metrics, and conflict management.",
+  "recommendation": "limited_evidence",
+  "coverage_gaps": [
+   "Prioritization and trade-offs: The interview did not reach this topic.",
+   "Stakeholder and conflict management: The interview did not reach this topic.",
+   "Metrics and experimentation fluency: The interview did not reach this topic.",
+   "Execution and shipping track record: The interview did not reach this topic.",
+   "Leadership without authority: The interview did not reach this topic."
+  ],
+  "conversation_health": {
+   "schema_version": 1,
+   "candidate_turns": 1,
+   "fragmentary_turns": 0,
+   "repair_requests": 0,
+   "echo_turns": 0,
+   "prompted_silences": 1,
+   "dead_air_seconds": 20.0,
+   "disconnects": 1,
+   "degraded": true,
+   "as_sentence": "The recording was poor: the candidate had 1 long silence and dropped out of the call 1 time. Where the evidence below is thin, the connection is a likely cause and not a conclusion about the candidate."
+  },
+  "judgment_health": {
+   "schema_version": 1,
+   "attempted": 0,
+   "succeeded": 0,
+   "failed": 0,
+   "unjudged_competencies": [],
+   "unjudged_weight": 0.0,
+   "cancelled": 0,
+   "degraded": false,
+   "as_sentence": null
+  },
+  "questioning_health": {
+   "schema_version": 1,
+   "interviewer_turns": 0,
+   "repeated_questions": 0,
+   "verbatim_repeats": 0,
+   "narrow_sections": [],
+   "degraded": false,
+   "as_sentence": null
+  },
+  "connection": {
+   "schema_version": 1,
+   "drops": [
+    {
+     "started_seconds": 64.15,
+     "ended_seconds": null,
+     "gap_seconds": null,
+     "detected_by": "daily_left",
+     "same_participant": null,
+     "counted": false
+    }
+   ],
+   "rejoin_count": 0,
+   "rejoin_limit": 3,
+   "grace_seconds": 90.0,
+   "limit_reached": false
+  },
+  "interview_duration_seconds": 152.86
+ },
+ "cleaned_transcript": {
+  "schema_version": 1,
+  "status": "ok",
+  "reason": null,
+  "model_job": "feedback",
+  "model": null,
+  "turns": [
+   {
+    "index": 0,
+    "item_id": "item_EluufB1cUE519crCIeYzU",
+    "speaker": "interviewer",
+    "text": "Good evening. I\u2019m Mitra, an AI interviewer. Nice to meet you. How are you doing?",
+    "corrections": [],
+    "uncertain": [],
+    "guard": "copied",
+    "at_seconds": 8.6,
+    "audio_start_seconds": 7.71,
+    "audio_end_seconds": 12.66,
+    "pre_interview": true
+   },
+   {
+    "index": 1,
+    "item_id": "item_EluuoEUvBq8SI3VPGw1Lq",
+    "speaker": "candidate",
+    "text": "I am doing well, thank you. Happy to be here.",
+    "corrections": [],
+    "uncertain": [],
+    "guard": "copied",
+    "at_seconds": 19.36,
+    "audio_start_seconds": 14.69,
+    "audio_end_seconds": 17.63,
+    "pre_interview": true
+   },
+   {
+    "index": 2,
+    "item_id": "item_Eluurmh4xF4XHCUyR2PVu",
+    "speaker": "interviewer",
+    "text": "Good evening. I\u2019m glad you\u2019re well. What are you working on now?",
+    "corrections": [],
+    "uncertain": [],
+    "guard": "copied",
+    "at_seconds": 20.74,
+    "audio_start_seconds": 20.27,
+    "audio_end_seconds": 23.92,
+    "pre_interview": true
+   },
+   {
+    "index": 3,
+    "item_id": "item_EluuzyYeSKBAOPfJcJV2B",
+    "speaker": "candidate",
+    "text": "I\u2019ll lead the payouts platform at a fintech company, mostly reliability and routing work.",
+    "corrections": [],
+    "uncertain": [],
+    "guard": "copied",
+    "at_seconds": 33.15,
+    "audio_start_seconds": 26.03,
+    "audio_end_seconds": 31.52,
+    "pre_interview": true
+   },
+   {
+    "index": 4,
+    "item_id": "item_Eluv739xzmiPakF9BRkdx",
+    "speaker": "interviewer",
+    "text": "Thanks for sharing that. Let\u2019s begin. What was the bet behind a strategy you personally set?",
+    "corrections": [],
+    "uncertain": [],
+    "guard": "copied",
+    "at_seconds": 35.73,
+    "audio_start_seconds": 35.03,
+    "audio_end_seconds": 40.68,
+    "pre_interview": false
+   },
+   {
+    "index": 5,
+    "item_id": "item_EluvGGy1XjYAqUCCB3hrb",
+    "speaker": "candidate",
+    "text": "Two years ago I set the strategy to move payouts to multi-acquirer routing, because single processor outages were costing us merchants. I made the case to finance with six months of failure data.",
+    "corrections": [
+     {
+      "from_text": "said the strategy",
+      "to_text": "set the strategy"
+     },
+     {
+      "from_text": "multi acquirer routing",
+      "to_text": "multi-acquirer routing"
+     }
+    ],
+    "uncertain": [],
+    "guard": "ok",
+    "at_seconds": 57.55,
+    "audio_start_seconds": 42.51,
+    "audio_end_seconds": 54.57,
+    "pre_interview": false
+   },
+   {
+    "index": 6,
+    "item_id": "item_EluvUrz5iInAI4lAk87JY",
+    "speaker": "interviewer",
+    "text": "What did you believe about the market that others on your team did not?",
+    "corrections": [],
+    "uncertain": [],
+    "guard": "copied",
+    "at_seconds": 58.4,
+    "audio_start_seconds": 58.13,
+    "audio_end_seconds": 62.18,
+    "pre_interview": false
+   }
+  ],
+  "usd": 0.001498,
+  "guard_failures": 0,
+  "candidate_turns": 1
+ }
+}

@@ -41,7 +41,7 @@ database, feedback scoring, deployment, capacity cap.
 
 | Job | `pipeline` engine (main) | `realtime` engine (this branch) |
 | --- | --- | --- |
-| Deciding the candidate has finished | Silero VAD + smart-turn v3, ours (`turn_taking.py`) | OpenAI `semantic_vad`, eagerness `low` |
+| Deciding the candidate has finished | Silero VAD + smart-turn v3, ours (`turn_taking.py`) | OpenAI `semantic_vad`, eagerness `medium` (was `low`; changed 2026-11-20, see `bot/services/realtime.py`) |
 | Turning speech into words | Deepgram Nova-3 | Inside the model; the transcript comes from OpenAI's `gpt-realtime-whisper` |
 | Deciding what to say | `gpt-4.1-mini`, context rebuilt by the brain every turn | `gpt-realtime-2.1`, whole interview plan in one opening prompt |
 | Voice | ElevenLabs (our voice ID) | OpenAI built-in voice `cedar` |
@@ -90,7 +90,7 @@ Settings, all optional, defaults shown:
 | `INTERVIEW_ENGINE` | `pipeline` | `realtime` switches the engine |
 | `REALTIME_MODEL` | `gpt-realtime-2.1` | |
 | `REALTIME_VOICE` | `cedar` | Fixed for the session after the first reply |
-| `REALTIME_EAGERNESS` | `low` | How quickly it decides the candidate has finished. `low` waits longest |
+| `REALTIME_EAGERNESS` | `medium` | How quickly it decides the candidate has finished. `low` waits longest (up to about 9 s measured) |
 | `REALTIME_REASONING_EFFORT` | `minimal` | Lowest accepted. More thinking is slower first audio |
 | `REALTIME_NOISE_REDUCTION` | `far_field` | For laptop microphones |
 
@@ -199,7 +199,7 @@ verification, the capacity cap. What changes is only the box in the middle.
 
 | Component | Job | Notes |
 | --- | --- | --- |
-| **Realtime model** | Hears the candidate, decides what to say, speaks it | `gpt-realtime-2.1`, `semantic_vad` at `eagerness: low` (lets the speaker take their time), reasoning effort at its lowest setting |
+| **Realtime model** | Hears the candidate, decides what to say, speaks it | `gpt-realtime-2.1`, `semantic_vad` at `eagerness: medium` (lets the speaker take their time), reasoning effort at its lowest setting |
 | **Opening prompt** | Everything the model needs for the whole interview | Candidate summary, competencies with time budgets, claims to verify, vocabulary register, red flags, the voice rules already measured on `main` |
 | **Transcriber** | The hiring record | Deepgram on the same audio. Independent of the model doing the talking, which is what makes it a fair record |
 | **Supervisor** | Steers between turns | The existing `bot/brain/` and judge, driven by the transcript instead of sitting in front of the LLM |

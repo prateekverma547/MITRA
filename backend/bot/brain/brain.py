@@ -286,6 +286,13 @@ class InterviewBrain:
         #: Nothing ends on a single detection: a false positive would end
         #: somebody's interview, and that cannot be undone.
         self._stop_offered = False
+        #: Decision 11: set when an offer has just been made and code must speak
+        #: CONFIRMATION_QUESTION now. Consumed once (take_confirmation_due).
+        self._confirmation_due = False
+        #: "declined" or "other" for the one candidate turn that answered the
+        #: confirmation without a yes; None otherwise. Lets a tool call made on
+        #: that same turn be read correctly instead of asking a second time.
+        self._offer_just_answered: str | None = None
         self._withdrew = False
         #: How many times the interviewer has spoken in the closing.
         self._closing_bot_turns = 0
@@ -493,22 +500,26 @@ class InterviewBrain:
             # closing check below: the goodbye was said over and over and the
             # interview never registered as finished.
             intent = StopIntent.NONE if self._withdrew else classify_stop(candidate_text)
+            # Only meaningful for the turn that answers the confirmation; the
+            # model's tool call on this same turn reads it (candidate_asked_to_stop).
+            self._offer_just_answered = None
 
             if self._stop_offered:
+                # Decision 11: any yes, or a second request (confirms_stopping
+                # counts both), ends the interview.
                 if confirms_stopping(candidate_text):
-                    self._withdrew = True
-                    # Cleared, or the offer block keeps winning and the bot asks
-                    # "would you like to stop?" again instead of saying goodbye.
-                    self._stop_offered = False
-                    self._skip_to_closing("candidate_withdrew")
+                    self._withdraw()
                     return
+                self._stop_offered = False
                 if declines_stopping(candidate_text):
-                    self._stop_offered = False
                     # Carry on as though it had not come up.
+                    self._offer_just_answered = "declined"
                 else:
                     # Neither yes nor no. Take the answer at face value and keep
-                    # going rather than pressing them about leaving.
-                    self._stop_offered = False
+                    # going rather than pressing them about leaving. If the model
+                    # nonetheless calls end_interview on this very turn, it read
+                    # the answer as a yes, and that ends it (no second question).
+                    self._offer_just_answered = "other"
             elif intent is not StopIntent.NONE:
                 # The instant path. Same handling as the model's tool call, so
                 # the two cannot drift into different behaviour.
@@ -689,7 +700,7 @@ class InterviewBrain:
                 return turn.text
         return ""
 
-    def candidate_asked_to_stop(self, *, said: str = "", explicit: bool = True) -> None:
+    def candidate_asked_to_stop(self, *, said: str = "", explicit: bool = True) -> str:
         """The candidate wants to leave. Called by both paths.
 
         One entry point on purpose. The patterns in `withdrawal.py` catch the
@@ -698,20 +709,41 @@ class InterviewBrain:
         going to contain. Sharing this method is what stops the two drifting
         into different behaviour.
 
-        `explicit` decides whether they are taken at their word or asked once.
-        Somebody who said "just end this interview" and then gets asked whether
-        they are sure has been ignored, which is what happened live.
+        Decision 11 (docs/DEV_PLAN.md:85) supersedes the old rule that an
+        explicit request ended the interview at once: every request, soft or
+        explicit, gets exactly one confirmation, spoken by code
+        (`CONFIRMATION_QUESTION`); any yes, or a second request, ends it.
+        `explicit` is kept for the record only.
+
+        Returns what happened: "offered", "withdrew", "declined" (the candidate
+        has just said no to the confirmation on this very turn, so neither end
+        nor ask again) or "already_withdrawn".
         """
         if self._withdrew:
-            return
-        if explicit:
-            self._withdrew = True
-            self._stop_offered = False
-            self._skip_to_closing("candidate_withdrew")
-        else:
-            self._stop_offered = True
+            return "already_withdrawn"
         if said:
             logger.debug(f"candidate asked to stop (explicit={explicit}): {said!r}")
+        if self._stop_offered or self._offer_just_answered == "other":
+            self._withdraw()
+            return "withdrew"
+        if self._offer_just_answered == "declined":
+            return "declined"
+        self._stop_offered = True
+        self._confirmation_due = True
+        return "offered"
+
+    def take_confirmation_due(self) -> bool:
+        """True once, right after an offer: the caller must speak the confirmation."""
+        due, self._confirmation_due = self._confirmation_due, False
+        return due
+
+    def _withdraw(self) -> None:
+        self._withdrew = True
+        # Cleared, or the offer block keeps winning and the bot asks "would you
+        # like to stop?" again instead of saying goodbye.
+        self._stop_offered = False
+        self._confirmation_due = False
+        self._skip_to_closing("candidate_withdrew")
 
     @property
     def withdrew(self) -> bool:

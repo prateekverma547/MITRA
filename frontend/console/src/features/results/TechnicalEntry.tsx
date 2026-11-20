@@ -1,56 +1,105 @@
-// The technical round on the candidate page: HR books it (Track I's booking,
-// stubbed until it lands), cancels it, and sends the finished result to the BU
-// head. After that, everyone reaches the results page from here.
+// The MITRA interview round on the candidate page. HR waits for MITRA's plan, books
+// the round (a real room and the credentials to send), can cancel it before
+// anyone joins, and sends the finished result to the BU head. After that,
+// everyone reaches the results page from here. backend/hiring/technical.py.
 
-import { CalendarPlus, ClipboardList, Send, Undo2, XCircle } from "lucide-react";
+import { CalendarPlus, ClipboardCopy, ClipboardList, MonitorPlay, RotateCcw, Send, Undo2, XCircle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api";
 import type { CandidateStage } from "../../contracts";
+import { useGoBack } from "../../shell/ui/BackButton";
 import { Button, ButtonLink } from "../../shell/ui/Button";
-import { CopyField } from "../../shell/ui/CopyField";
+import { CopyField, copyText } from "../../shell/ui/CopyField";
+import { Spinner } from "../../shell/ui/Spinner";
 import { useToast } from "../../shell/ui/Toast";
+import { ROUND_STATE, RoundSteps } from "./RoundStatus";
 import type { TechnicalView } from "./types";
 import "./results.css";
 
 const TECHNICAL: CandidateStage[] = ["ready_for_technical", "technical_booked", "technical_done"];
 const RESULTS: CandidateStage[] = ["with_bu_head", "on_hold", "shortlisted"];
+const POLL_MS = 5000;
+
+function invitation(view: TechnicalView): string {
+  const b = view.booking!;
+  return [
+    `Hello ${view.candidate.name},`,
+    "",
+    `Your MITRA interview for ${view.job.title} is ready. It runs for about ${b.duration_minutes} minutes with MITRA, our AI interviewer, and it is recorded.`,
+    `Join here: ${b.candidate_join_url}`,
+    `Meeting ID: ${b.meeting_id}`,
+    `Password: ${b.password}`,
+  ].join("\n");
+}
 
 export function TechnicalEntry({ candidateId, stage, isBuHead, onChange }: { candidateId: string; stage: CandidateStage; isBuHead: boolean; onChange: () => void }) {
   const toast = useToast();
   const [view, setView] = useState<TechnicalView | null>(null);
-  const [minutes, setMinutes] = useState<number | null>(null);
   const [mode, setMode] = useState<"cancel" | "send" | null>(null);
   const [text, setText] = useState("");
+  /** The length HR books; the plan's own length until HR picks another. */
+  const [minutes, setMinutes] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const relevant = TECHNICAL.includes(stage);
+  const goBack = useGoBack(view ? `/jobs/${view.job.id}/candidates` : "/home");
 
   const load = useCallback(async () => {
     if (!relevant) return;
     try {
-      const v = await api.get<TechnicalView>(`/candidates/${candidateId}/technical`);
-      setView(v);
-      setMinutes((m) => m ?? v.duration.default);
+      const next = await api.get<TechnicalView>(`/candidates/${candidateId}/technical`);
+      setView(next);
+      // The round moved the candidate on (the report is in, the room expired):
+      // reload the page around it, so the next step, such as sending to the
+      // BU head, is offered at once.
+      if (next.candidate.stage !== stage) onChange();
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [candidateId, relevant]);
+  }, [candidateId, relevant, stage, onChange]);
 
   useEffect(() => {
     load();
   }, [load, stage]);
 
-  async function act(kind: "book" | "cancel" | "send") {
+  // While the plan is being prepared, or the round is running or being scored, check back.
+  const roundState = view?.round?.state;
+  const waiting =
+    view &&
+    (view.plan.status === "generating" ||
+      view.plan.status === "pending" ||
+      view.booking !== null ||
+      (roundState !== undefined && !["done", "did_not_happen", "not_booked"].includes(roundState)));
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = window.setTimeout(load, POLL_MS);
+    return () => window.clearTimeout(timer);
+  }, [view, waiting, load]);
+
+  // The lengths HR can book, with the plan's own length among them.
+  const lengths = view ? [...new Set([...(view.plan.bookable_minutes ?? [20, 30, 40, 50, 60]), view.plan.minutes])].filter((m) => m >= 20 && m <= 60).sort((a, b) => a - b) : [];
+  const bookMinutes = minutes ?? (view && lengths.includes(view.plan.minutes) ? view.plan.minutes : lengths[0] ?? 20);
+
+  async function act(kind: "book" | "cancel" | "send" | "plan") {
     setBusy(true);
     setError(null);
     try {
-      const path = kind === "book" ? "technical" : kind === "cancel" ? "technical/cancel" : "send-to-bu-head";
-      const body = kind === "book" ? { duration_minutes: minutes } : kind === "cancel" ? { reason: text } : { note: text.trim() || undefined };
+      const path = { book: "technical", cancel: "technical/cancel", send: "send-to-bu-head", plan: "technical/plan" }[kind];
+      const body =
+        kind === "cancel"
+          ? { reason: text }
+          : kind === "send"
+            ? { note: text.trim() || undefined }
+            : kind === "book"
+              ? { duration_minutes: bookMinutes }
+              : undefined;
       setView(await api.post<TechnicalView>(`/candidates/${candidateId}/${path}`, body));
-      toast(kind === "book" ? "Technical round booked" : kind === "cancel" ? "Technical round cancelled" : "Sent to the BU head");
+      toast({ book: "MITRA interview round booked", cancel: "MITRA interview round cancelled", send: "Sent to the BU head", plan: "Preparing MITRA's plan again" }[kind]);
       setMode(null);
       setText("");
-      onChange();
+      // Sent: HR's part is done, so return to the list they came from.
+      if (kind === "send") goBack();
+      else if (kind !== "plan") onChange();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -61,14 +110,10 @@ export function TechnicalEntry({ candidateId, stage, isBuHead, onChange }: { can
   if (RESULTS.includes(stage)) {
     const deciding = isBuHead && (stage === "with_bu_head" || stage === "on_hold");
     return (
-      <section className={deciding ? "hr-entry live-border" : "hr-entry"}>
+      <section className="hr-entry">
         <div>
           <h2 className="section-title">{deciding ? "Waiting for your decision" : "Results"}</h2>
-          <p className="muted">
-            {deciding
-              ? "The screening fit, the HR round and the technical round, with everything MITRA found. Shortlist, hold or reject from there."
-              : "The screening fit, the HR round, the technical round and the BU head's decision."}
-          </p>
+          <p className="muted">The screening fit, the HR round and the MITRA interview round, with everything MITRA found.</p>
         </div>
         <ButtonLink variant={deciding ? "primary" : "secondary"} to={`/candidates/${candidateId}/results`} icon={<ClipboardList size={17} />}>
           {deciding ? "Open results and decide" : "Open results"}
@@ -79,61 +124,46 @@ export function TechnicalEntry({ candidateId, stage, isBuHead, onChange }: { can
   if (!relevant || !view) return error ? <p className="error">{error}</p> : null;
 
   const b = view.booking;
+  const plan = view.plan;
   return (
-    <section className={view.can_book || view.can_send ? "hr-entry tech-entry live-border" : "hr-entry tech-entry"}>
-      <div className="tech-entry-row">
-        <div>
-          <h2 className="section-title">Technical round</h2>
-          <p className="muted">
-            {stage === "ready_for_technical" &&
-              (view.can_book ? "MITRA interviews them on the job, their CV and what the HR round raised. Choose how long it runs." : "Ready for the technical round. HR books it.")}
-            {stage === "technical_booked" && `Booked${b?.duration_minutes ? ` for ${b.duration_minutes} minutes` : ""}${b?.booked_by ? ` by ${b.booked_by}` : ""}.`}
-            {stage === "technical_done" &&
-              (view.can_send
-                ? "The technical round is done. Send the result to the BU head, who decides."
-                : "The technical round is done. HR sends the result to the BU head.")}
-          </p>
-        </div>
-        {stage === "technical_done" && (
-          <ButtonLink to={`/candidates/${candidateId}/results`} icon={<ClipboardList size={17} />}>
-            Open results
-          </ButtonLink>
-        )}
-      </div>
-
-      {view.can_book && (
-        <div className="actions">
-          <div className="duration">
-            <label htmlFor="tech-minutes">Length</label>
-            <input
-              id="tech-minutes"
-              type="range"
-              min={view.duration.min}
-              max={view.duration.max}
-              step={5}
-              value={minutes ?? view.duration.default}
-              onChange={(e) => setMinutes(Number(e.target.value))}
-            />
-            <output htmlFor="tech-minutes">{minutes ?? view.duration.default} minutes</output>
-          </div>
-          <Button variant="primary" icon={<CalendarPlus size={17} />} loading={busy} onClick={() => act("book")}>
-            Book the technical round
-          </Button>
+    <section className="hr-entry tech-entry">
+      {stage === "ready_for_technical" && (
+        <div className="tech-plan">
+          {plan.status === "ready" ? (
+            <span className="tech-state ok">MITRA's plan is ready: about {plan.minutes} minutes.</span>
+          ) : plan.status === "failed" ? (
+            <span className="tech-state bad">MITRA could not prepare the plan{plan.error ? `: ${plan.error}` : "."}</span>
+          ) : (
+            <span className="tech-state">
+              <Spinner size={14} /> MITRA is preparing the plan from the job and the CV.
+            </span>
+          )}
         </div>
       )}
 
-      {b && (
-        <>
-          <div className="tech-links">
-            <CopyField label="Candidate's join link" value={b.candidate_link} small />
-            <CopyField label="Live view, for HR and the BU head" value={b.live_view_link} small />
+      {view.round && !["waiting", "consented", "not_booked"].includes(view.round.state) && (
+        <div className="tech-status">
+          <div className="tech-status-head">
+            <span className={`mark round-mark round-${ROUND_STATE[view.round.state].tone}`}>{ROUND_STATE[view.round.state].label}</span>
+            <span className="muted small">{ROUND_STATE[view.round.state].line}</span>
           </div>
-          {b.stub && (
-            <p className="notice notice-attention">
-              These links are placeholders. The interview track is not connected on this build yet, so nobody can join with them.
-            </p>
+          <RoundSteps state={view.round.state} scoringStep={view.round.scoring_step} reportFailed={view.round.report_failed} horizontal />
+        </div>
+      )}
+
+      {b && (!view.round || ["waiting", "consented"].includes(view.round.state)) && (
+        <div className="tech-booking">
+          <span className="mark tone-attention">{ROUND_STATE[view.round?.state ?? "waiting"].label}</span>
+          {b.password && (
+            <div className="credentials">
+              <CopyField label="Meeting ID" value={b.meeting_id} />
+              <CopyField label="Password" value={b.password} />
+              <CopyField label="Join page" value={b.candidate_join_url ?? ""} small />
+            </div>
           )}
-        </>
+          {!b.password && <span className="muted small">Meeting ID {b.meeting_id}. HR sends the candidate the credentials.</span>}
+          <span className="muted small">Follow the round live, with MITRA's plan and the integrity checks, in the live room. Its status and then the report appear here.</span>
+        </div>
       )}
 
       {mode ? (
@@ -145,7 +175,7 @@ export function TechnicalEntry({ candidateId, stage, isBuHead, onChange }: { can
           }}
         >
           <label htmlFor="tech-text">
-            {mode === "cancel" ? "Why is the technical round cancelled? They can be booked again." : "A note for the BU head (optional)"}
+            {mode === "cancel" ? "Why is the MITRA interview round cancelled? They can be booked again." : "A note for the BU head (optional)"}
           </label>
           <textarea id="tech-text" rows={2} value={text} onChange={(e) => setText(e.target.value)} autoFocus />
           <div className="actions">
@@ -164,20 +194,77 @@ export function TechnicalEntry({ candidateId, stage, isBuHead, onChange }: { can
           </div>
         </form>
       ) : (
-        (view.can_cancel || view.can_send) && (
-          <div className="actions">
-            {view.can_send && (
-              <Button variant="primary" icon={<Send size={16} />} onClick={() => setMode("send")}>
-                Send to the BU head
-              </Button>
-            )}
-            {view.can_cancel && (
-              <Button variant="ghost" icon={<XCircle size={16} />} onClick={() => setMode("cancel")}>
-                Cancel the booking
-              </Button>
-            )}
-          </div>
-        )
+        <div className="actions">
+          {(view.can_book || view.can_book_again) && (
+            <label className="book-length">
+              <span>Length</span>
+              <select value={bookMinutes} onChange={(e) => setMinutes(Number(e.target.value))} disabled={busy}>
+                {lengths.map((m) => (
+                  <option key={m} value={m}>
+                    {m} minutes{m === view.plan.minutes ? " (the plan's)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {view.can_book && (
+            <Button variant="primary" icon={<CalendarPlus size={17} />} loading={busy} onClick={() => act("book")}>
+              Book the MITRA interview round
+            </Button>
+          )}
+          {view.can_retry_plan && plan.status === "failed" && (
+            <Button icon={<RotateCcw size={16} />} loading={busy} onClick={() => act("plan")}>
+              Prepare the plan again
+            </Button>
+          )}
+          {b && (
+            <ButtonLink variant="primary" to={`/candidates/${candidateId}/technical-room`} icon={<MonitorPlay size={17} />}>
+              Open the live room
+            </ButtonLink>
+          )}
+          {b?.password && (
+            <Button
+              icon={<ClipboardCopy size={16} />}
+              onClick={async () => {
+                if (await copyText(invitation(view))) toast("Copied a message you can send to the candidate");
+              }}
+            >
+              Copy an invitation
+            </Button>
+          )}
+          {view.can_send && (
+            <Button variant="primary" icon={<Send size={16} />} onClick={() => setMode("send")}>
+              Send to the BU head
+            </Button>
+          )}
+          {view.can_book_again && (
+            <Button icon={<CalendarPlus size={16} />} loading={busy} onClick={() => act("book")}>
+              Book another MITRA round
+            </Button>
+          )}
+          {stage === "technical_done" && (
+            <ButtonLink to={`/candidates/${candidateId}/results`} icon={<ClipboardList size={17} />}>
+              Open results
+            </ButtonLink>
+          )}
+          {view.can_cancel && (
+            <Button variant="ghost" icon={<XCircle size={16} />} onClick={() => setMode("cancel")}>
+              Cancel the booking
+            </Button>
+          )}
+        </div>
+      )}
+      {view.rounds.length > 1 && (
+        <p className="muted small tech-rounds">
+          {view.rounds.length} MITRA rounds so far. Each has its own report:{" "}
+          {view.rounds.map((round, i) => (
+            <span key={round.interview_id}>
+              {i > 0 && ", "}
+              <a href={`#/candidates/${candidateId}/results?round=${round.interview_id}`}>round {round.number}</a>
+            </span>
+          ))}
+          .
+        </p>
       )}
       {error && (
         <p className="error" role="alert">

@@ -53,7 +53,7 @@ async def interview(settings, candidate, *, max_turns=16, ceiling=3):
         brain,
         interviewer=OpenAIInterviewer(api_key=settings.openai_api_key, model=LIVE_MODEL),
         candidate=candidate,
-        judge=OpenAIJudge(api_key=settings.openai_api_key, model=settings.blueprint_model),
+        judge=OpenAIJudge(api_key=settings.openai_api_key, model=settings.legacy_blueprint_model),
         seconds_per_turn=40,
         max_turns=max_turns,
     )
@@ -178,7 +178,7 @@ async def test_a_term_the_candidate_explained_drops_off_the_next_judgement(setti
     from bot.brain.brain import JudgmentRequest, Turn
     from bot.brain.drivers import OpenAIJudge
 
-    judge = OpenAIJudge(api_key=settings.openai_api_key, model=settings.blueprint_model)
+    judge = OpenAIJudge(api_key=settings.openai_api_key, model=settings.legacy_blueprint_model)
     depth = "Able to explain payments architecture in detail, not conceptually."
 
     def turns(*texts):
@@ -221,7 +221,7 @@ async def test_a_term_merely_restated_stays_on_the_list(settings):
     from bot.brain.brain import JudgmentRequest, Turn
     from bot.brain.drivers import OpenAIJudge
 
-    judge = OpenAIJudge(api_key=settings.openai_api_key, model=settings.blueprint_model)
+    judge = OpenAIJudge(api_key=settings.openai_api_key, model=settings.legacy_blueprint_model)
     transcript = [
         Turn(index=0, speaker="interviewer", text="How does that work?",
              section_id="s", at_seconds=0.0),

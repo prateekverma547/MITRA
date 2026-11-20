@@ -13,7 +13,18 @@ Track H owns this file.
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    false,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -112,6 +123,12 @@ class HRRound(Base):
     questions_asked: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     hr_joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: "room": the candidate joins MITRA's voice room with the meeting ID and password.
+    #: "listen": HR calls the candidate on their own phone, on speaker, and MITRA only
+    #: listens through HR's microphone (product owner, 2026-11-20). The candidate never
+    #: sees MITRA's consent screen, so HR confirms they agreed: `phone_consent_at`.
+    mode: Mapped[str] = mapped_column(String(8), default="room", server_default="room")
+    phone_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     #: Where the after-call work stands: not_started (round still open),
@@ -126,3 +143,47 @@ class HRRound(Base):
     #: shared.screening.HRRoundEvaluation, as JSON.
     evaluation: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ModelCall(Base):
+    """One call to a model, for the org admin's trace view and costs.
+
+    What is kept is metadata only: which stage, which model and prompt version,
+    tokens, latency, price and a short preview of the model's own output. The
+    prompt is never stored here, so no CV text, transcript or other personal
+    data is copied into this table (DPDP Act 2023). Ids are plain strings, not
+    foreign keys, so the record of a call survives a candidate's erasure.
+    """
+
+    __tablename__ = "model_calls"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    org_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    #: job_understanding | cv_screening | hr_questions | hr_transcription |
+    #: hr_evaluation | technical_interview | technical_scoring | other
+    stage: Mapped[str] = mapped_column(String(32), index=True)
+    purpose: Mapped[str] = mapped_column(String(128))
+    provider: Mapped[str] = mapped_column(String(32), default="openai", server_default="openai")
+    model: Mapped[str] = mapped_column(String(128), index=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: ok | error | schema_error
+    status: Mapped[str] = mapped_column(String(16), default="ok", server_default="ok", index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    cached_input_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    audio_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price_known: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    job_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    candidate_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    interview_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    #: Safe metadata only: counts and labels, never personal data.
+    summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: The first few hundred characters of the model's own output.
+    output_preview: Mapped[str | None] = mapped_column(Text, nullable=True)

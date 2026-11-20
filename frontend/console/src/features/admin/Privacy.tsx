@@ -307,7 +307,7 @@ function RetentionTab() {
       const r = await api.post<{ erased: number; retention: Retention }>(`/admin/retention/${key}/run`);
       take(r.retention);
       setConfirm(null);
-      toast(`Deleted for ${r.erased} ${r.erased === 1 ? "candidate" : "candidates"}`);
+      toast(`Deleted for ${r.erased} ${r.erased === 1 ? "candidate" : "candidates"}`, "urgent");
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -476,7 +476,7 @@ function ConsentTab() {
                       </Link>
                       <span className="row-sub">{r.job_title}</span>
                     </td>
-                    <td>{r.round === "hr" ? "HR round" : "Technical round"}</td>
+                    <td>{r.round === "hr" ? "HR round" : "MITRA interview round"}</td>
                     <td>{day(r.booked_at)}</td>
                     <td>
                       {r.consent_accepted_at ? (

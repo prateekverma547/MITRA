@@ -104,22 +104,61 @@ def test_the_cut_off_is_a_setting(monkeypatch):
 # ---- HR questions ---------------------------------------------------------------------------
 
 
-async def test_the_question_writer_retries_once_and_then_says_so(monkeypatch):
-    screener = Screener(api_key="sk-test", model="gpt-4.1")
-    answers = iter([{"questions": [{"text": f"Q{i}", "why": "w"} for i in range(9)]},
-                    {"questions": [{"text": f"Q{i}", "why": "w"} for i in range(12)]}])
+async def test_the_hr_questions_are_the_pre_screening_template_in_order(monkeypatch):
+    """Product owner, 2026-11-20: the same ten, in order. Code owns the fixed wording;
+    the model writes the four that come from the CV, and a general question stands in
+    for any it leaves empty."""
+    from screening.fit import HR_TEMPLATE
 
-    async def fake_json(system, user):
-        return next(answers)
+    screener = Screener(api_key="sk-test", model="gpt-4.1")
+    answers = iter([
+        {"hr2": {"employer": "Acme", "since": "2024-05"},
+         "hr6": "Where are you based? You are hybrid now, so are you open to working fully from the office?",
+         "hr7": "Your CV covers NLP and MLOps. Which one do you want your next role to focus on?", "hr8": ""},
+        {},
+    ])
+
+    async def fake_json(system, user, **_):
+        return next(answers), None, 0.0
+
+    async def no_record(**_):
+        return None
 
     monkeypatch.setattr(screener, "_json", fake_json)
+    monkeypatch.setattr("hiring.usage.record", no_record)
     fit = build_fit({"ratings": []}, spec=SPEC, cv_text=CV, candidate_id="c", job_id="j", removed=[], model="m")
-    questions = await screener.hr_questions(candidate_id="c", job_id="j", spec=SPEC, jd_text="", redacted_cv=CV, fit=fit)
-    assert [q.id for q in questions.questions] == [f"hr{i}" for i in range(1, 11)]
+    questions = (await screener.hr_questions(candidate_id="c", job_id="j", spec=SPEC, jd_text="", redacted_cv=CV,
+                                             fit=fit)).questions
+    assert [q.id for q in questions] == [f"hr{i}" for i in range(1, 11)]
+    texts = [q.text for q in questions]
+    assert texts[0] == "Walk me through your profile in two minutes."
+    assert texts[1].startswith("You have been at Acme for about ") and texts[1].endswith(
+        "Why are you looking for a change now?")
+    assert texts[2] == "What is your current CTC, and how is it split between fixed and variable?"
+    assert texts[3] == "What is your expected CTC?"
+    assert texts[4].startswith("What is your notice period?")
+    assert texts[7] == HR_TEMPLATE[7][3]  # nothing in the dates to clarify: the general question
+    assert texts[8] == "Do you have other offers or interviews in progress?"
+    assert texts[9] == "What do you know about our company, and why does this role interest you?"
+    assert all(q.why for q in questions)
 
-    answers = iter([{"questions": []}, {"questions": []}])
-    with pytest.raises(ScreeningError, match="instead of 10"):
-        await screener.hr_questions(candidate_id="c", job_id="j", spec=SPEC, jd_text="", redacted_cv=CV, fit=fit)
+    # The model wrote nothing usable: every CV question falls back, still ten, still in order.
+    fallback = (await screener.hr_questions(candidate_id="c", job_id="j", spec=SPEC, jd_text="", redacted_cv=CV,
+                                            fit=fit)).questions
+    assert [q.text for q in fallback][1] == "Why are you looking for a change now?"
+    assert len(fallback) == 10
+
+
+def test_tenure_is_counted_in_code_not_by_the_model():
+    from datetime import date
+
+    from screening.fit import tenure_words
+
+    today = date(2026, 11, 20)
+    assert tenure_words("2024-05", today) == "about two and a half years"
+    assert tenure_words("2026-05", today) == "about six months"
+    assert tenure_words("2025-11", today) == "about one year"
+    assert tenure_words("not a date", today) is None and tenure_words("2026-12", today) is None
 
 
 # ---- the flow, through the API -------------------------------------------------------------
@@ -278,7 +317,7 @@ async def test_only_hr_adds_candidates_and_bu_heads_see_their_own(org_client):
     listed = org_client.get(f"/api/jobs/{job_id}/candidates").json()
     assert not listed["can_add"] and len(listed["candidates"]) == 1
 
-    sign_in(org_client, "finance.head@mitra.local")
+    sign_in(org_client, "sales.head@mitra.local")
     assert org_client.get(f"/api/jobs/{job_id}/candidates").status_code == 404
 
 

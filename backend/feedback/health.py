@@ -137,7 +137,9 @@ def assess(
     echoes = 0
     previous_bot_text = ""
 
-    for turn in transcript.turns:
+    # Pre-interview audio (task 19: kept in the record, flagged) is not the
+    # interview; it may not even be the candidate.
+    for turn in transcript.interview_turns():
         if turn.speaker == Speaker.INTERVIEWER:
             previous_bot_text = turn.text
             continue
@@ -278,7 +280,7 @@ def assess_questioning(transcript: Transcript) -> QuestioningHealth:
     person.
     """
     by_section: dict[str, list[str]] = {}
-    for turn in transcript.turns:
+    for turn in transcript.interview_turns():
         if turn.speaker != Speaker.INTERVIEWER or not turn.section_id:
             continue
         by_section.setdefault(turn.section_id, []).append(turn.text)

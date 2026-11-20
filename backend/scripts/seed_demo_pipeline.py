@@ -37,15 +37,51 @@ LAST = ["Sharma", "Iyer", "Khan", "Menon", "Reddy", "Gupta", "Nair", "Das", "Bos
         "Pillai", "Chopra", "Rao", "Mehta", "Ali", "Fernandes", "Banerjee", "Verma"]
 
 JOBS = {
-    "AI": ["Applied LLM Engineer", "Computer Vision Engineer"],
+    "AI, ML & Data Science": ["Applied LLM Engineer", "Computer Vision Engineer"],
     "Data Science": ["Senior Data Scientist", "Analytics Engineer"],
     "Software": ["Backend Engineer", "Frontend Engineer"],
-    "Finance": ["Financial Analyst"],
+    "Sales": ["Sales Executive"],
     "Business": ["Business Analyst", "Account Manager"],
 }
 
 COMPETENCIES = [("core", "Core craft", 0.35), ("depth", "Depth in the domain", 0.25),
                 ("delivery", "Shipping and ownership", 0.2), ("comms", "Communication", 0.2)]
+
+#: What each competency means, as a BU head would write it.
+DESCRIPTIONS = {
+    "core": "Does the core work of the role well, and can explain the choices behind it.",
+    "depth": "Knows the domain beyond the basics: its failure modes, trade-offs and current practice.",
+    "delivery": "Takes work from idea to production and owns what happens after it ships.",
+    "comms": "Explains clearly to people who are not specialists, in writing and out loud.",
+}
+
+#: Lines a CV might hold, quoted as evidence for a rating.
+EVIDENCE = {
+    "core": ["Built the retrieval pipeline that serves 40,000 documents a month.",
+             "Designed the evaluation set with the client: 300 documents, two labellers each."],
+    "depth": ["Most misses were retrieval, not generation; rebuilt the chunking to fix it.",
+              "Moved the model to a smaller fine-tuned variant and cut cost by half."],
+    "delivery": ["Owned the rollback plan for the launch and the on-call runbook.",
+                 "Shipped behind a feature flag and watched the error rate for a week."],
+    "comms": ["Ran the weekly review with the client's product manager.",
+              "Wrote the onboarding guide the support team uses."],
+}
+
+SUMMARIES = [
+    "Hands-on builder with production experience; strongest on delivery, lighter on the domain's depth.",
+    "Solid core skills and clear ownership of shipped work; communication evidence is thin in the CV.",
+    "Relevant experience across the role, with specific, measured results in most areas.",
+    "Early-career profile: adjacent experience, few specifics about what they owned.",
+]
+
+REASONS = {
+    "rejected": ["The CV shows little of the core work the role needs.",
+                 "Strong elsewhere, but the HR round showed a mismatch on location and notice period.",
+                 "Did not meet the bar on the role's most important competency."],
+    "parked": ["Promising, but the notice period is longer than this role can wait.",
+               "Keep for the next opening in the same team."],
+    "on_hold": ["Waiting for the second candidate's result before deciding."],
+}
 
 # Where candidates end up, roughly: most are early, a few reach a decision.
 PATHS = [
@@ -67,7 +103,7 @@ PATHS = [
 SPEC = {
     "schema_version": 1, "role_title": "", "seniority": "Mid-level", "experience_expectation": "3+ years",
     "duration_minutes": 40, "overrun_grace_minutes": 5, "language": "en", "tone": "warm and direct",
-    "competencies": [{"id": c, "name": n, "description": "Example competency.", "weight": w} for c, n, w in COMPETENCIES],
+    "competencies": [{"id": c, "name": n, "description": DESCRIPTIONS[c], "weight": w} for c, n, w in COMPETENCIES],
     "red_flags": [],
 }
 
@@ -80,9 +116,9 @@ def fit_for(rng: random.Random, candidate_id: str, job_id: str, strong: bool) ->
             continue
         value = min(4, max(0, round(rng.gauss(3.0 if strong else 1.8, 0.8))))
         ratings.append(CompetencyRating(competency_id=cid, competency_name=name, weight=weight, rating=value,
-                                        evidence=["An example line from an invented CV."] if value else []))
+                                        evidence=[rng.choice(EVIDENCE[cid])] if value else []))
     return FitAnalysis.from_ratings(candidate_id=candidate_id, job_id=job_id, ratings=ratings,
-                                    summary="Example screening for demo data.").model_dump(mode="json")
+                                    summary=rng.choice(SUMMARIES)).model_dump(mode="json")
 
 
 async def main(count: int, seed: int) -> int:
@@ -95,7 +131,7 @@ async def main(count: int, seed: int) -> int:
     async with db.get_sessionmaker()() as session:
         demo = await seed_demo_org(session, password="mitra-demo-password")
         hr_id = demo.user_ids["hr@mitra.local"]
-        heads = {"AI": demo.user_ids["ai.head@mitra.local"], "Finance": demo.user_ids["finance.head@mitra.local"]}
+        heads = {"AI, ML & Data Science": demo.user_ids["ai.head@mitra.local"], "Sales": demo.user_ids["sales.head@mitra.local"]}
 
         jobs: list[Job] = []
         for bu_name, titles in JOBS.items():
@@ -121,7 +157,7 @@ async def main(count: int, seed: int) -> int:
             name = f"{rng.choice(FIRST)} {rng.choice(LAST)}"
             added = now - timedelta(days=rng.uniform(0, 55), hours=rng.uniform(0, 12))
             cid = new_id("cand")
-            candidate = Candidate(id=cid, job_id=job.id, name=name, cv_text="An invented CV for demo data.",
+            candidate = Candidate(id=cid, job_id=job.id, name=name, cv_text="The CV text, as read from the uploaded file.",
                                   org_id=demo.org_id, stage=path[-1], created_at=added)
             session.add(candidate)
             await session.flush()
@@ -146,7 +182,7 @@ async def main(count: int, seed: int) -> int:
                 session.add(DecisionRecord(
                     org_id=demo.org_id, candidate_id=cid, from_stage=frm, to_stage=to, actor=actor.value,
                     actor_user_id=user, created_at=at,
-                    reason="Example reason." if to in ("rejected", "parked", "on_hold") else None,
+                    reason=rng.choice(REASONS[to]) if to in REASONS else None,
                     model_recommendation=_said(rng, frm, to, fit),
                 ))
             made += 1

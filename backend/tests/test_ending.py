@@ -371,6 +371,9 @@ async def test_the_whole_chain_through_a_real_pipeline():
     brain = InterviewBrain(tiny_blueprint())
     brain.observe(bot_text="Tell me about a project you led.")
     brain.observe(candidate_text="Just end this interview.")
+    # Setup changed for decision 11: the request is confirmed once, then "yes".
+    brain.observe(bot_text="Do you want to end the interview here?")
+    brain.observe(candidate_text="yes")
     assert brain.withdrew is True
     assert brain.is_finished is False, "not until the goodbye is actually said"
 

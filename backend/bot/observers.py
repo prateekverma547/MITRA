@@ -103,6 +103,10 @@ class TurnRecord:
     #: is supposed to describe; measuring ours lets us set it from evidence
     #: instead of using the generic built-in default.
     stt_lag_s: list[float] = field(default_factory=list)
+    #: Realtime only (F-060): the candidate item this wait follows, and Mitra's
+    #: reply item. Persistence turns them into transcript turn indices.
+    user_item_id: str | None = None
+    reply_item_id: str | None = None
 
     @property
     def endpointing_ms(self) -> float | None:
@@ -136,6 +140,8 @@ class TurnRecord:
             "was_interrupted": self.was_interrupted,
             "stt_lag_s": [round(s, 2) for s in self.stt_lag_s],
             "prompt_tokens": self.prompt_tokens,
+            "user_item_id": self.user_item_id,
+            "reply_item_id": self.reply_item_id,
         }
 
 
@@ -144,10 +150,15 @@ def _round(value: float | None, digits: int = 1) -> float | None:
 
 
 class TurnLatencyObserver(_DedupObserver):
-    """Measures per-turn responsiveness and pause tolerance."""
+    """Measures per-turn responsiveness and pause tolerance.
 
-    def __init__(self, **kwargs):
+    `timeline` (realtime only) lets each wait carry the OpenAI item ids of the
+    speech it follows and the reply it measures (F-060), read from memory.
+    """
+
+    def __init__(self, timeline=None, **kwargs):
         super().__init__(**kwargs)
+        self._timeline = timeline
         self._turns: list[TurnRecord] = []
         self._current: TurnRecord | None = None
         self._turn_index = 0
@@ -192,6 +203,8 @@ class TurnLatencyObserver(_DedupObserver):
             self._turn_ended_at = None
             self._turn_index += 1
             self._current = TurnRecord(index=self._turn_index)
+            if self._timeline is not None:
+                self._current.user_item_id = self._timeline.latest_user_item()
             self._pending_silence_start = None
             if self._bot_speaking:
                 self._current.was_interrupted = True
@@ -224,11 +237,15 @@ class TurnLatencyObserver(_DedupObserver):
             self._turn_ended_at = time.time()
             if self._current:
                 self._current.turn_finalized = time.time()
+                if self._timeline is not None:
+                    self._current.user_item_id = self._timeline.latest_user_item()
 
         elif isinstance(frame, BotStartedSpeakingFrame):
             self._bot_speaking = True
             if self._current and self._current.first_audio is None:
                 self._current.first_audio = time.time()
+                if self._timeline is not None:
+                    self._current.reply_item_id = self._timeline.current_assistant_item()
                 self._finish_turn()
 
         elif isinstance(frame, BotStoppedSpeakingFrame):
@@ -413,7 +430,7 @@ class TranscriptObserver(_DedupObserver):
     Postgres; the capture points stay the same.
     """
 
-    def __init__(self, section_id_now=None, **kwargs):
+    def __init__(self, section_id_now=None, timeline=None, **kwargs):
         """`section_id_now` is asked which section is live, at append time.
 
         **A callable rather than the brain itself.** The observer would
@@ -428,6 +445,14 @@ class TranscriptObserver(_DedupObserver):
         """
         super().__init__(**kwargs)
         self._section_id_now = section_id_now
+        #: Realtime only (task 19): the service's RealtimeTimeline. Playback
+        #: start and stop are recorded into it from here, the one place that
+        #: sees BotStarted/BotStoppedSpeaking. None on the pipeline engine.
+        self._timeline = timeline
+        #: Silero's speech edges (wall clock), true start and true end, used at
+        #: save time to refine OpenAI's padded speech windows (F-066).
+        self.silero_starts: list[float] = []
+        self.silero_ends: list[float] = []
         self._turns: list[dict] = []
         self._started_at = time.time()
         self._bot_buffer: list[str] = []
@@ -446,7 +471,16 @@ class TranscriptObserver(_DedupObserver):
         if isinstance(frame, TranscriptionFrame):
             if frame.text.strip():
                 speaker = "candidate" if self._interviewer_has_spoken else "pre_interview_audio"
-                self._append(speaker, frame.text.strip())
+                # OpenAI's item id rides on the frame's `result` (F-064); None
+                # on the pipeline engine.
+                item_id = getattr(getattr(frame, "result", None), "item_id", None)
+                self._append(speaker, frame.text.strip(), item_id=item_id)
+
+        elif isinstance(frame, VADUserStartedSpeakingFrame):
+            self.silero_starts.append(frame.timestamp - frame.start_secs)
+
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            self.silero_ends.append(frame.timestamp - frame.stop_secs)
 
         elif isinstance(frame, TTSTextFrame):
             if getattr(frame, "includes_inter_frame_spaces", False):
@@ -458,7 +492,14 @@ class TranscriptObserver(_DedupObserver):
             elif frame.text.strip():
                 self._bot_buffer.append(" " + frame.text.strip())
 
-        elif isinstance(frame, (BotStoppedSpeakingFrame, LLMFullResponseStartFrame)):
+        elif isinstance(frame, BotStartedSpeakingFrame):
+            if self._timeline is not None:
+                self._timeline.playback_started(time.time())
+
+        if isinstance(frame, BotStoppedSpeakingFrame) and self._timeline is not None:
+            self._timeline.playback_stopped(time.time())
+
+        if isinstance(frame, (BotStoppedSpeakingFrame, LLMFullResponseStartFrame)):
             # A new reply starts a new turn. Without this, a reply cut off by
             # the candidate was glued onto the next one ("I'mGood evening"),
             # because the cut-off words were still waiting for a
@@ -471,7 +512,12 @@ class TranscriptObserver(_DedupObserver):
             self._bot_buffer = []
             self._interviewer_has_spoken = True
 
-    def _append(self, speaker: str, text: str):
+    @property
+    def clock_zero(self) -> float:
+        """Wall time of interview second 0 (every at_seconds is measured from it)."""
+        return self._started_at
+
+    def _append(self, speaker: str, text: str, item_id: str | None = None):
         # **Asked now, not reconstructed later.** The stored transcript is built
         # from these frames rather than from the brain's own turn list, so
         # `section_id` was absent on every persisted turn and a query grouping
@@ -493,6 +539,7 @@ class TranscriptObserver(_DedupObserver):
                 "text": text,
                 "at_seconds": round(time.time() - self._started_at, 2),
                 "section_id": section_id,
+                "item_id": item_id,
             }
         )
 

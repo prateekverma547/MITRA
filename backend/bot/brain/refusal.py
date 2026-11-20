@@ -126,3 +126,36 @@ def is_substantive(text: str) -> bool:
     if normalised in _FILLERS:
         return False
     return len(normalised.split()) >= MIN_SUBSTANTIVE_WORDS
+
+
+#: A decline of THIS question ("I'd rather not answer that"), recorded so the
+#: auditor can label the easier variant that follows (realtime coordinator,
+#: question_declined). Behaviour is unchanged: the prompt's decline rule.
+_DECLINE_PATTERNS = [
+    r"\b(?:i'?d|i would) (?:rather|prefer) not (?:to )?(?:answer|say|talk about|discuss|go into|get into|share)\b",
+    r"\bi(?:'?d| would)? prefer not to\b",
+    r"\bi (?:don'?t|do not) (?:want|wish|feel comfortable) (?:to )?(?:answer|talk about|discuss|go into|get into|share)\b",
+    r"\b(?:i'?m|i am) not (?:comfortable|happy) (?:answering|talking about|discussing|going into|getting into|sharing)\b",
+    r"\bno comment\b",
+]
+# "I'll pass" / "pass on this one" are SKIPS (bot/brain/withdrawal.skipped_this_question,
+# decided in round 4, A-53): in a question-and-answer setting "pass" asks for the next
+# question, and an easier version of something they passed on would press them.
+#: Longer than this is an answer that happens to contain a decline phrase.
+_DECLINE_MAX_WORDS = 15
+
+
+def declined_this_question(text: str) -> bool:
+    """True for a short decline of the current question. Not "I don't know"
+    (an answer), not a skip, not a request to stop (both have their own paths)."""
+    import re as _re
+
+    from bot.brain.withdrawal import skipped_this_question, wants_to_stop
+
+    words = text.split()
+    if not words or len(words) > _DECLINE_MAX_WORDS:
+        return False
+    if skipped_this_question(text) or wants_to_stop(text):
+        return False
+    lowered = text.lower().replace("\u2019", "'")
+    return looks_like_refusal(text) or any(_re.search(p, lowered) for p in _DECLINE_PATTERNS)

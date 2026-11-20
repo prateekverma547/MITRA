@@ -18,7 +18,7 @@ from sqlalchemy import or_, select
 from app.db import Candidate, Job, get_sessionmaker
 from hiring.api import router
 from hiring.models import DecisionRecord, Screening
-from org.auth import current_user, job_scope
+from org.auth import current_user, job_scope, require_role
 from org.models import BusinessUnit, User
 from shared.screening import FitAnalysis
 from shared.stages import CandidateStage as S
@@ -27,7 +27,7 @@ from shared.stages import Role
 GROUPS: list[tuple[str, str, tuple[S, ...]]] = [
     ("screening", "Screening", (S.NEW, S.SCREENED)),
     ("hr", "HR round", (S.READY_FOR_HR, S.HR_BOOKED, S.HR_DONE)),
-    ("technical", "Technical", (S.READY_FOR_TECHNICAL, S.TECHNICAL_BOOKED, S.TECHNICAL_DONE)),
+    ("technical", "MITRA interview", (S.READY_FOR_TECHNICAL, S.TECHNICAL_BOOKED, S.TECHNICAL_DONE)),
     ("bu_head", "With BU head", (S.WITH_BU_HEAD, S.ON_HOLD)),
     ("shortlisted", "Shortlisted", (S.SHORTLISTED,)),
     ("closed", "Closed", (S.REJECTED, S.PARKED, S.WITHDREW)),
@@ -40,7 +40,7 @@ WAITS_ON: dict[str, tuple[Role, str]] = {
     S.READY_FOR_HR.value: (Role.HR, "Book the HR round"),
     S.HR_BOOKED.value: (Role.HR, "Run the HR round"),
     S.HR_DONE.value: (Role.HR, "Decide after the HR round"),
-    S.READY_FOR_TECHNICAL.value: (Role.HR, "Book the technical round"),
+    S.READY_FOR_TECHNICAL.value: (Role.HR, "Book the MITRA interview round"),
     S.TECHNICAL_DONE.value: (Role.HR, "Send to the BU head"),
     S.WITH_BU_HEAD.value: (Role.BU_HEAD, "Make the final decision"),
     S.ON_HOLD.value: (Role.BU_HEAD, "Decide on hold"),
@@ -416,9 +416,15 @@ async def directory(
     sort: str = Query("recent", pattern="^(waiting|recent|score|name)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=5, le=100),
+    by_bu: bool = False,
     user: User = Depends(current_user),
 ) -> dict:
-    """Every candidate this person may see, searchable, filterable and sortable."""
+    """Every candidate this person may see, searchable, filterable and sortable.
+
+    `by_bu` keeps each business unit's candidates together (units by name, the
+    chosen sort within each), so a list grouped by unit stays grouped across
+    pages; `bu_counts` gives each unit's total for its heading.
+    """
     now = datetime.now(UTC)
     role = Role(user.role)
     async with get_sessionmaker()() as session:
@@ -468,12 +474,18 @@ async def directory(
         "name": lambda i: (i["name"] or "").lower(),
     }
     items.sort(key=keys[sort], reverse=sort == "recent")
+    if by_bu:
+        items.sort(key=lambda i: (i["bu_name"] or "~").lower())  # stable: keeps the sort within each unit
+    bu_counts: dict[str, int] = {}
+    for i in items:
+        bu_counts[i["bu_name"] or ""] = bu_counts.get(i["bu_name"] or "", 0) + 1
     total = len(items)
     start = (page - 1) * page_size
     return {
         "total": total, "page": page, "page_size": page_size,
         "items": items[start:start + page_size],
         "facets": facets,
+        "bu_counts": bu_counts,
         "business_units": [{"id": b.id, "name": b.name} for b in bus],
         "groups": [{"key": k, "label": label} for k, label, _ in GROUPS],
     }
@@ -511,3 +523,291 @@ async def search(q: str = "", user: User = Depends(current_user)) -> dict:
         "jobs": [{"id": j.id, "title": j.title, "bu_name": j.business_unit, "request_status": j.request_status} for j in jobs],
         "business_units": [{"id": b.id, "name": b.name} for b in bus],
     }
+
+
+# ---- the organisation's own insights -------------------------------------------------------------
+#
+# What an org admin should look at, said as sentences with the number and the
+# comparison that makes it mean something. Every sentence is computed here from
+# stages, decisions, screenings and jobs; no model writes them. A rate or a
+# median is only ever stated over enough cases (`MIN_N`), so a unit with two
+# candidates never reads as "twice as slow".
+
+#: Fewest cases behind any rate or median an insight states.
+MIN_N = 5
+#: A unit's step is called slow at this multiple of the organisation's median...
+SLOW_RATIO = 1.5
+#: ...and only when that is also at least this many days more.
+SLOW_MIN_EXTRA_DAYS = 2.0
+#: How long a person may keep someone waiting before it is worth saying.
+LONG_WAIT_DAYS = 7
+#: A screening pass rate this many points from the organisation's is an outlier.
+PASS_RATE_GAP = 20.0
+#: An open job with no shortlist after this long, and at least MIN_N candidates.
+STALE_JOB_DAYS = 45
+#: Disagreement with MITRA worth raising: at or above this rate, or moved by this many points.
+DIFFER_RATE = 15.0
+DIFFER_SHIFT = 5.0
+
+STEP_NAMES = {"screening": "screening", "hr": "HR rounds", "technical": "MITRA interview rounds", "bu_head": "decisions with the BU head"}
+BU_DECIDES = {S.SHORTLISTED.value, S.REJECTED.value, S.ON_HOLD.value}
+WAITS_ON_PEOPLE = set(WAITS_ON)  # stages where a person, not MITRA, has to act
+
+
+def _pct(n: int, d: int) -> float | None:
+    return round(100.0 * n / d, 1) if d else None
+
+
+def _change(now_value: float | None, before: float | None) -> float | None:
+    """Relative change in percent, or None when there is nothing to compare with."""
+    if now_value is None or before in (None, 0):
+        return None
+    return round(100.0 * (now_value - before) / before, 1)
+
+
+def _first_bu_decision(history: list[DecisionRecord]) -> DecisionRecord | None:
+    decided = [d for d in history if d.actor == "bu_head" and d.to_stage in BU_DECIDES]
+    return min(decided, key=lambda d: (_utc(d.created_at) or datetime.max.replace(tzinfo=UTC), d.id or 0)) if decided else None
+
+
+def _waiting_days(candidate: Candidate, history: list[DecisionRecord], now: datetime) -> int:
+    times = [_utc(d.created_at) for d in history if d.created_at] or [_utc(candidate.created_at) or now]
+    return max(0, (now - max(times)).days)
+
+
+def org_insights(rows, jobs, bus, decisions, *, now: datetime, days: int) -> dict:
+    """The org admin's insights, KPIs and unit table, from data already in scope."""
+    from hiring.transparency import DIFFERED, FOLLOWED, outcome
+
+    window = timedelta(days=days) if days else None
+    start = now - window if window else None
+    prev_start = now - 2 * window if window else None
+
+    def in_now(at: datetime | None) -> bool:
+        at = _utc(at)
+        return at is not None and (start is None or at >= start)
+
+    def in_prev(at: datetime | None) -> bool:
+        at = _utc(at)
+        return window is not None and at is not None and prev_start <= at < start
+
+    bu_names = {b.id: b.name for b in bus}
+    history: dict[str, list[DecisionRecord]] = defaultdict(list)
+    for d in decisions:
+        history[d.candidate_id].append(d)
+    by_bu: dict[str | None, list] = defaultdict(list)
+    for row in rows:
+        by_bu[row[1].bu_id].append(row)
+
+    # -- KPIs -------------------------------------------------------------------------------
+    def time_to_decision(pick) -> tuple[float | None, int]:
+        values = []
+        for c, _, _ in rows:
+            first = _first_bu_decision(history[c.id])
+            if first and pick(first.created_at) and c.created_at:
+                values.append(((_utc(first.created_at) - _utc(c.created_at)).total_seconds()) / 86400)
+        return (round(_median(values), 1) if len(values) >= 1 else None), len(values)
+
+    def conversion(pick) -> tuple[float | None, int]:
+        cohort = [c for c, _, s in rows if pick(c.created_at) and _fit(s) is not None]
+        shortlisted = sum(1 for c in cohort if c.stage == S.SHORTLISTED.value
+                          or any(d.to_stage == S.SHORTLISTED.value for d in history[c.id]))
+        return _pct(shortlisted, len(cohort)), len(cohort)
+
+    def agreement(pick) -> tuple[float | None, int]:
+        counts = Counter(
+            outcome(d.actor, d.to_stage, d.model_recommendation) for d in decisions if d.actor != "system" and pick(d.created_at)
+        )
+        n = counts[FOLLOWED] + counts[DIFFERED]
+        return _pct(counts[FOLLOWED], n), n
+
+    ttd_now, ttd_n = time_to_decision(in_now)
+    ttd_prev, ttd_prev_n = time_to_decision(in_prev)
+    conv_now, conv_n = conversion(in_now)
+    conv_prev, conv_prev_n = conversion(in_prev)
+    agree_now, agree_n = agreement(in_now)
+    agree_prev, agree_prev_n = agreement(in_prev)
+
+    waiting = []  # (candidate, job, days waiting)
+    for c, j, s in rows:
+        if c.stage in WAITS_ON_PEOPLE or (c.stage == S.NEW.value and (s is None or s.status in ("waiting", "failed"))):
+            waiting.append((c, j, _waiting_days(c, history[c.id], now)))
+    long_waits = [w for w in waiting if w[2] > LONG_WAIT_DAYS]
+
+    def kpi(value, n, before, before_n, *, unit, better):
+        comparable = value is not None and before is not None and n >= MIN_N and before_n >= MIN_N
+        return {
+            "value": value if n >= MIN_N else None, "n": n, "unit": unit,
+            "previous": before if comparable else None,
+            "change_percent": _change(value, before) if comparable else None, "better": better,
+        }
+
+    kpis = {
+        "time_to_decision": kpi(ttd_now, ttd_n, ttd_prev, ttd_prev_n, unit="days", better="lower"),
+        "screen_to_shortlist": kpi(conv_now, conv_n, conv_prev, conv_prev_n, unit="percent", better="higher"),
+        "waiting_on_people": {
+            "value": len(waiting), "n": len(waiting), "unit": "candidates", "better": "lower",
+            "over_week": len(long_waits), "over_week_percent": _pct(len(long_waits), len(waiting)),
+            "previous": None, "change_percent": None,
+        },
+        "agreement": kpi(agree_now, agree_n, agree_prev, agree_prev_n, unit="percent", better="higher"),
+    }
+
+    # -- Units --------------------------------------------------------------------------------
+    org_steps: dict[str, list[float]] = defaultdict(list)
+    unit_steps: dict[str | None, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    for c, j, _ in rows:
+        for step, spent in _spans(c, history[c.id]).items():
+            org_steps[step].append(spent)
+            unit_steps[j.bu_id][step].append(spent)
+
+    units = []
+    for b in bus:
+        members = by_bu.get(b.id, [])
+        screened = [(c, s) for c, _, s in members if _fit(s) is not None and in_now(c.created_at)]
+        passed = sum(1 for _, s in screened if _fit(s).passes_screen)
+        ttd = []
+        for c, _, _ in members:
+            first = _first_bu_decision(history[c.id])
+            if first and in_now(first.created_at) and c.created_at:
+                ttd.append(((_utc(first.created_at) - _utc(c.created_at)).total_seconds()) / 86400)
+        units.append({
+            "bu_id": b.id, "name": b.name,
+            "open_jobs": sum(1 for j in jobs if j.bu_id == b.id and j.request_status == "open"),
+            "in_progress": sum(1 for c, _, _ in members if GROUP_OF.get(c.stage) not in ("closed", "shortlisted")),
+            "median_days_to_decision": round(_median(ttd), 1) if len(ttd) >= 3 else None,
+            "decided": len(ttd),
+            "pass_rate": _pct(passed, len(screened)) if len(screened) >= MIN_N else None,
+            "screened": len(screened),
+            "waiting_over_week": sum(1 for c, j, _ in long_waits if j.bu_id == b.id),
+        })
+
+    # -- Insights -----------------------------------------------------------------------------
+    insights = []
+
+    # 1. A unit whose step takes far longer than the organisation's.
+    for step in ("hr", "technical", "bu_head", "screening"):
+        org = org_steps.get(step, [])
+        if len(org) < MIN_N:
+            continue
+        org_median = _median(org)
+        for b in bus:
+            mine = unit_steps[b.id].get(step, [])
+            if len(mine) < MIN_N or not org_median:
+                continue
+            m = _median(mine)
+            if m >= SLOW_RATIO * org_median and m - org_median >= SLOW_MIN_EXTRA_DAYS:
+                now_there = sum(1 for c, j, _ in rows if j.bu_id == b.id and GROUP_OF.get(c.stage) == step)
+                insights.append({
+                    "kind": "slow_step", "tone": "attention", "score": (m / org_median) * (1 + now_there),
+                    "text": f"{b.name}'s {STEP_NAMES[step]} take {m:.1f} days, {m / org_median:.1f}× the organisation's median of {org_median:.1f}."
+                            + (f" {now_there} {'candidate is' if now_there == 1 else 'candidates are'} there now." if now_there else ""),
+                    "link": {"to": f"/candidates?bu={b.id}&group={step}&sort=waiting", "label": "See who is there"},
+                    "basis": f"{len(mine)} finished in {b.name}; {len(org)} across the organisation.",
+                })
+
+    # 2. People keeping candidates waiting for over a week.
+    bu_waits = [w for w in long_waits if w[0].stage in (S.WITH_BU_HEAD.value, S.ON_HOLD.value)]
+    hr_waits = [w for w in long_waits if w not in bu_waits]
+    if len(bu_waits) >= 2:
+        per = Counter(bu_names.get(j.bu_id, "Unassigned") for _, j, _ in bu_waits).most_common(1)[0]
+        insights.append({
+            "kind": "bu_head_waits", "tone": "attention", "score": 3 * len(bu_waits),
+            "text": f"{len(bu_waits)} candidates have waited over {LONG_WAIT_DAYS} days for a BU head's decision"
+                    + (f" ({per[0]}: {per[1]})." if per[1] < len(bu_waits) else f", all in {per[0]}."),
+            "link": {"to": "/candidates?group=bu_head&sort=waiting", "label": "See them"},
+            "basis": f"The oldest has waited {max(w[2] for w in bu_waits)} days.",
+        })
+    if len(hr_waits) >= MIN_N:
+        insights.append({
+            "kind": "hr_waits", "tone": "attention", "score": 1.5 * len(hr_waits),
+            "text": f"{len(hr_waits)} candidates have waited over {LONG_WAIT_DAYS} days for HR to act; the oldest for {max(w[2] for w in hr_waits)} days.",
+            "link": {"to": "/candidates?sort=waiting", "label": "See the queue"},
+            "basis": f"{len(waiting)} candidates are waiting on a person in all.",
+        })
+
+    # 3. Disagreement with MITRA, and how it moved.
+    if agree_n >= MIN_N and agree_now is not None:
+        differ_now = round(100 - agree_now, 1)
+        differ_prev = round(100 - agree_prev, 1) if agree_prev is not None and agree_prev_n >= MIN_N else None
+        moved = differ_prev is not None and abs(differ_now - differ_prev) >= DIFFER_SHIFT
+        if differ_now >= DIFFER_RATE or moved:
+            trend = f", {'up' if differ_now > differ_prev else 'down'} from {differ_prev:g}%" if moved else ""
+            insights.append({
+                "kind": "disagreement", "tone": "info", "score": differ_now / 5 + (3 if moved else 0),
+                "text": f"People differed from MITRA on {differ_now:g}% of the decisions it could be compared on{trend}.",
+                "link": {"to": "/transparency?result=differed", "label": "Read those decisions"},
+                "basis": f"{agree_n} decisions could be compared with MITRA's recommendation.",
+            })
+
+    # 4. A unit whose screening passes far more or fewer CVs than the rest.
+    all_screened = sum(u["screened"] for u in units)
+    all_passed = sum(1 for c, _, s in rows if _fit(s) is not None and in_now(c.created_at) and _fit(s).passes_screen)
+    if all_screened >= 2 * MIN_N:
+        org_rate = 100.0 * all_passed / all_screened
+        for u in units:
+            if u["pass_rate"] is None:
+                continue
+            gap = u["pass_rate"] - org_rate
+            if abs(gap) >= PASS_RATE_GAP:
+                low = gap < 0
+                insights.append({
+                    "kind": "pass_rate", "tone": "info", "score": abs(gap) / 10,
+                    "text": f"Screening passes {org_rate:.0f}% of CVs; {u['name']} passes {u['pass_rate']:.0f}%."
+                            + (" Check its jobs' descriptions and cut-off." if low else " Check whether its cut-off is too easy."),
+                    "link": {"to": f"/candidates?bu={u['bu_id']}" + ("&flag=below" if low else ""), "label": "See its candidates"},
+                    "basis": f"{u['screened']} screened in {u['name']}; {all_screened} in all.",
+                })
+
+    # 5. The oldest open job with candidates and no shortlist.
+    stale = []
+    for j in jobs:
+        opened = _utc(j.created_at)
+        if j.request_status != "open" or opened is None:
+            continue
+        mine = [c for c, jj, _ in rows if jj.id == j.id]
+        open_days = (now - opened).days
+        if open_days >= STALE_JOB_DAYS and len(mine) >= MIN_N and not any(c.stage == S.SHORTLISTED.value for c in mine):
+            stale.append((open_days, j, len(mine)))
+    if stale:
+        open_days, j, n = max(stale, key=lambda t: t[0])
+        insights.append({
+            "kind": "stale_job", "tone": "info", "score": open_days / 15,
+            "text": f"No shortlist yet for {j.title} after {open_days} days open and {n} candidates."
+                    + (f" {len(stale) - 1} other open {'job is' if len(stale) == 2 else 'jobs are'} in the same position." if len(stale) > 1 else ""),
+            "link": {"to": f"/jobs/{j.id}/candidates", "label": "Open the job"},
+            "basis": f"Open jobs older than {STALE_JOB_DAYS} days with {MIN_N} or more candidates.",
+        })
+
+    insights.sort(key=lambda i: -i["score"])
+    for i in insights:
+        i.pop("score")
+
+    return {
+        "computed_at": now.isoformat(),
+        "days": days,
+        "min_n": MIN_N,
+        "insights": insights[:5],
+        "kpis": kpis,
+        "units": units,
+    }
+
+
+
+@router.get("/org/insights")
+async def org_insights_route(
+    days: int = Query(30, ge=0, le=3650, description="The period; 0 means all time (no comparison)."),
+    user: User = Depends(require_role(Role.ORG_ADMIN)),
+) -> dict:
+    """What an org admin should look at first: insights, KPIs against the previous period, and units."""
+    now = datetime.now(UTC)
+    async with get_sessionmaker()() as session:
+        bus = await _bus(session, user)
+        rows, _ = await _rows(session, user, None)
+        jobs = list((await session.execute(select(Job).where(job_scope(user)))).scalars())
+        ids = [c.id for c, _, _ in rows]
+        decisions = list(
+            (await session.execute(select(DecisionRecord).where(DecisionRecord.candidate_id.in_(ids))))
+            .scalars()
+        ) if ids else []
+    return org_insights(rows, jobs, bus, decisions, now=now, days=days)

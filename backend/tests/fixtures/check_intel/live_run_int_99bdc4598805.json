@@ -1,0 +1,215 @@
+{
+ "_source": "track_i_notes/t19/live_run.json: task 19 live run on the real realtime route, 2026-11-19. The candidate is a scripted macOS voice, not a person. Copied unchanged: transcript turns, linked waits (session_metrics.turns), usage, latency_summary, ended_because, recording offset. Not from the run: transcript.duration_seconds is the harness's elapsed_s (78.4), and session_metrics.engine was added.",
+ "interview_id": "int_99bdc4598805",
+ "status": "completed",
+ "recording_offset_seconds": 6.32,
+ "transcript": {
+  "schema_version": 1,
+  "interview_id": "int_99bdc4598805",
+  "turns": [
+   {
+    "index": 0,
+    "speaker": "interviewer",
+    "text": "Hello. I'm Mitra, an AI interviewer. I'll be speaking with you today. How are you doing?",
+    "at_seconds": 9.24,
+    "section_id": null,
+    "audio_start_seconds": 8.48,
+    "audio_end_seconds": 14.78,
+    "cut": false,
+    "generated_text": null,
+    "item_id": "item_Elg0a30GsNruJpxPFcVrv",
+    "timing_source": "playback",
+    "pre_interview": false
+   },
+   {
+    "index": 1,
+    "speaker": "candidate",
+    "text": "Right now I need the payments product at a mid-size vintage. Mostly I work on how we route transactions across acquirers.",
+    "at_seconds": 34.63,
+    "section_id": null,
+    "audio_start_seconds": 16.16,
+    "audio_end_seconds": 25.39,
+    "cut": false,
+    "generated_text": null,
+    "item_id": "item_Elg0kVk6SCCZYki9g4VA2",
+    "timing_source": "silero",
+    "pre_interview": false
+   },
+   {
+    "index": 2,
+    "speaker": "interviewer",
+    "text": "Tell me about a product strategy you personally shaped there?",
+    "at_seconds": 35.41,
+    "section_id": null,
+    "audio_start_seconds": 35.17,
+    "audio_end_seconds": 39.17,
+    "cut": false,
+    "generated_text": null,
+    "item_id": "item_Elg11LqzNEjH3Phfvqs8U",
+    "timing_source": "playback",
+    "pre_interview": false
+   },
+   {
+    "index": 3,
+    "speaker": "candidate",
+    "text": "Yes. About two years.",
+    "at_seconds": 43.52,
+    "section_id": null,
+    "audio_start_seconds": 40.5,
+    "audio_end_seconds": 42.1,
+    "cut": false,
+    "generated_text": null,
+    "item_id": "item_Elg18eueBvIbdWHLWR9wT",
+    "timing_source": "silero",
+    "pre_interview": false
+   },
+   {
+    "index": 4,
+    "speaker": "interviewer",
+    "text": "What was the bet behind that str",
+    "at_seconds": 44.05,
+    "section_id": null,
+    "audio_start_seconds": 43.86,
+    "audio_end_seconds": 46.08,
+    "cut": true,
+    "generated_text": "What was the bet behind that strategy?",
+    "item_id": "item_Elg1AnY4WsSooku2SoS6R",
+    "timing_source": "playback",
+    "pre_interview": false
+   },
+   {
+    "index": 5,
+    "speaker": "candidate",
+    "text": "Sorry, can I add one thing about the routing work?",
+    "at_seconds": 50.2,
+    "section_id": null,
+    "audio_start_seconds": 45.75,
+    "audio_end_seconds": 48.8,
+    "cut": false,
+    "generated_text": null,
+    "item_id": "item_Elg1DALdJbNKYi2uVqtG3",
+    "timing_source": "silero",
+    "pre_interview": false
+   },
+   {
+    "index": 6,
+    "speaker": "interviewer",
+    "text": "Sure. What would you like to add about the routing work?",
+    "at_seconds": 51.0,
+    "section_id": null,
+    "audio_start_seconds": 50.59,
+    "audio_end_seconds": 53.99,
+    "cut": false,
+    "generated_text": null,
+    "item_id": "item_Elg1HtReUZ3m2pQ1sN1UA",
+    "timing_source": "playback",
+    "pre_interview": false
+   }
+  ],
+  "duration_seconds": 78.4
+ },
+ "session_metrics": {
+  "engine": "realtime",
+  "ended_because": "candidate_dropped",
+  "usage": {
+   "responses": 4,
+   "input_tokens": 13555,
+   "input_audio_tokens": 380,
+   "cached_input_tokens": 9856,
+   "cached_input_audio_tokens": 128,
+   "output_tokens": 582,
+   "output_audio_tokens": 327,
+   "estimated_usd": 0.0528,
+   "minutes": 0.86,
+   "estimated_usd_per_minute": 0.0611
+  },
+  "turns": [
+   {
+    "turn": 1,
+    "ttfa_ms": 9776.3,
+    "endpointing_ms": 8774.6,
+    "generation_ms": 1001.7,
+    "tolerated_pauses_s": [
+     1.66
+    ],
+    "model_probability": null,
+    "was_interrupted": false,
+    "stt_lag_s": [
+     9.23
+    ],
+    "prompt_tokens": 3381,
+    "user_item_id": "item_Elg0kVk6SCCZYki9g4VA2",
+    "reply_item_id": "item_Elg11LqzNEjH3Phfvqs8U",
+    "turn_index": 1,
+    "reply_turn_index": 2
+   },
+   {
+    "turn": 2,
+    "ttfa_ms": 1759.9,
+    "endpointing_ms": 963.6,
+    "generation_ms": 796.3,
+    "tolerated_pauses_s": [
+     0.24
+    ],
+    "model_probability": null,
+    "was_interrupted": false,
+    "stt_lag_s": [
+     1.42
+    ],
+    "prompt_tokens": 3432,
+    "user_item_id": "item_Elg18eueBvIbdWHLWR9wT",
+    "reply_item_id": "item_Elg1AnY4WsSooku2SoS6R",
+    "turn_index": 3,
+    "reply_turn_index": 4
+   },
+   {
+    "turn": 3,
+    "ttfa_ms": 1790.3,
+    "endpointing_ms": 951.5,
+    "generation_ms": 838.8,
+    "tolerated_pauses_s": [
+     0.26
+    ],
+    "model_probability": null,
+    "was_interrupted": true,
+    "stt_lag_s": [
+     1.4
+    ],
+    "prompt_tokens": 3493,
+    "user_item_id": "item_Elg1DALdJbNKYi2uVqtG3",
+    "reply_item_id": "item_Elg1HtReUZ3m2pQ1sN1UA",
+    "turn_index": 5,
+    "reply_turn_index": 6
+   }
+  ],
+  "latency_summary": {
+   "turns_measured": 3,
+   "ttfa_median_ms": 1790.3,
+   "ttfa_p90_ms": 9776.3,
+   "ttfa_max_ms": 9776.3,
+   "ttfa_mean_ms": 4442.2,
+   "ttfa_median_ready_ms": 1775.1,
+   "ttfa_median_waiting_ms": 9776.3,
+   "turns_waiting": 1,
+   "fallback_share": 0.33,
+   "prompt_tokens_median": 3432,
+   "prompt_tokens_max": 3493,
+   "endpointing_median_ms": 963.6,
+   "stt_lag_median_s": 1.42,
+   "stt_lag_p90_s": 9.23,
+   "stt_lag_max_s": 9.23,
+   "stt_samples": 3,
+   "tolerated_pauses_s": [
+    1.66,
+    0.24,
+    0.26
+   ],
+   "longest_tolerated_pause_s": 1.66,
+   "interruptions_by_candidate": 1,
+   "turn_end_probabilities": [],
+   "false_turn_ends": 0,
+   "turns_started": 3,
+   "false_turn_end_rate": 0.0
+  }
+ }
+}

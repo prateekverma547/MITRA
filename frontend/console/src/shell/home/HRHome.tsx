@@ -37,50 +37,50 @@ export function HRHome({ state }: { state: OverviewState }) {
           <StatTile label="Your decisions, eight weeks" value={sum(data.mine.by_week)} trend={data.mine.by_week} trendLabel="Your decisions per week" />
         </div>
 
-        <div className="split-2 split-wide-left">
-          <NeedsQueue data={data} title="Needs you" caption="Longest wait first." empty="Nothing is waiting on you." />
-          <ChartCard
-            title="How long it has waited"
-            caption="By step and by age. Select a step to see who."
-            table={
-              <table>
-                <thead>
-                  <tr>
-                    <th>Step</th>
-                    {data.ageing.buckets.map((b) => (
-                      <th key={b} className="num">
-                        {b}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.ageing.rows.map((r) => (
-                    <tr key={r.action}>
-                      <td>{r.action}</td>
-                      {r.buckets.map((n, i) => (
-                        <td key={i} className="num">
-                          {n}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            }
-          >
-            <AgeingBars rows={data.ageing.rows} buckets={data.ageing.buckets} onPick={() => navigate("/candidates?flag=needs_me&sort=waiting", { viewTransition: true })} />
-          </ChartCard>
-        </div>
+        <div className="split-2">
+        <NeedsQueue data={data} title="Needs you" caption="People waiting on your next step, longest wait first." empty="Nothing is waiting on you." limit={5} />
 
         <JobRows
           jobs={data.jobs.filter((j) => j.status !== "draft")}
           title="Jobs with work for you"
-          caption="Candidates by step. Most waiting first."
+          caption="Each open job's candidates by step. Jobs with the most waiting on you come first."
           showBu={multiBu}
         />
+        </div>
 
-        <MoreInsight id="hr" hint="Screening scores and your week">
+        <MoreInsight id="hr" hint="How long work has waited, screening scores and your week">
+        <ChartCard
+          title="How long it has waited"
+          caption="By step and by age. Select a step to see who."
+          table={
+            <table>
+              <thead>
+                <tr>
+                  <th>Step</th>
+                  {data.ageing.buckets.map((b) => (
+                    <th key={b} className="num">
+                      {b}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data.ageing.rows.map((r) => (
+                  <tr key={r.action}>
+                    <td>{r.action}</td>
+                    {r.buckets.map((n, i) => (
+                      <td key={i} className="num">
+                        {n}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          }
+        >
+          <AgeingBars rows={data.ageing.rows} buckets={data.ageing.buckets} onPick={() => navigate("/candidates?flag=needs_me&sort=waiting", { viewTransition: true })} />
+        </ChartCard>
           <div className="viz-grid">
             <ScoresCard data={data} />
             <WeeklyCard data={data} title="Your week" caption="Candidates added against your decisions." decided={data.mine.by_week} decidedLabel="Your decisions" />

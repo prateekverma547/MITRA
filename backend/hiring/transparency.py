@@ -15,8 +15,7 @@ claim about how a person does their job.
 
 from datetime import UTC, date, datetime, time, timedelta
 
-from fastapi import Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import Depends, HTTPException, Query, Request
 from sqlalchemy import or_, select
 
 from app.db import Candidate, Interview, Job, RecordingStatus, get_sessionmaker
@@ -339,13 +338,15 @@ async def records(
 
 
 @router.get("/transparency/recordings/{interview_id}", include_in_schema=False)
-async def play_recording(interview_id: str, user: User = Depends(ADMIN)):
+async def play_recording(interview_id: str, request: Request, user: User = Depends(ADMIN)):
     """A stored recording, for the org admin, and the opening is itself recorded.
 
     The older `/interviews/{id}/recording/video` is behind the old admin
-    password, which console users do not have.
+    password, which console users do not have. Served by the app-wide
+    `serve_recording`, which also logs each view in `recording_views` (who,
+    when, which bytes) and tells the browser not to cache it.
     """
-    from app.recordings import stored_path
+    from app.recordings import serve_recording, stored_path
 
     async with get_sessionmaker()() as session:
         interview = (
@@ -362,7 +363,8 @@ async def play_recording(interview_id: str, user: User = Depends(ADMIN)):
             raise HTTPException(status_code=404, detail=f"There is no recording file for this interview (it is '{interview.recording_status}').")
         await audit(session, "recording_opened", by=user, subject_type="interview", subject_id=interview_id)
         await session.commit()
-    return FileResponse(path, media_type="video/mp4", filename=f"{interview_id}.mp4")
+    return await serve_recording(interview_id, request, viewer=user.id, route="console",
+                                 filename=f"{interview_id}.mp4")
 
 
 # ---- 3. the AI usage register ----------------------------------------------------------------------

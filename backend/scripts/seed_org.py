@@ -25,18 +25,18 @@ from org.seed import DEMO_PASSWORD, PEOPLE, seed_demo_org  # noqa: E402
 DEFAULT_PASSWORD = DEMO_PASSWORD
 
 
-async def main(password: str) -> int:
+async def main(password: str, examples: bool) -> int:
     if db.is_deployed():
         print("Refusing: this is a deployed instance, and demo accounts have a known password.")
         return 2
     await db.prepare_schema()
     async with db.get_sessionmaker()() as session:
-        demo = await seed_demo_org(session, password=password)
+        demo = await seed_demo_org(session, password=password, examples=examples)
         await session.commit()
     await db.reset_engine()
 
     print(f"Organisation {demo.org_id}, BUs: {', '.join(demo.bu_ids)}")
-    print(f"Jobs: {', '.join(demo.job_ids)}")
+    print(f"Jobs: {', '.join(demo.job_ids) or 'none (upload samples/ to start)'}")
     print("\nSign in at /console with any of these (password for all of them below):")
     for email, name, role, bu in PEOPLE:
         print(f"  {email:28} {role.value:10} {bu or ''}")
@@ -47,5 +47,6 @@ async def main(password: str) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--password", default=DEFAULT_PASSWORD)
+    parser.add_argument("--examples", action="store_true", help="Also add two sample jobs and candidates.")
     args = parser.parse_args()
-    sys.exit(asyncio.run(main(args.password)))
+    sys.exit(asyncio.run(main(args.password, args.examples)))

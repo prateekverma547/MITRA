@@ -82,16 +82,124 @@ def _optional(name: str) -> str:
     return os.environ.get(name) or ""
 
 
-# Model tiering (CLAUDE.md). Three roles, never collapsed into one.
+# Model tiering (CLAUDE.md). Roles are never collapsed into one.
 #
 # Live conversation must never use a reasoning model: it sits on the
 # time-to-first-audio path, where thinking tokens are latency the candidate
-# hears as dead air. Blueprint generation and feedback scoring are both
-# off-path, so they get the reasoning tier — that is where the product's
-# judgement actually lives.
-DEFAULT_LLM_MODEL = "gpt-4.1-mini"  # live conversation
-DEFAULT_BLUEPRINT_MODEL = "gpt-4.1"  # blueprint generation (M2)
-DEFAULT_FEEDBACK_MODEL = "gpt-4.1"  # feedback scoring (M4)
+# hears as dead air. Off-call work (blueprint, scoring, vision) can.
+DEFAULT_LLM_MODEL = "gpt-4.1-mini"  # live conversation (pipeline fallback only)
+
+# Track I's model slots (docs/TRACK_I.md "Models you own", DEV_PLAN.md
+# section 3). Each is read at the moment it is needed, like the switches below,
+# so a test or a comparison run can set it and the next call sees it.
+DEFAULT_TEXT_MODEL = "gpt-6.1-sol"
+DEFAULT_AUDITOR_MODEL = "gpt-4.1-mini"
+DEFAULT_REALTIME_MODEL = "gpt-realtime-2.1"
+DEFAULT_REALTIME_TRANSCRIPTION_MODEL = "gpt-realtime-whisper"
+#: The documented values of audio.input.transcription.delay ("Only supported
+#: with gpt-realtime-whisper in GA Realtime sessions", OpenAI Accept-call
+#: reference). Unset means nothing is sent and OpenAI's default applies.
+TRANSCRIPTION_DELAYS = ("minimal", "low", "medium", "high", "xhigh")
+
+#: What OPENAI_BLUEPRINT_MODEL defaulted to before task 2. Two callers are not
+#: on the helper and pass a fixed temperature, which a reasoning model rejects:
+#: Track H's clarify chat (app/main.py) and the pipeline judge (drivers.py). They
+#: keep exactly the model they resolved to before, until clarify adopts the
+#: helper with its own slot (Track H) and the judge is retired with the brain.
+LEGACY_BLUEPRINT_DEFAULT = "gpt-4.1"
+
+#: Scoring's default, TEMPORARILY not OPENAI_TEXT_MODEL. On 3 of 3 real
+#: transcripts gpt-6.1-sol left every competency unscored (insufficient_signal)
+#: while citing the same verbatim evidence gpt-4.1 scored as 2-3
+#: (track_i_notes/findings.md F-054, F-058). Back to the text model once scoring
+#: is re-checked on gpt-6.1-sol. An explicit OPENAI_FEEDBACK_MODEL still wins.
+DEFAULT_FEEDBACK_MODEL = "gpt-4.1"
+
+
+class InvalidConfig(MissingConfig):
+    """A setting is present but not allowed. Raised at start-up, like MissingConfig."""
+
+
+def _env(name: str) -> str:
+    return (os.environ.get(name) or "").strip()
+
+
+def text_model() -> str:
+    return _env("OPENAI_TEXT_MODEL") or DEFAULT_TEXT_MODEL
+
+
+def blueprint_model() -> str:
+    """Technical interview plan: generate.py and refine.py."""
+    return _env("OPENAI_BLUEPRINT_MODEL") or text_model()
+
+
+def feedback_model() -> str:
+    """Report, Integrity, cleaned transcript, log analysis: feedback/score.py.
+
+    Defaults to gpt-4.1, not the text model, for now: see DEFAULT_FEEDBACK_MODEL.
+    """
+    return _env("OPENAI_FEEDBACK_MODEL") or DEFAULT_FEEDBACK_MODEL
+
+
+def vision_model() -> str:
+    """Screen frames from the recording (phase 3; no caller yet)."""
+    return _env("OPENAI_VISION_MODEL") or text_model()
+
+
+def auditor_model() -> str:
+    """Runs during the call, off the reply path. Never a reasoning model."""
+    from shared.text_models import is_reasoning_model
+
+    model = _env("OPENAI_AUDITOR_MODEL") or DEFAULT_AUDITOR_MODEL
+    if is_reasoning_model(model):
+        raise InvalidConfig(
+            f"OPENAI_AUDITOR_MODEL={model!r} is a reasoning model. The auditor runs "
+            f"during the call and must never be one (docs/TRACK_I.md, Models you own). "
+            f"Use a non-reasoning model such as {DEFAULT_AUDITOR_MODEL!r}."
+        )
+    return model
+
+
+def legacy_blueprint_model() -> str:
+    """The blueprint slot as it resolved before task 2. See LEGACY_BLUEPRINT_DEFAULT."""
+    return _env("OPENAI_BLUEPRINT_MODEL") or LEGACY_BLUEPRINT_DEFAULT
+
+
+def realtime_model() -> str:
+    return _env("REALTIME_MODEL") or DEFAULT_REALTIME_MODEL
+
+
+def realtime_transcription_model() -> str:
+    return _env("REALTIME_TRANSCRIPTION_MODEL") or DEFAULT_REALTIME_TRANSCRIPTION_MODEL
+
+
+def realtime_transcription_delay() -> str | None:
+    """None when unset: send nothing and keep OpenAI's default."""
+    value = _env("REALTIME_TRANSCRIPTION_DELAY").lower()
+    if not value:
+        return None
+    if value not in TRANSCRIPTION_DELAYS:
+        raise InvalidConfig(
+            f"REALTIME_TRANSCRIPTION_DELAY={value!r} is not one of {', '.join(TRANSCRIPTION_DELAYS)}."
+        )
+    return value
+
+
+#: Off-call jobs the shared helper (shared/text_models.py) can resolve.
+_JOBS = {
+    "blueprint": blueprint_model,
+    "feedback": feedback_model,
+    "vision": vision_model,
+    "auditor": auditor_model,
+    "text": text_model,
+}
+
+
+def model_for(job: str) -> str:
+    try:
+        return _JOBS[job]()
+    except KeyError:
+        raise InvalidConfig(f"No model setting for job {job!r}; known: {', '.join(_JOBS)}") from None
 
 
 @dataclass(frozen=True)
@@ -104,8 +212,10 @@ class Settings:
     daily_api_key: str
 
     llm_model: str = DEFAULT_LLM_MODEL
-    blueprint_model: str = DEFAULT_BLUEPRINT_MODEL
+    blueprint_model: str = DEFAULT_TEXT_MODEL
     feedback_model: str = DEFAULT_FEEDBACK_MODEL
+    #: For clarify (Track H) and the pipeline judge only. See LEGACY_BLUEPRINT_DEFAULT.
+    legacy_blueprint_model: str = LEGACY_BLUEPRINT_DEFAULT
 
     @classmethod
     def load(cls) -> "Settings":
@@ -113,14 +223,19 @@ class Settings:
         # with OpenAI's own voice and never calls it, so demanding the keys
         # there only stops people running the default engine.
         tts = _required if interview_engine() == PIPELINE_ENGINE else _optional
+        # Validated at start-up, so a bad value stops the process with a clear
+        # message instead of failing mid-interview.
+        auditor_model()
+        realtime_transcription_delay()
         return cls(
             openai_api_key=_required("OPENAI_API_KEY"),
             elevenlabs_api_key=tts("ELEVENLABS_API_KEY"),
             elevenlabs_voice_id=tts("ELEVENLABS_VOICE_ID"),
             daily_api_key=_required("DAILY_API_KEY"),
             llm_model=os.environ.get("OPENAI_LLM_MODEL") or DEFAULT_LLM_MODEL,
-            blueprint_model=os.environ.get("OPENAI_BLUEPRINT_MODEL") or DEFAULT_BLUEPRINT_MODEL,
-            feedback_model=os.environ.get("OPENAI_FEEDBACK_MODEL") or DEFAULT_FEEDBACK_MODEL,
+            blueprint_model=blueprint_model(),
+            feedback_model=feedback_model(),
+            legacy_blueprint_model=legacy_blueprint_model(),
         )
 
 

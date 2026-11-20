@@ -1,0 +1,37 @@
+{
+ "about": "Task 19 capture: one real gpt-realtime-2.1 session, synthetic voice (macOS say, Rishi), events only, no audio. Times are seconds from the session start.",
+ "assistant_items": [
+  "item_ElfBdPnWkvJFxAMKHVLPa",
+  "item_ElfC4o7oZNpyx5TLAOSfh",
+  "item_ElfCBUDI4S4UuJ1xJCupT",
+  "item_ElfCIvlIRw1irC9C3WXN3"
+ ],
+ "played_ms": {
+  "item_ElfBdPnWkvJFxAMKHVLPa": null,
+  "item_ElfC4o7oZNpyx5TLAOSfh": null,
+  "item_ElfCBUDI4S4UuJ1xJCupT": 1886,
+  "item_ElfCIvlIRw1irC9C3WXN3": null
+ },
+ "audio_bytes": {
+  "item_ElfBdPnWkvJFxAMKHVLPa": 312000,
+  "item_ElfC4o7oZNpyx5TLAOSfh": 122400,
+  "item_ElfCBUDI4S4UuJ1xJCupT": 172800,
+  "item_ElfCIvlIRw1irC9C3WXN3": 170400
+ },
+ "input_unpaused_at": 8.322670332971029,
+ "spoken_truth_s": {
+  "A": [
+   9.325,
+   18.635
+  ],
+  "B": [
+   31.965,
+   33.625
+  ],
+  "C": [
+   37.277,
+   40.407
+  ]
+ },
+ "cut_item": "item_ElfCBUDI4S4UuJ1xJCupT"
+}

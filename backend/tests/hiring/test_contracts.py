@@ -25,10 +25,12 @@ from shared.stages import (
     REASON_REQUIRED,
     TERMINAL,
     Actor,
-    CandidateStage as S,
     Decision,
     allowed_next,
     can_move,
+)
+from shared.stages import (
+    CandidateStage as S,
 )
 
 FIXTURES = Path(__file__).resolve().parents[2] / "shared" / "fixtures"
@@ -159,9 +161,10 @@ def test_question_ids_are_unique():
 
 def test_hr_cannot_reject_after_the_technical_round():
     """Decided 2026-11-18: after the technical round HR can only send the
-    candidate to the BU head, and the BU head decides."""
+    candidate to the BU head, and the BU head decides. Since 2026-11-20 HR may also
+    book another MITRA round (a retake); still never reject."""
     assert not can_move(S.TECHNICAL_DONE, S.REJECTED, Actor.HR)
-    assert allowed_next(S.TECHNICAL_DONE, Actor.HR) == [S.WITH_BU_HEAD]
+    assert allowed_next(S.TECHNICAL_DONE, Actor.HR) == [S.WITH_BU_HEAD, S.TECHNICAL_BOOKED]
     assert can_move(S.WITH_BU_HEAD, S.REJECTED, Actor.BU_HEAD)
 
 

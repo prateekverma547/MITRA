@@ -171,9 +171,11 @@ def test_duration_outside_the_allowed_range_is_rejected():
 
 import json
 
+from blueprint.clarify import (
+    MAX_DURATION_MINUTES,  # 60: what MITRA's plans and bookings allow
+)
 from shared.contracts import (
     DEFAULT_DURATION_MINUTES,
-    MAX_DURATION_MINUTES,
     MIN_DURATION_MINUTES,
 )
 
@@ -264,6 +266,17 @@ async def test_a_duration_over_the_maximum_is_refused_the_same_way():
     assert reply.spec is None
     assert "180 minutes" in reply.reply
     assert str(MAX_DURATION_MINUTES) in reply.reply
+
+
+async def test_a_length_the_contract_allows_but_a_plan_cannot_is_refused():
+    """75 minutes passes the spec contract (90) but MITRA's plan and booking stop
+    at 60 (blueprint/generate.py, live/booking.py), so the chat says so now."""
+    chat = chat_returning(done_payload(duration_minutes=75))
+
+    reply = await chat.next_turn(jd_text="jd", history=[])
+
+    assert reply.spec is None
+    assert "75 minutes" in reply.reply and "60" in reply.reply
 
 
 async def test_a_duration_inside_the_range_reaches_the_spec():

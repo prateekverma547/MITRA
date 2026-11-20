@@ -30,23 +30,24 @@ ORG_NAME = "Demo Organisation"
 #: The well-known password `scripts/seed_org.py` gives demo accounts. Known on
 #: purpose, which is why neither the seed nor the demo sign-in runs deployed.
 DEMO_PASSWORD = "mitra-demo-password"
-BUSINESS_UNITS = ("AI", "Business", "Data Science", "Finance", "Software")
+BUSINESS_UNITS = ("AI, ML & Data Science", "Pre-sales", "Design", "Sales", "Marketing", "Frontend", "Backend")
 
 #: (email, name, role, BU name or None)
 PEOPLE = (
     ("admin@mitra.local", "Org Admin", Role.ORG_ADMIN, None),
     ("hr@mitra.local", "HR Partner", Role.HR, None),
-    ("ai.head@mitra.local", "AI BU Head", Role.BU_HEAD, "AI"),
-    ("finance.head@mitra.local", "Finance BU Head", Role.BU_HEAD, "Finance"),
+    ("ai.head@mitra.local", "AI, ML & Data Science Head", Role.BU_HEAD, "AI, ML & Data Science"),
+    ("sales.head@mitra.local", "Sales BU Head", Role.BU_HEAD, "Sales"),
 )
 
 _DOCUMENTS = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "documents"
 
-_FINANCE_JD = """Financial Analyst
+_SALES_JD = """Sales Executive
 
-You will build and maintain the monthly forecast, explain variances to budget
-owners, and turn messy operational data into numbers leadership can act on.
-2-4 years in FP&A or a similar role. Strong Excel, working SQL.
+You will own the pipeline for mid-market software services in North America:
+qualify inbound leads, run discovery calls with the pre-sales team, write
+proposals and close. 2-4 years in B2B IT services sales; strong written English
+and comfort with a CRM.
 """
 
 
@@ -64,7 +65,9 @@ class DemoOrg:
     candidate_ids: dict[str, str]  # label -> id
 
 
-async def seed_demo_org(session: AsyncSession, *, password: str) -> DemoOrg:
+async def seed_demo_org(session: AsyncSession, *, password: str, examples: bool = True) -> DemoOrg:
+    """The demo organisation, its BUs and four accounts; with `examples`, two
+    sample jobs and candidates as well (the tests rely on them)."""
     org = await get_or_create_org(session, ORG_NAME)
     bus = {name: await get_or_create_bu(session, org, name) for name in BUSINESS_UNITS}
 
@@ -76,6 +79,12 @@ async def seed_demo_org(session: AsyncSession, *, password: str) -> DemoOrg:
         users[email] = existing or await create_user(
             session, org_id=org.id, email=email, name=name, role=role, password=password,
             bu_id=bus[bu_name].id if bu_name else None,
+        )
+
+    if not examples:
+        return DemoOrg(
+            org_id=org.id, bu_ids={name: bu.id for name, bu in bus.items()},
+            user_ids={email: u.id for email, u in users.items()}, job_ids={}, candidate_ids={},
         )
 
     async def job(title: str, bu: str, creator: str, jd_text: str) -> Job:
@@ -94,10 +103,10 @@ async def seed_demo_org(session: AsyncSession, *, password: str) -> DemoOrg:
         return made
 
     ai_job = await job(
-        "AI Engineer", "AI", "ai.head@mitra.local",
+        "AI Engineer", "AI, ML & Data Science", "ai.head@mitra.local",
         _read("JD-C-senior-aiml-engineer.md", "AI Engineer: build LLM and voice systems."),
     )
-    finance_job = await job("Financial Analyst", "Finance", "finance.head@mitra.local", _FINANCE_JD)
+    finance_job = await job("Sales Executive", "Sales", "sales.head@mitra.local", _SALES_JD)
 
     async def candidate(label: str, job: Job, cv_text: str, stage: str) -> Candidate:
         found = (

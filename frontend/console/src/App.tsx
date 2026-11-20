@@ -78,7 +78,12 @@ const router = createHashRouter(
   createRoutesFromElements(
     <Route element={<Frame />}>
       {featureRoutes
-        .filter((r) => r.public)
+        .filter((r) => r.open)
+        .map((r) => (
+          <Route key={r.path} path={r.path} element={r.element} />
+        ))}
+      {featureRoutes
+        .filter((r) => r.public && !r.open)
         .map((r) => (
           <Route key={r.path} path={r.path} element={<PublicOnly>{r.element}</PublicOnly>} />
         ))}
@@ -86,7 +91,7 @@ const router = createHashRouter(
         <Route element={<Shell />}>
           <Route path="/home" element={<Home />} />
           {featureRoutes
-            .filter((r) => !r.public)
+            .filter((r) => !r.public && !r.open)
             .map((r) => (
               <Route key={r.path} path={r.path} element={<RoleGate roles={r.roles}>{r.element}</RoleGate>} />
             ))}

@@ -17,7 +17,6 @@ whose evidence does not survive that check is downgraded to "insufficient
 signal" rather than published on the strength of something invented.
 """
 
-import json
 import re
 from dataclasses import dataclass
 
@@ -38,10 +37,13 @@ from shared.contracts import (
     FeedbackReport,
     JudgmentHealth,
     ObservedRedFlag,
+    ObservedStrength,
+    QuoteMatch,
     RecommendationSignal,
     Speaker,
     Transcript,
 )
+from shared.text_models import TextModelError, pick, request_structured
 
 SYSTEM = """\
 You are writing an interview feedback report for the hiring manager who will
@@ -62,6 +64,13 @@ EVIDENCE IS MANDATORY AND MUST BE VERBATIM.
 - Every score cites at least one quote, copied EXACTLY from a candidate turn.
   Not summarised, not tidied, not corrected. Copy the characters as they are.
 - Give the `turn_index` of the turn you copied it from.
+- Each quote is WHOLE: one complete sentence, or one complete clause of a
+  sentence (from its start to a comma, semicolon or full stop). Never start or
+  end a quote in the middle of a clause. A fragment can leave out a "not" or a
+  "never" and say the opposite of what they meant, and it is then refused.
+- Each quote is at most two sentences and about 40 words. Pick the sentence
+  that shows the evidence; use two or three short quotes rather than one long
+  one. If a single sentence is longer than that, quote one whole clause of it.
 - If you cannot find a real quote for a competency, do NOT invent one and do NOT
   score it. Set `score` to null and `insufficient_signal` to true. That is a
   correct, useful answer — a guessed number is not.
@@ -103,6 +112,15 @@ failing, not the candidate's. Mark it insufficient_signal and list it in
 RED FLAGS.
 Only report a red flag from the spec if you can quote the candidate evidencing
 it. A red flag with no quote does not go in.
+
+STRENGTHS.
+List what the transcript shows the candidate doing well, in
+`strengths_observed`. Same evidence standard as a red flag: each strength names
+the `competency_id` it belongs to and quotes the candidate showing it. A
+strength with no quote does not go in. Describe what they did ("explained why
+they chose X over Y, with the cost of each"), not a trait ("is a strong
+engineer"). Fluency, confidence or a pleasant manner are not strengths here.
+Few or none is a fine answer; do not pad the list to balance the gaps.
 
 DEALBREAKERS THE CANDIDATE PUT TO REST.
 Separately from the above, list any dealbreaker the transcript shows the
@@ -150,6 +168,10 @@ Return JSON exactly in this shape:
   "red_flags_observed": [
     {"description": "...", "evidence": [{"turn_index": 8, "text": "..."}]}
   ],
+  "strengths_observed": [
+    {"competency_id": "must match the spec exactly", "description": "...",
+     "evidence": [{"turn_index": 12, "text": "exact words from that turn"}]}
+  ],
   "dealbreakers_cleared": [
     {"description": "the dealbreaker, copied from the spec",
      "evidence": [{"turn_index": 8, "text": "..."}]}
@@ -173,6 +195,34 @@ class FeedbackError(RuntimeError):
     pass
 
 
+# -- the reply's shape, for Structured Outputs ------------------------------------
+# Exactly the JSON SYSTEM asks for, with fields picked from the contract types.
+# FeedbackReport is not changed: build_report() still assembles it, verifying
+# every quote against the transcript and adding at_seconds and the health blocks.
+
+QuoteRef = pick(EvidenceQuote, "turn_index", "text", model_name="QuoteRef")
+ScoredCompetency = pick(
+    CompetencyScore, "competency_id", "name", "score", "coverage", "insufficient_signal",
+    "rationale", model_name="ScoredCompetency", evidence=(list[QuoteRef], ...),
+)
+FlagRef = pick(ObservedRedFlag, "description", model_name="FlagRef", evidence=(list[QuoteRef], ...))
+StrengthRef = pick(
+    ObservedStrength, "competency_id", "description", model_name="StrengthRef",
+    evidence=(list[QuoteRef], ...),
+)
+DealbreakerCleared = pick(
+    ObservedRedFlag, "description", model_name="DealbreakerCleared", evidence=(list[QuoteRef], ...)
+)
+ScoringResponse = pick(
+    FeedbackReport, "coverage_gaps", "summary", "recommendation",
+    model_name="ScoringResponse",
+    competency_scores=(list[ScoredCompetency], ...),
+    red_flags_observed=(list[FlagRef], ...),
+    strengths_observed=(list[StrengthRef], ...),
+    dealbreakers_cleared=(list[DealbreakerCleared], ...),
+)
+
+
 @dataclass
 class QuoteAudit:
     """What the verification pass did, so it can be logged and tested."""
@@ -181,57 +231,266 @@ class QuoteAudit:
     reindexed: int = 0
     dropped: int = 0
     scores_downgraded: list[str] = None  # type: ignore[assignment]
+    #: The cleaned transcript's declared name fixes, by turn index
+    #: (feedback.clean.declared_name_fixes). Input to verification, not a result.
+    declared_fixes: dict = None  # type: ignore[assignment]
+    #: How many kept quotes matched by each rule (exact, normalised, number_value,
+    #: declared_fix), and which rule each kept quote used, in order.
+    rules: dict = None  # type: ignore[assignment]
+    matched: list = None  # type: ignore[assignment]
+    #: Quotes found in a turn but refused because a negation sits between the
+    #: clause's start and the quote (A-55). They are then dropped as unverified.
+    negation_rejected: list = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.scores_downgraded is None:
             self.scores_downgraded = []
+        if self.declared_fixes is None:
+            self.declared_fixes = {}
+        if self.rules is None:
+            self.rules = {}
+        if self.matched is None:
+            self.matched = []
+        if self.negation_rejected is None:
+            self.negation_rejected = []
 
 
 def _normalise(text: str) -> str:
     """Loose enough to survive punctuation drift, strict enough to catch invention.
 
-    The model tends to tidy a quote — dropping a filler word, fixing punctuation
-    — while keeping the substance. That is a formatting difference, not a
-    fabrication, and rejecting it would throw away real evidence. Comparing on
-    lowercase alphanumerics keeps those and still fails loudly on a sentence the
+    The model tends to tidy a quote, fixing case and punctuation, while keeping
+    the substance. That is a formatting difference, not a fabrication, and
+    rejecting it would throw away real evidence. Comparing on lowercase letters,
+    digits and spaces keeps those and still fails loudly on a sentence the
     candidate never said.
+
+    **A dropped word does not survive.** Verification is a substring test on
+    this form, so "I owned the rollout" is NOT found in "I, uh, owned the
+    rollout." A quote with a filler word (or any word) removed is dropped as
+    unverifiable (P2-02; tests/test_contracts_part2.py
+    test_nothing_approximate_is_ever_kept).
     """
     return re.sub(r"[^a-z0-9 ]+", "", text.lower()).strip()
 
 
+#: The rule that kept a quote (A-52, round 4), stored as the contract's own
+#: QuoteMatch value (C-A7, added by Session C; C-97). Plain members, no fallback:
+#: if a value ever disappears from the contract, this fails at import instead of
+#: silently storing "normalised" for a quote that matched by number value or a
+#: declared fix.
+RULE_EXACT, RULE_NORMALISED, RULE_NUMBER_VALUE, RULE_DECLARED_FIX = (
+    "exact", "normalised", "number_value", "declared_fix")
+_RULE_TO_MATCH = {
+    RULE_EXACT: QuoteMatch.EXACT,
+    RULE_NORMALISED: QuoteMatch.NORMALISED,
+    RULE_NUMBER_VALUE: QuoteMatch.NUMBER_VALUE,
+    RULE_DECLARED_FIX: QuoteMatch.DECLARED_FIX,
+}
+
+
+def _find_all(needle: list[str], hay: list[str]) -> list[int]:
+    n = len(needle)
+    return [i for i in range(len(hay) - n + 1) if n and hay[i:i + n] == needle]
+
+
+def _find_sublist(needle: list[str], hay: list[str]) -> int:
+    found = _find_all(needle, hay)
+    return found[0] if found else -1
+
+
+def _same_negations(a: list[str], b: list[str]) -> bool:
+    """The negation guard: the same negation words, in the same order. One
+    "not", "never", "can't" or "didn't" more or less is a different statement."""
+    from feedback.numbers import NEGATIONS
+
+    return [w for w in a if w in NEGATIONS] == [w for w in b if w in NEGATIONS]
+
+
+# -- the negation look-back (A-55, round 5) ------------------------------------
+#
+# A quote that starts just after a negation reverses what was said: "lead the
+# migration" out of "I did not lead the migration". So every match, by every
+# rule, looks back from its first word to the start of its clause; a negation
+# word in that stretch means the quote does not verify (rejecting a true quote
+# is the safer mistake, decided). The clause starts at:
+#   - the turn's start;
+#   - sentence or clause punctuation followed by a space or the end: . ? ! ; : ,
+#     (followed by a space, so "2.4", "2,400" and "U.S." do not split);
+#   - a spaced dash, or an em or en dash;
+#   - a contrast word: but, however, although, though, whereas. These change
+#     the polarity's scope; "and", "so" and "because" do NOT end it, because
+#     "I didn't lead and own it" and "I'm not so sure we shipped it" carry the
+#     negation forward, and accepting those would reverse the meaning.
+# "not only" is not a negation ("not only did I lead it").
+_CLAUSE_PUNCT = re.compile(r"[.?!;:,](?=\s|$)|\s[-\u2013\u2014]+\s|[\u2013\u2014]")
+_CLAUSE_WORDS = frozenset({"but", "however", "although", "though", "whereas"})
+#: A contraction the recogniser split ("didn' t", "can ’t"): joined first.
+_SPLIT_CONTRACTION = re.compile(r"n\s*['\u2019]\s*t\b|n\s+t\b", re.IGNORECASE)
+
+
+def _join_contractions(text: str) -> str:
+    return _SPLIT_CONTRACTION.sub("nt", text or "")
+
+
+def _marked(text: str, tokenise) -> tuple[list[str], list[bool]]:
+    """The turn's words (by `tokenise`) and, for each, whether it starts a clause
+    segment at punctuation. Concatenated, the words equal tokenise(text) except
+    that no word runs across clause punctuation."""
+    words, starts = [], []
+    for segment in _CLAUSE_PUNCT.split(_join_contractions(text)):
+        for i, w in enumerate(tokenise(segment)):
+            words.append(w)
+            starts.append(i == 0)
+    return words, starts
+
+
+def _negated_before(words: list[str], starts: list[bool], at: int) -> bool:
+    """A negation between the clause's start and words[at]."""
+    from feedback.numbers import NEGATIONS
+
+    if at > 0 and starts[at]:
+        return False
+    j = at - 1
+    while j >= 0:
+        w = words[j]
+        if w in _CLAUSE_WORDS:
+            return False
+        if w in NEGATIONS and not (w == "not" and j + 1 < len(words) and words[j + 1] == "only"):
+            return True
+        if starts[j]:
+            return False
+        j -= 1
+    return False
+
+
+def _apply_fixes(words: list[str], fixes: list[tuple[list[str], list[str]]],
+                 starts: list[bool] | None = None) -> tuple[list[str], list[bool]]:
+    out = list(words)
+    marks = list(starts) if starts is not None else [False] * len(words)
+    for src, dst in fixes:
+        at = _find_sublist(src, out)
+        if src and at >= 0:
+            out[at:at + len(src)] = dst
+            marks[at:at + len(src)] = [marks[at]] + [False] * (len(dst) - 1)
+    return out, marks
+
+
+def _normal_words(text: str) -> list[str]:
+    # Any whitespace separates words: _normalise deletes a line break without a
+    # space, which glued "performance.\nThere" into one word (round 5).
+    return _normalise(re.sub(r"\s+", " ", text)).split()
+
+
+def _match_rule(quote: str, turn_text: str,
+                fixes: list[tuple[list[str], list[str]]]) -> tuple[str | None, bool]:
+    """(rule, negated): which rule finds the quote in this raw turn, in order,
+    and whether a match was found but refused by the negation look-back.
+
+    1. exact: the trimmed quote, character for character;
+    2. normalised: lower case, letters, digits and spaces, as whole words;
+    3. number_value: every number compared by its value (feedback.numbers), all
+       other words unchanged; only for a quote that contains a number;
+    4. declared_fix: as 3, after this turn's own declared name fixes are applied
+       to the raw words (feedback.clean.declared_name_fixes).
+    Every rule: at least one place it matches must have no negation between its
+    clause's start and the quote's first word (_negated_before). Rules 3 and 4
+    also pass the negation guard on the matched words.
+    """
+    from feedback.numbers import value_tokens
+
+    negated = False
+    quote_j = _join_contractions(quote)
+    # The quote is split exactly as the turn is (_marked): an unspaced dash
+    # ("dramatically\u2014by") is two words on both sides, never one on one side.
+    needle = _marked(quote_j, _normal_words)[0]
+    if needle:
+        words, starts = _marked(turn_text, _normal_words)
+        places = _find_all(needle, words)
+        if places:
+            if any(not _negated_before(words, starts, at) for at in places):
+                return (RULE_EXACT if quote in turn_text else RULE_NORMALISED), False
+            negated = True
+    q = _marked(quote_j, value_tokens)[0]
+    # Rules 3 and 4 exist for numbers and declared names only. A quote with no
+    # number gets rule 3 never (otherwise "fine-tuned" would match "fine tuned"
+    # through the number tokeniser's hyphen handling: same words, but not a rule
+    # this task added) and rule 4 only through a declared fix.
+    has_number = any(re.fullmatch(r"\d+(?:\.\d+)?", w) for w in q)
+    if not q:
+        return None, negated
+    raw, starts = _marked(turn_text, value_tokens)
+    if has_number:
+        for at in _find_all(q, raw):
+            if not _same_negations(q, raw[at:at + len(q)]):
+                continue
+            if _negated_before(raw, starts, at):
+                negated = True
+                continue
+            return RULE_NUMBER_VALUE, False
+    if fixes:
+        fixed, fixed_starts = _apply_fixes(raw, fixes, starts)
+        if fixed != raw:
+            for at in _find_all(q, fixed):
+                if not _same_negations(q, fixed[at:at + len(q)]):
+                    continue
+                if _negated_before(fixed, fixed_starts, at):
+                    negated = True
+                    continue
+                return RULE_DECLARED_FIX, False
+    return None, negated
+
+
 def verify_quote(
-    raw_text: str, claimed_index: int, transcript: Transcript
+    raw_text: str, claimed_index: int, transcript: Transcript,
+    declared_fixes: dict | None = None, audit: "QuoteAudit | None" = None,
 ) -> EvidenceQuote | None:
     """Return a quote anchored to a real turn, or None if it was never said.
 
     A quote found at a different index than claimed is repaired rather than
     dropped: the model miscounted, but the candidate did say the words. A quote
     found nowhere is dropped — that is the fabrication case.
+
+    The rules, in order (`_match_rule`): exact, normalised, number value, and a
+    name fix the cleaned transcript declared for THAT turn. Nothing approximate
+    is ever kept: every rule compares whole words, and the two value-preserving
+    rules refuse any difference in a negation word. `declared_fixes` maps a turn
+    index to that turn's fixes; a fix is never used for another turn.
     """
-    needle = _normalise(raw_text)
-    if not needle:
+    if not _normalise(raw_text):
         return None
 
-    candidate_turns = [t for t in transcript.turns if t.speaker == Speaker.CANDIDATE]
+    # Only the interview's candidate turns: pre-interview audio can never be
+    # quoted as the candidate's words.
+    candidate_turns = [t for t in transcript.interview_turns() if t.speaker == Speaker.CANDIDATE]
+    claimed = next((t for t in candidate_turns if t.index == claimed_index), None)
+    others = [t for t in candidate_turns if t is not claimed]
+    fixes_by_turn = declared_fixes or {}
+    refused_in = None
 
-    exact = next((t for t in candidate_turns if t.index == claimed_index), None)
-    if exact is not None and needle in _normalise(exact.text):
+    for turn in ([claimed] if claimed is not None else []) + others:
+        rule, negated = _match_rule(raw_text, turn.text, fixes_by_turn.get(turn.index) or [])
+        if negated and rule is None and refused_in is None:
+            refused_in = turn.index
+        if rule is None:
+            continue
+        quote = raw_text.strip()
+        if audit is not None:
+            audit.rules[rule] = audit.rules.get(rule, 0) + 1
+            audit.matched.append({"rule": rule, "turn_index": turn.index, "text": quote})
         return EvidenceQuote(
-            text=raw_text.strip(),
-            turn_index=exact.index,
-            at_seconds=exact.at_seconds,
+            text=quote,
+            turn_index=turn.index,
+            at_seconds=turn.at_seconds,
             speaker=Speaker.CANDIDATE,
+            match=_RULE_TO_MATCH[rule],
+            # When it was spoken, so a link seeks the recording correctly.
+            audio_start_seconds=turn.audio_start_seconds,
+            audio_end_seconds=turn.audio_end_seconds,
         )
 
-    for turn in candidate_turns:
-        if needle in _normalise(turn.text):
-            return EvidenceQuote(
-                text=raw_text.strip(),
-                turn_index=turn.index,
-                at_seconds=turn.at_seconds,
-                speaker=Speaker.CANDIDATE,
-            )
-
+    if refused_in is not None and audit is not None:
+        # Found, but only just after a negation (A-55): dropped as unverified.
+        audit.negation_rejected.append({"turn_index": refused_in, "text": raw_text.strip()})
     return None
 
 
@@ -336,7 +595,7 @@ def _verify_evidence(
         except (TypeError, ValueError):
             claimed = -1
 
-        quote = verify_quote(text, claimed, transcript)
+        quote = verify_quote(text, claimed, transcript, audit.declared_fixes, audit)
         if quote is None:
             audit.dropped += 1
             logger.warning(
@@ -353,10 +612,27 @@ def _verify_evidence(
 def _render_transcript(transcript: Transcript) -> str:
     """Numbered turns, so the model has an index to cite."""
     lines = []
-    for turn in transcript.turns:
+    # Pre-interview audio is never shown to the scorer (task 19: flagged, kept).
+    for turn in transcript.interview_turns():
         who = "INTERVIEWER" if turn.speaker == Speaker.INTERVIEWER else "CANDIDATE"
-        lines.append(f"[turn {turn.index} | {turn.at_seconds:.0f}s] {who}: {turn.text}")
+        lines.append(f"[turn {turn.index} | {turn.spoken_start:.0f}s] {who}: {turn.text}")
     return "\n".join(lines)
+
+
+def _section_record(o: dict) -> dict:
+    """What was asked, skipped and declined in one stored section outcome.
+
+    C-A5 (round 6): from SectionOutcome's own fields. Outcomes stored before them
+    (round 3 to 5) kept these in the "auditor" block, and are read from there:
+    both are read, nothing is migrated, so a stored record is never rewritten.
+    A field present on the outcome wins, even when empty."""
+    block = o.get("auditor") or {}
+    out = {"area_name": block.get("area_name")}
+    for key, default in (("questions_asked", []), ("skipped_question_ids", []),
+                         ("declined_question_ids", []), ("easier_variants", 0)):
+        out[key] = o[key] if key in o else block.get(key, default)
+    out["has_record"] = bool(block) or any(k in o for k in ("questions_asked", "skipped_question_ids"))
+    return out
 
 
 def _render_sections(outcomes: list[dict]) -> str:
@@ -387,6 +663,17 @@ def _render_sections(outcomes: list[dict]) -> str:
             # before this competency was covered". The label only has to stop
             # contradicting them.
             parts.append(f"SHORTFALL: {o['shortfall_reason']}")
+        audit = _section_record(o)
+        if audit["has_record"]:
+            # The realtime auditor's record (bot/auditor.py): what was asked, and
+            # what the candidate skipped or declined. A skip or decline is not a
+            # thin answer; the scorer must not read it as one.
+            parts.append(f"asked={','.join(audit.get('questions_asked') or []) or 'none'}")
+            if audit.get("skipped_question_ids"):
+                parts.append(f"SKIPPED {','.join(q or '?' for q in audit['skipped_question_ids'])}")
+            if audit.get("declined_question_ids"):
+                parts.append(f"DECLINED {','.join(q or '?' for q in audit['declined_question_ids'])} "
+                             f"(easier variant asked {audit.get('easier_variants', 0)}x)")
         lines.append(" · ".join(str(p) for p in parts))
     return "\n".join(lines)
 
@@ -397,7 +684,9 @@ class FeedbackScorer:
     model: str
 
     def __post_init__(self) -> None:
-        self._client = AsyncOpenAI(api_key=self.api_key)
+        # Retries are the helper's (exactly one), not the SDK's.
+        self._client = AsyncOpenAI(api_key=self.api_key, max_retries=0)
+        self.last_usage = None
 
     async def score(
         self,
@@ -411,10 +700,11 @@ class FeedbackScorer:
         health: ConversationHealth | None = None,
         judgment_health: JudgmentHealth | None = None,
         questioning: QuestioningHealth | None = None,
+        declared_fixes: dict | None = None,
     ) -> FeedbackReport:
         outcomes = section_outcomes or []
 
-        candidate_turns = [t for t in transcript.turns if t.speaker == Speaker.CANDIDATE]
+        candidate_turns = [t for t in transcript.interview_turns() if t.speaker == Speaker.CANDIDATE]
         if not candidate_turns:
             # Nothing was said. Asking a model to score silence invites it to
             # fill the silence in.
@@ -449,18 +739,22 @@ class FeedbackScorer:
         )
 
         try:
-            response = await self._client.chat.completions.create(
+            result = await request_structured(
+                job="feedback",
                 model=self.model,
+                client=self._client,
                 messages=[
                     {"role": "system", "content": SYSTEM},
                     {"role": "user", "content": user},
                 ],
-                response_format={"type": "json_object"},
-                temperature=0.2,
+                response_model=ScoringResponse,
+                temperature=0.2,  # used only by non-reasoning models
             )
-            payload = json.loads(response.choices[0].message.content or "{}")
-        except Exception as exc:  # noqa: BLE001
+        except TextModelError as exc:
+            self.last_usage = exc.record
             raise FeedbackError(f"Feedback model call failed: {exc}") from exc
+        self.last_usage = result.record
+        payload = result.payload
 
         return build_report(
             interview_id=interview_id,
@@ -472,6 +766,8 @@ class FeedbackScorer:
             health=health,
             judgment_health=judgment_health,
             questioning=questioning,
+            section_outcomes=outcomes,
+            declared_fixes=declared_fixes,
         )
 
 
@@ -486,6 +782,8 @@ def build_report(
     health: ConversationHealth | None = None,
     judgment_health: JudgmentHealth | None = None,
     questioning: QuestioningHealth | None = None,
+    section_outcomes: list[dict] | None = None,
+    declared_fixes: dict | None = None,
 ) -> FeedbackReport:
     """Validate and anchor the model's report. Pure — no network, so it is testable.
 
@@ -493,7 +791,7 @@ def build_report(
     transcript, scores that lose their evidence are downgraded, and competencies
     the model forgot are added back as unassessed rather than silently missing.
     """
-    audit = QuoteAudit()
+    audit = QuoteAudit(declared_fixes=declared_fixes or {})
     by_id = {c.id: c for c in spec.competencies}
     scored: dict[str, CompetencyScore] = {}
 
@@ -567,12 +865,52 @@ def build_report(
             ObservedRedFlag(description=str(raw.get("description", "")), evidence=evidence)
         )
 
+    strengths = []
+    for raw in payload.get("strengths_observed") or []:
+        if not isinstance(raw, dict):
+            continue
+        competency_id = str(raw.get("competency_id", ""))
+        if competency_id not in by_id:
+            logger.warning(f"[{interview_id}] strength for unknown competency {competency_id!r}")
+            continue
+        evidence = _verify_evidence(raw.get("evidence"), transcript, audit)
+        if not evidence:
+            # No evidence, no strength: the same rule as a red flag.
+            logger.warning(
+                f"[{interview_id}] dropped an unevidenced strength: "
+                f"{str(raw.get('description'))[:80]!r}"
+            )
+            continue
+        strengths.append(
+            ObservedStrength(
+                competency_id=competency_id,
+                description=str(raw.get("description", "")).strip(),
+                evidence=evidence,
+            )
+        )
+
     dealbreakers = _dealbreaker_findings(payload, spec, red_flags, transcript, audit)
 
     gaps = [str(g) for g in (payload.get("coverage_gaps") or [])]
     for score in scored.values():
         if score.insufficient_signal and score.name not in " ".join(gaps):
             gaps.append(score.name)
+    # Skips and declines from the realtime auditor, in code: always in the report,
+    # whatever the model wrote, and never as a judgement of the candidate's ability.
+    for o in section_outcomes or []:
+        # Not `audit`: that name is the quote-verification record used below.
+        auditor_block = _section_record(o)
+        name = auditor_block.get("area_name") or o.get("section_id")
+        skipped = [q for q in auditor_block.get("skipped_question_ids") or []]
+        declined = [q for q in auditor_block.get("declined_question_ids") or []]
+        # A-63: a None id is a question the auditor could not identify; it is filed
+        # under the area it happened in, and says so.
+        unknown = "a question (not identified; filed under the area it happened in)"
+        if skipped:
+            gaps.append(f"{name}: the candidate skipped {', '.join(q or unknown for q in skipped)}.")
+        if declined:
+            gaps.append(f"{name}: the candidate declined {', '.join(q or unknown for q in declined)}; "
+                        f"an easier variant was asked {auditor_block.get('easier_variants', 0)} time(s).")
 
     ordered = [scored[c.id] for c in spec.competencies]
 
@@ -582,6 +920,7 @@ def build_report(
         role_title=spec.role_title,
         competency_scores=ordered,
         red_flags_observed=red_flags,
+        strengths_observed=strengths,
         dealbreakers=dealbreakers,
         contradictions=[Contradiction.model_validate(c) for c in (contradictions or [])],
         summary=str(payload.get("summary", "")).strip() or "No summary was produced.",
@@ -599,7 +938,8 @@ def build_report(
     logger.info(
         f"[{interview_id}] report built: {audit.kept} quotes verified, "
         f"{audit.reindexed} re-anchored, {audit.dropped} dropped as unverifiable, "
-        f"{len(audit.scores_downgraded)} scores downgraded"
+        f"{len(audit.scores_downgraded)} scores downgraded; matched by rule {audit.rules}; "
+        f"{len(audit.negation_rejected)} refused after a negation"
     )
     return report
 

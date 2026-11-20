@@ -92,9 +92,9 @@
       "target_depth": "At senior level, expects detailed discussion of end-to-end LLM fine-tuning, serving, and productionisation, including tradeoffs and reasoning for choices made, with clear evidence of hands-on leadership.",
       "seed_questions": [
         "Can you walk me through a recent project where you fine-tuned or deployed an LLM in production?",
-        "What led you to replace GPT-4o with Sarvam-M 24B for the health-tech tool call classifier, and how did you approach the fine-tuning process?",
+        "How did you approach fine-tuning Sarvam-M 24B when you replaced GPT-4o for the health-tech tool call classifier?",
         "How did you decide on the training setup, including the use of bf16 LoRA and the choice of SageMaker ml.g7e.2xlarge?",
-        "What tradeoffs did you encounter when quantising Sarvam-M 24B to GPTQ 4-bit, and how did you validate that accuracy remained flat?"
+        "How did you validate that accuracy stayed flat when you quantised Sarvam-M 24B to GPTQ 4-bit?"
       ],
       "time_budget_minutes": 3.0
     },
@@ -106,7 +106,7 @@
         "Can you describe how you evaluated the performance of your LLM or voice agent models in production?",
         "For the Sarvam-M 24B classifier, what metrics did you use to measure decision accuracy and why?",
         "How did you establish that the quantised model's accuracy was statistically flat compared to the bf16 baseline?",
-        "Can you give an example of a time when evaluation results were negative or ambiguous, and how you responded?"
+        "How did you respond when evaluation results came back negative or ambiguous?"
       ],
       "time_budget_minutes": 3.0
     },
@@ -116,9 +116,9 @@
       "target_depth": "Should demonstrate hands-on experience deploying and debugging ML services using containers, cloud, or orchestration tools, and discuss how issues were identified and resolved.",
       "seed_questions": [
         "What does your typical deployment process look like for a production ML service?",
-        "Can you tell me about deploying the voice agents on a shared Ubuntu VM under systemd and any challenges you faced?",
-        "How did you handle debugging the stutter issue in the drive-thru agent, and what steps did you take to isolate the root cause?",
-        "Have you used Docker or other container tools for ML deployment, and if so, can you describe a specific example?"
+        "What was the hardest challenge in deploying the voice agents on a shared Ubuntu VM under systemd?",
+        "How did you isolate the root cause of the stutter in the drive-thru agent?",
+        "Describe a specific ML deployment where you used Docker or another container tool."
       ],
       "time_budget_minutes": 2.5
     },
@@ -129,7 +129,7 @@
       "seed_questions": [
         "Can you describe a time when you had to explain model results or a technical finding to a non-technical client?",
         "How did you communicate the limitations of the language ID prototype, especially the confusion between Hindi and Urdu, to stakeholders?",
-        "When you found that the prong-open detector performed at chance, how did you present this to the client and what recommendations did you make?",
+        "How did you present to the client that the prong-open detector performed at chance?",
         "How do you handle conversations when results do not meet expectations or when there is a failure in production?"
       ],
       "time_budget_minutes": 2.5
@@ -153,8 +153,8 @@
       "seed_questions": [
         "What kinds of real-time audio or voice agent systems have you worked on?",
         "Can you walk me through the audio language identification prototype you built with VoxLingua107 ECAPA and Whisper-small?",
-        "How did you benchmark the language ID system on FLEURS, and what challenges did you encounter with the different languages?",
-        "What did you learn from diagnosing the silence-detection issue, and how did you fix it?"
+        "What was hardest about benchmarking the language ID system on FLEURS across different languages?",
+        "How did you fix the silence-detection issue once you had diagnosed it?"
       ],
       "time_budget_minutes": 2.5
     }

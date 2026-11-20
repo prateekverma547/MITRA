@@ -20,10 +20,16 @@ from pydantic import ValidationError
 from shared.branding import PROSE_STYLE
 from shared.contracts import (
     DEFAULT_DURATION_MINUTES,
-    MAX_DURATION_MINUTES,
+    MAX_INTERVIEW_MINUTES,
     MIN_DURATION_MINUTES,
     EvaluationSpec,
 )
+
+#: The longest interview the chat may agree to. The contract still accepts 90
+#: so older specs load, but MITRA's plans and bookings stop at 60 now (Track I:
+#: blueprint/generate.py and live/booking.py refuse anything longer), so a
+#: longer spec would only fail later, after the BU head has moved on.
+MAX_DURATION_MINUTES = MAX_INTERVIEW_MINUTES
 
 INTERVIEWER_ROLE = "assistant"
 EMPLOYER_ROLE = "employer"
@@ -201,6 +207,10 @@ _LOST_THE_THREAD = (
 )
 
 
+#: Recorded with every call, so the AI calls view says which prompt produced a turn.
+PROMPT_VERSION = "clarify-2026-11-19"
+
+
 @dataclass
 class ClarificationChat:
     """Multi-turn Q&A that fills an EvaluationSpec."""
@@ -238,6 +248,12 @@ class ClarificationChat:
                 }
             )
 
+        from hiring import (
+            usage,  # the org admin's record of model calls; never breaks the call
+        )
+
+        t0 = usage.started()
+        response = None
         try:
             response = await self._client.chat.completions.create(
                 model=self.model,
@@ -247,7 +263,18 @@ class ClarificationChat:
             )
             payload = json.loads(response.choices[0].message.content or "{}")
         except Exception as exc:  # noqa: BLE001
+            await usage.record(stage="job_understanding", purpose="Understanding the job", model=self.model,
+                               started_at=t0, response=response, error=exc, prompt_version=PROMPT_VERSION,
+                               status="schema_error" if response is not None else "error",
+                               summary={"role_title": role_title[:120], "turns_so_far": len(history)})
             raise ClarificationError(f"Clarification model call failed: {exc}") from exc
+        await usage.record(
+            stage="job_understanding", purpose="Understanding the job", model=self.model, started_at=t0,
+            response=response, prompt_version=PROMPT_VERSION,
+            summary={"role_title": role_title[:120], "turns_so_far": len(history), "finished": bool(payload.get("done")),
+                     "assumptions": len(payload.get("inferred") or [])},
+            output_preview=payload.get("reply") if isinstance(payload.get("reply"), str) else None,
+        )
 
         # `str(None)` is the truthy string "None", which sailed straight past an
         # earlier emptiness check and printed "AI : None" to the employer.
@@ -329,7 +356,18 @@ def _build_spec(raw: dict) -> EvaluationSpec:
             competency["weight"] = round(float(competency.get("weight", 0)) / total, 4)
 
     try:
-        return EvaluationSpec.model_validate(raw)
+        spec = EvaluationSpec.model_validate(raw)
+        if spec.duration_minutes > MAX_DURATION_MINUTES:
+            nearest = _clamp(spec.duration_minutes)
+            raise SpecRejected(
+                f"I cannot set this interview to {spec.duration_minutes} minutes. An interview "
+                f"runs between {MIN_DURATION_MINUTES} and {MAX_DURATION_MINUTES} minutes, and "
+                f"there is nothing shorter or longer I can build. Shall I use {nearest} minutes, "
+                f"or would you rather pick another length in that range?"
+            )
+        return spec
+    except SpecRejected:
+        raise
     except ValidationError as exc:
         raise SpecRejected(_explain(exc)) from exc
     except Exception as exc:  # noqa: BLE001

@@ -1,8 +1,9 @@
-"""Analytics and Check Intelligence API. Track I (docs/TRACK_I.md).
+"""Analytics API, registered once through app/main.py's CONSOLE_PACKAGES.
 
-Registered once in app/main.py during phase 0. Empty until Track I's phase 2.
+Track I's summary routes (`/api/analytics/summary/...`) are the whole of it for
+now; when more analytics routes arrive they are included here, not in main.py.
 """
 
-from fastapi import APIRouter
+from analytics.summary.routes import router
 
-router = APIRouter(prefix="/api/analytics", tags=["console: analytics"])
+__all__ = ["router"]

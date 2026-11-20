@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 
 from hiring import hr_evaluation as pipeline
-from hiring.hr_evaluation import HREvaluationError, attribute, build_evaluation, prepare_audio
+from hiring.hr_evaluation import (
+    HREvaluationError,
+    attribute,
+    build_evaluation,
+    prepare_audio,
+)
 from shared.screening import HRRecommendation, HRRoundEvaluation
 from tests.console_support import org_client, sign_in  # noqa: F401
 
@@ -136,6 +141,10 @@ def stubs(monkeypatch):
 
     monkeypatch.setattr(daily, "create_room", room)
     monkeypatch.setattr(daily, "create_meeting_token", token)
+    async def nothing_yet(interview_id):
+        return "waiting"
+
+    monkeypatch.setattr(pipeline, "_collector", lambda: nothing_yet)
     monkeypatch.setattr(pipeline, "_transcriber", lambda: StubTranscriber())
     monkeypatch.setattr(pipeline, "_evaluator", lambda: StubEvaluator())
     return tokens
@@ -169,13 +178,13 @@ async def held_round(client, tmp_path, monkeypatch, *, recorded=True) -> tuple[s
     view = client.get(f"/api/candidates/{cid}/hr-round").json()
     interview_id = view["round"]["interview_id"]
     if recorded:
-        monkeypatch.setattr(recordings, "SESSIONS_DIR", tmp_path)
+        monkeypatch.setenv(recordings.RECORDINGS_DIR_ENV, str(tmp_path / "rec"))
         (tmp_path / "rec").mkdir(exist_ok=True)
         (tmp_path / "rec" / "round.mp4").write_bytes(b"audio")
         async with db.get_sessionmaker()() as session:
             interview = await session.get(Interview, interview_id)
             interview.recording_status = RecordingStatus.STORED
-            interview.recording_path = "rec/round.mp4"
+            interview.recording_path = "round.mp4"
             await session.commit()
     return cid, interview_id
 
@@ -202,12 +211,12 @@ async def test_a_stored_recording_becomes_an_evaluation_and_hr_done(org_client, 
 
     history = org_client.get(f"/api/candidates/{cid}/decisions").json()["decisions"]
     assert history[-1]["actor"] == "system" and history[-1]["to"] == "hr_done"
-    assert "proceed to the technical round" in history[-1]["model_recommendation"]
+    assert "proceed to the MITRA interview round" in history[-1]["model_recommendation"]
 
     moved = org_client.post(f"/api/candidates/{cid}/move", json={"to": "ready_for_technical"})
     assert moved.status_code == 200
     last = org_client.get(f"/api/candidates/{cid}/decisions").json()["decisions"][-1]
-    assert last["actor"] == "hr" and "proceed to the technical round" in last["model_recommendation"]
+    assert last["actor"] == "hr" and "proceed to the MITRA interview round" in last["model_recommendation"]
 
 
 async def test_a_round_without_a_recording_is_completed_on_notes(org_client, tmp_path, monkeypatch):
@@ -243,3 +252,136 @@ async def test_a_failed_step_can_be_retried_from_where_it_stopped(org_client, tm
     assert retried.status_code == 200
     # The background task resumes at evaluation, using the transcript it already has.
     assert org_client.get(f"/api/candidates/{cid}/hr-round").json()["candidate"]["stage"] == "hr_done"
+
+
+async def test_the_pipeline_fetches_a_finished_recording_itself(org_client, tmp_path, monkeypatch):
+    """HR is watching: the round does not wait for the five-minute recording sweep."""
+    from app import db, recordings
+    from app.db import Interview, RecordingStatus
+
+    cid, interview_id = await held_round(org_client, tmp_path, monkeypatch, recorded=False)
+    async with db.get_sessionmaker()() as session:
+        from sqlalchemy import select
+
+        from hiring.models import HRRound
+
+        interview = await session.get(Interview, interview_id)
+        interview.recording_status = RecordingStatus.RECORDING
+        hr = (await session.execute(select(HRRound).where(HRRound.interview_id == interview_id))).scalar_one()
+        hr.eval_status, hr.eval_error = pipeline.WAITING, None
+        await session.commit()
+
+    assert await pipeline.advance(interview_id) == pipeline.WAITING  # Daily has nothing yet
+
+    async def daily_finished(iid):
+        monkeypatch.setenv(recordings.RECORDINGS_DIR_ENV, str(tmp_path / "rec"))
+        (tmp_path / "rec").mkdir(exist_ok=True)
+        (tmp_path / "rec" / "round.mp4").write_bytes(b"audio")
+        async with db.get_sessionmaker()() as session:
+            row = await session.get(Interview, iid)
+            row.recording_status, row.recording_path = RecordingStatus.STORED, "round.mp4"
+            await session.commit()
+        return "stored"
+
+    monkeypatch.setattr(pipeline, "_collector", lambda: daily_finished)
+    assert await pipeline.advance(interview_id) == "ready"
+    assert org_client.get(f"/api/candidates/{cid}/hr-round").json()["candidate"]["stage"] == "hr_done"
+
+
+# ---- live lines, checked against the recording (Deepgram) -----------------------------------------
+
+#: The real choice of transcriber, kept before the autouse `stubs` fixture replaces it.
+REAL_TRANSCRIBER = pipeline._transcriber
+
+LIVE = [
+    {"id": "l1", "speaker": "hr", "text": "Walk me through what you own end to end.", "start": 1.0, "end": 3.0},
+    {"id": "l2", "speaker": "candidate", "text": "Ski, your down, share.", "start": 4.0, "end": 6.0},
+]
+
+
+async def live_round(client, tmp_path, monkeypatch, *, recording: str = "stored") -> tuple[str, str]:
+    """An HR round transcribed live, with Deepgram configured, then ended."""
+    from sqlalchemy import select
+
+    from app import db, recordings
+    from app.db import Candidate, Interview, RecordingStatus
+    from hiring.models import Screening
+
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "test-key")
+    cid = client.demo.candidate_ids["ai"]
+    async with db.get_sessionmaker()() as session:
+        (await session.get(Candidate, cid)).stage = "ready_for_hr"
+        session.add(Screening(candidate_id=cid, status="ready", hr_questions={"questions": QUESTIONS}))
+        await session.commit()
+    sign_in(client, "hr@mitra.local")
+    client.post(f"/api/candidates/{cid}/hr-round")
+    client.post(f"/api/candidates/{cid}/hr-round/join")
+    client.post(f"/api/candidates/{cid}/hr-round/transcript", json={"lines": LIVE})
+    ended = client.post(f"/api/candidates/{cid}/hr-round/end").json()["round"]
+    # Deepgram is configured, so the recording is waited for even though there are live lines.
+    assert ended["eval_status"] == "waiting_recording"
+    interview_id = ended["interview_id"]
+    async with db.get_sessionmaker()() as session:
+        interview = (await session.execute(select(Interview).where(Interview.id == interview_id))).scalar_one()
+        if recording == "stored":
+            monkeypatch.setenv(recordings.RECORDINGS_DIR_ENV, str(tmp_path / "rec"))
+            (tmp_path / "rec").mkdir(exist_ok=True)
+            (tmp_path / "rec" / "round.mp4").write_bytes(b"audio")
+            interview.recording_status, interview.recording_path = RecordingStatus.STORED, "round.mp4"
+        else:
+            interview.recording_status = RecordingStatus.UNAVAILABLE
+        await session.commit()
+    return cid, interview_id
+
+
+async def test_with_deepgram_the_recordings_transcript_replaces_the_live_lines(org_client, tmp_path, monkeypatch):
+    cid, interview_id = await live_round(org_client, tmp_path, monkeypatch)
+    assert await pipeline.advance(interview_id) == "ready"
+    r = org_client.get(f"/api/candidates/{cid}/hr-round").json()["round"]
+    assert r["attribution"]["confidence"] == "clear"
+    assert r["transcript"][1]["text"].startswith("Sure. I own the voice agent platform")
+    # What HR watched during the call is kept beside it.
+    assert [t["text"] for t in r["attribution"]["live_transcript"]] == [line["text"] for line in LIVE]
+
+
+async def test_when_the_recordings_voices_cannot_be_told_apart_the_live_lines_win(org_client, tmp_path, monkeypatch):
+    class OneVoice:
+        async def segments(self, recording):
+            return [seg("A", "Walk me through what you own end to end.", 0), seg("A", "The voice agent platform.", 4)]
+
+    cid, interview_id = await live_round(org_client, tmp_path, monkeypatch)
+    monkeypatch.setattr(pipeline, "_transcriber", lambda: OneVoice())
+    assert await pipeline.advance(interview_id) == "ready"
+    r = org_client.get(f"/api/candidates/{cid}/hr-round").json()["round"]
+    assert [t["text"] for t in r["transcript"]] == [line["text"] for line in LIVE]
+    assert r["attribution"]["method"] == "live" and "could not be told apart" in r["attribution"]["recording_check"]
+
+
+async def test_when_the_recording_cannot_be_transcribed_the_live_lines_are_used(org_client, tmp_path, monkeypatch):
+    class Broken:
+        async def segments(self, recording):
+            raise HREvaluationError("Deepgram answered 503: busy")
+
+    cid, interview_id = await live_round(org_client, tmp_path, monkeypatch)
+    monkeypatch.setattr(pipeline, "_transcriber", lambda: Broken())
+    assert await pipeline.advance(interview_id) == "ready"
+    r = org_client.get(f"/api/candidates/{cid}/hr-round").json()["round"]
+    assert r["attribution"]["method"] == "live" and "503" in r["attribution"]["recording_check"]
+
+
+async def test_when_there_is_no_recording_the_live_lines_are_used(org_client, tmp_path, monkeypatch):
+    cid, interview_id = await live_round(org_client, tmp_path, monkeypatch, recording="unavailable")
+    assert await pipeline.advance(interview_id) == "ready"
+    r = org_client.get(f"/api/candidates/{cid}/hr-round").json()["round"]
+    assert r["attribution"]["method"] == "live" and "no recording" in r["attribution"]["recording_check"]
+    assert org_client.get(f"/api/candidates/{cid}/hr-round").json()["candidate"]["stage"] == "hr_done"
+
+
+def test_deepgram_is_used_only_when_it_is_configured(monkeypatch):
+    monkeypatch.delenv("DEEPGRAM_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    assert not pipeline.prefers_recording() and isinstance(REAL_TRANSCRIBER(), pipeline.Transcriber)
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "k")
+    chosen = REAL_TRANSCRIBER()
+    assert pipeline.prefers_recording() and isinstance(chosen, pipeline.DeepgramTranscriber)
+    assert (chosen.model, chosen.language) == ("nova-3", "multi")

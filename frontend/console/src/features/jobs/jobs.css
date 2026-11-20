@@ -1,0 +1,59 @@
+/* Job requests: the new request form and the request's own page. Track H. */
+
+/* New request: the form beside what happens next. */
+.newjob { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr); gap: 20px; align-items: start; }
+.newjob-form { display: flex; flex-direction: column; gap: 18px; }
+.jd-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.jd-head .segmented button { display: inline-flex; align-items: center; gap: 6px; }
+.jd-text {
+  width: 100%; min-height: 240px; resize: vertical; padding: 12px 14px; border-radius: 10px;
+  border: 1px solid var(--rule); background: var(--surface); color: var(--text); font: inherit; line-height: 1.55;
+}
+.jd-text:focus { outline: none; border-color: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.newjob-steps { background: var(--surface); border: 1px solid var(--rule); border-radius: 16px; padding: 16px 18px; }
+.newjob-steps ol { margin: 12px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 12px; }
+.newjob-steps li::marker { color: var(--signal); font-weight: 650; }
+.ns-title { display: block; font-weight: 600; }
+.ns-text { display: block; font-size: var(--s-12); color: var(--muted); }
+
+/* A request's page: what MITRA understood beside where it stands. */
+.page .understood { max-width: none; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); align-items: start; }
+.job-side { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 20px; }
+.job-side .actions { flex-wrap: wrap; gap: 8px; }
+.job-side .decision-q { flex-basis: 100%; font-size: var(--s-15); }
+.understood .brief { padding: 22px 26px; gap: 18px; }
+.understood .brief-title { font-size: var(--s-22); }
+.understood .brief-facts dd { font-size: var(--s-15); }
+.understood .brief-sub { font-size: var(--s-18); margin-bottom: -6px; }
+.understood .weights { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 28px; }
+.understood .weight-desc { font-size: var(--s-12); }
+
+@media (max-width: 1000px) {
+  .newjob, .page .understood { grid-template-columns: minmax(0, 1fr); }
+  .job-side { position: static; }
+  .understood .weights { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Leaving an edit: a clear way out of the chat, kept beside it. */
+.keep-box { margin-top: 8px; padding: 14px; border-radius: 12px; background: var(--signal-soft); display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.keep-box p { margin: 0; font-size: var(--s-12); color: var(--text); }
+
+/* Deleting a draft request: asked once, beside the status. */
+.job-head-side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.delete-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 8px 10px; border-radius: 12px; background: color-mix(in srgb, var(--error) 8%, var(--surface)); border: 1px solid color-mix(in srgb, var(--error) 25%, var(--rule)); font-size: var(--s-12); color: var(--text); }
+
+/* ---- the job list, grouped by business unit ------------------------------------------------ */
+
+.bu-groups { display: flex; flex-direction: column; gap: 22px; }
+.bu-group { display: flex; flex-direction: column; gap: 10px; }
+.bu-group-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 0 4px; }
+.bu-group-head h2 { font-family: var(--serif); font-weight: 500; font-size: var(--s-22); color: var(--ink); }
+.bu-group-count { font-size: var(--s-12); color: var(--muted); }
+.bu-flag { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: var(--s-12); font-weight: 650; }
+.bu-flag.new { background: var(--prio-green-soft); color: var(--prio-green-ink); }
+.bu-flag.todo { background: var(--prio-amber-soft); color: var(--prio-amber-ink); }
+.bu-group.hot .table-wrap { border-color: color-mix(in srgb, var(--signal) 40%, var(--rule)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--signal) 7%, transparent); }
+.job-cell { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tag-new { padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--prio-green-soft); color: var(--prio-green-ink); box-shadow: 0 0 8px -2px color-mix(in srgb, var(--prio-green) 60%, transparent); }
+.bu-quiet { margin: 0; padding: 12px 16px; border-radius: 12px; border: 1px dashed var(--rule); font-size: var(--s-12); color: var(--muted); }
+.bu-quiet strong { color: var(--text); font-weight: 600; }

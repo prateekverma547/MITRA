@@ -13,8 +13,10 @@ against real conversations.
 """
 
 import pytest
+from pipecat.frames.frames import TTSSpeakFrame
 
 from bot.brain.brain import InterviewBrain
+from bot.brain.withdrawal import CONFIRMATION_QUESTION
 from bot.tools import END_INTERVIEW, TOOLS, register
 from tests.test_brain import tiny_blueprint
 
@@ -27,13 +29,32 @@ class FakeLLM:
         self.registered[name] = handler
 
 
+class FakeService:
+    """Stands in for `FunctionCallParams.llm`: records the frames code pushes."""
+
+    def __init__(self):
+        self.pushed = []
+
+    async def push_frame(self, frame, direction=None):
+        self.pushed.append(frame)
+
+
 class FakeParams:
+    """The shape of Pipecat's FunctionCallParams (llm, arguments,
+    result_callback(result, properties=...)) that the handler uses."""
+
     def __init__(self, **arguments):
         self.arguments = arguments
         self.result = "not called"
+        self.properties = None
+        self.llm = FakeService()
 
-    async def result_callback(self, value):
+    async def result_callback(self, value, properties=None):
         self.result = value
+        self.properties = properties
+
+    def spoken(self) -> list[str]:
+        return [getattr(f, "text", "") for f in self.llm.pushed]
 
 
 # -- the schema the model is given -------------------------------------------
@@ -65,15 +86,25 @@ def test_it_asks_why_so_the_record_says_so():
 # -- what happens when it is called ------------------------------------------
 
 
-async def test_a_call_the_patterns_corroborate_ends_the_interview():
+async def test_a_call_the_patterns_corroborate_is_confirmed_once_then_ends():
+    """Changed for decision 11 (docs/DEV_PLAN.md:85). It used to assert that an
+    explicit, corroborated call ended the interview at once. Now every request
+    gets one confirmation, spoken by code; the yes ends it."""
     brain = InterviewBrain(tiny_blueprint())
     brain.observe(bot_text="Tell me about a project.")
-    brain.observe(candidate_text="Just end this interview.")
+    brain.observe(candidate_text="I'd like to finish now.")  # the patterns miss it
     llm = FakeLLM()
     register(llm, brain)
 
-    await llm.registered[END_INTERVIEW](FakeParams(said="end the interview", explicit=True))
+    params = FakeParams(said="end the interview", explicit=True)
+    await llm.registered[END_INTERVIEW](params)
 
+    assert brain.withdrew is False
+    assert params.spoken() == [CONFIRMATION_QUESTION]
+    assert params.properties.run_llm is False
+
+    brain.observe(bot_text=CONFIRMATION_QUESTION)
+    brain.observe(candidate_text="yes")
     assert brain.withdrew is True
     assert brain.current_section.kind == "closing"
 
@@ -152,7 +183,10 @@ async def test_the_tool_returns_something_or_nothing_is_ever_said():
     assert "say goodbye" in params.result["next"]
 
 
-async def test_an_unconfirmed_call_is_told_to_ask_rather_than_farewell():
+async def test_an_unconfirmed_call_gets_the_confirmation_spoken_by_code():
+    """Changed for decision 11: the confirmation used to be the model's
+    sentence ("end here or carry on" in the tool result). Now code speaks one
+    fixed question word for word and the model does not reply this turn."""
     brain = InterviewBrain(tiny_blueprint())
     brain.observe(bot_text="Tell me about a project.")
     brain.observe(candidate_text="Can we wrap this up?")
@@ -163,7 +197,9 @@ async def test_an_unconfirmed_call_is_told_to_ask_rather_than_farewell():
     await llm.registered[END_INTERVIEW](params)
 
     assert params.result["ended"] is False
-    assert "end here or carry on" in params.result["next"]
+    assert [type(f) for f in params.llm.pushed] == [TTSSpeakFrame]
+    assert params.spoken() == [CONFIRMATION_QUESTION]
+    assert params.properties.run_llm is False
 
 
 async def test_calling_it_twice_is_harmless():
@@ -193,7 +229,9 @@ def test_patterns_and_the_tool_share_one_entry_point():
     by_tool.observe(bot_text="Tell me about a project.")
     by_tool.candidate_asked_to_stop(said="Can we wrap this up?", explicit=True)
 
-    assert by_pattern.withdrew == by_tool.withdrew is True
+    # Changed for decision 11: both paths now offer once instead of ending.
+    assert by_pattern.withdrew == by_tool.withdrew is False
+    assert by_pattern.take_confirmation_due() is by_tool.take_confirmation_due() is True
     assert by_pattern.current_section.id == by_tool.current_section.id
 
 
@@ -215,7 +253,11 @@ def test_the_phrasings_patterns_will_never_catch(said):
     assert wants_to_stop(said) is False, "if patterns now catch this, the test is stale"
 
     brain = InterviewBrain(tiny_blueprint())
-    brain.candidate_asked_to_stop(said=said, explicit=True)
+    # Changed for decision 11: the model's call is confirmed once, and the
+    # second request ends it.
+    assert brain.candidate_asked_to_stop(said=said, explicit=True) == "offered"
+    assert brain.withdrew is False
+    assert brain.candidate_asked_to_stop(said=said, explicit=True) == "withdrew"
     assert brain.withdrew is True
 
 
@@ -295,19 +337,21 @@ async def test_a_withdrawal_the_patterns_miss_is_still_asked_about():
     assert "THEY HAVE ASKED TO STOP" in brain.plan_turn().system_instruction
 
 
-async def test_a_withdrawal_the_patterns_catch_still_ends_at_once():
-    """The explicit path is untouched: the veto is only ever consulted when the
-    patterns did not corroborate."""
+async def test_a_withdrawal_the_patterns_catch_is_confirmed_once_and_never_vetoed():
+    """Changed for decision 11 (docs/DEV_PLAN.md:85). This test used to assert
+    that an explicit request the patterns catch ended the interview at once;
+    decision 11 supersedes that: one confirmation, spoken by code, and the yes
+    ends it. What it still guards: "skip" in the sentence never vetoes a real
+    withdrawal (it is not treated as a skip)."""
     brain = InterviewBrain(tiny_blueprint())
     brain.observe(bot_text="Tell me about a project.")
     brain.observe(candidate_text="Skip all this, just end this interview.")
-    llm = FakeLLM()
-    register(llm, brain)
 
-    await llm.registered[END_INTERVIEW](
-        FakeParams(said="just end this interview", explicit=True)
-    )
+    assert brain.withdrew is False
+    assert brain.take_confirmation_due() is True  # code speaks it (BrainDirector)
 
+    brain.observe(bot_text=CONFIRMATION_QUESTION)
+    brain.observe(candidate_text="yes")
     assert brain.withdrew is True
     assert brain.current_section.kind == "closing"
 

@@ -35,7 +35,7 @@ pytestmark = [
 @pytest.fixture(scope="module")
 def judge() -> OpenAIJudge:
     settings = Settings.load()
-    return OpenAIJudge(api_key=settings.openai_api_key, model=settings.blueprint_model)
+    return OpenAIJudge(api_key=settings.openai_api_key, model=settings.legacy_blueprint_model)
 
 
 def request_for(case: ContradictionCase) -> JudgmentRequest:

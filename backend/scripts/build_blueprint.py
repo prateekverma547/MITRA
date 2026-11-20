@@ -72,7 +72,7 @@ async def run(
     logger.info(f"parsed JD ({len(jd_text)} chars) and CV ({len(cv_text)} chars)")
 
     # ---- clarification chat ------------------------------------------------
-    chat = ClarificationChat(api_key=settings.openai_api_key, model=settings.blueprint_model)
+    chat = ClarificationChat(api_key=settings.openai_api_key, model=settings.legacy_blueprint_model)
     employer_cls = DistractedEmployer if distracted else SimulatedEmployer
     employer = employer_cls(
         api_key=settings.openai_api_key,

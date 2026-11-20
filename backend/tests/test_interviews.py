@@ -76,6 +76,10 @@ async def client(tmp_path, monkeypatch):
     async def fake_create_token(**kwargs):
         return f"token-for-{kwargs.get('room_name')}-owner={kwargs.get('is_owner')}"
 
+    from types import SimpleNamespace
+
+    from app.capacity import registry
+
     async def fake_start_bot(**kwargs):
         spawned.append(kwargs)
         async with db.get_sessionmaker()() as session:
@@ -83,15 +87,21 @@ async def client(tmp_path, monkeypatch):
             interview.status = db.InterviewStatus.IN_PROGRESS
             interview.started_at = datetime.now(UTC)
             await session.commit()
+        # As the real _start_bot does: the bot is registered while it lives
+        # (wave 1: a reload rejoin is admitted only while it does).
+        registry.register(kwargs["interview_id"], SimpleNamespace(returncode=None))
 
     monkeypatch.setattr(interviews, "create_room", fake_create_room)
     monkeypatch.setattr(interviews, "create_meeting_token", fake_create_token)
     monkeypatch.setattr(interviews, "_start_bot", fake_start_bot)
 
+    bots_before = dict(registry._bots)
     with TestClient(main.app) as test_client:
         test_client.spawned = spawned
         test_client.post("/admin/login", json={"password": "test-admin-pw"})
         yield test_client
+    registry._bots.clear()
+    registry._bots.update(bots_before)
 
     await db.reset_engine()
 
@@ -857,6 +867,14 @@ PUBLIC_ROUTES = {
     # the candidate's own interview, and it holds no other secret.
     ("POST", "/interviews/focus"),
     ("GET", "/join"),  # the candidate join page itself
+    # The new candidate room: a redirect into the console's #/meet, and the
+    # lookup it makes with the candidate's own meeting ID and password, which
+    # are the credential, exactly as for /interviews/join.
+    ("GET", "/meet"),
+    ("POST", "/api/room/lookup"),
+    # Measurement only (hiring/diagnostics.py): the room's own timings, authorised by
+    # the proctoring token from the join, like the integrity intake.
+    ("POST", "/api/room/diagnostics/{interview_id}"),
     ("GET", "/health"),
     ("POST", "/admin/login"),
     ("POST", "/admin/logout"),
@@ -875,6 +893,27 @@ PUBLIC_ROUTES = {
     ("GET", "/console"),
     ("GET", "/console/{path:path}"),
     ("GET", "/"),
+    # The candidate app (frontend/candidate-app) and the one setting it reads
+    # before consent (retention days). Static files and a constant, no data.
+    ("GET", "/interview/config"),
+    ("GET", "/interview"),
+    ("GET", "/interview/{path:path}"),
+    # Token-guarded rather than cookie-guarded. The intake's credential is the
+    # purpose-bound token from the join response (proctoring/intake.py); an
+    # evidence link's is the short-lived token in its own URL (live/evidence.py).
+    # Both are checked before anything is read.
+    ("POST", "/api/proctoring/interviews/{interview_id}/events"),
+    ("POST", "/api/proctoring/interviews/{interview_id}/status"),  # same token as the intake
+    ("GET", "/api/proctoring/interviews/{interview_id}/clock"),  # same token as the intake
+    # Listed once the sweep could see inside the included routers (C-119):
+    # the early credentials check, whose credential is the meeting ID and
+    # password (rate-limited, one answer for unknown and wrong);
+    ("POST", "/interviews/check"),
+    # the rejoin exchange, whose credential is the single-use rejoin pass;
+    ("POST", "/api/live/rejoin"),
+    # browsers' security-policy violation reports: size-capped, rate-limited,
+    # logs only the rule and the blocked address.
+    ("POST", "/api/live/csp-report"),
 }
 
 
@@ -893,6 +932,8 @@ def test_every_route_is_guarded_unless_it_is_deliberately_public():
     # with FastAPI 0.141 a plain `app.routes` scan never saw /interviews/...
     assert any(r.path.startswith("/interviews/") for r in routes)
 
+    assert any(r.path == "/interviews/join" for r in routes), "the sweep cannot see the routers"
+    assert len(routes) >= 40, len(routes)
     unguarded = []
     for route in routes:
         for method in route.methods - {"HEAD", "OPTIONS"}:
@@ -1602,3 +1643,55 @@ async def test_focus_events_never_reach_the_report(client):
     assert view["focus_events"]
     assert "focus" not in str(view["feedback_report"] or {}).lower()
     assert "focus" not in str(view["transcript"] or {}).lower()
+
+
+
+# -- wave 1: the reload rejoin and the rejoin pass ------------------------------------------------
+
+
+async def _joined(client):
+    candidate_id = await make_candidate()
+    created = client.post(f"/candidates/{candidate_id}/interviews").json()
+    payload = {"meeting_id": created["meeting_id"], "password": created["password"], "consent": True}
+    first = client.post("/interviews/join", json=payload)
+    assert first.status_code == 200
+    return created, payload, first.json()
+
+
+async def test_a_join_answer_carries_a_rejoin_pass_and_never_the_password(client):
+    created, _, body = await _joined(client)
+    assert body["rejoin_pass"] and body["rejoin_pass_expires_at"]
+    assert created["password"] not in body["rejoin_pass"] and created["password"] not in str(body)
+
+
+async def test_a_reload_rejoin_is_admitted_while_the_bot_lives_with_no_second_bot(client):
+    _, payload, first = await _joined(client)
+    again = client.post("/interviews/join", json=payload)
+    assert again.status_code == 200 and len(client.spawned) == 1
+    assert again.json()["rejoin_pass"] != first["rejoin_pass"]  # a fresh pass for the new page
+
+
+async def test_a_reload_rejoin_is_refused_plainly_when_the_bot_is_gone(client):
+    from app.capacity import registry
+
+    _, payload, first = await _joined(client)
+    registry.release(first["interview_id"])  # the bot exited (the grace window ran out)
+    for path in ("/interviews/join", "/interviews/check"):
+        body = {k: v for k, v in payload.items() if path.endswith("join") or k != "consent"}
+        r = client.post(path, json=body)
+        assert r.status_code == 409 and r.json()["reason"] == "interviewer_gone", path
+        assert "has ended" in r.json()["detail"]
+    assert len(client.spawned) == 1  # never a second bot
+
+
+async def test_a_reload_rejoin_is_refused_after_the_rejoin_limit(client):
+    from live.emit import make_event
+    from live.store import insert_events
+    from shared.interview_contracts import EventSource, RejoinLimitReached
+
+    _, payload, first = await _joined(client)
+    await insert_events([make_event(first["interview_id"], RejoinLimitReached(rejoins=4),
+                                    source=EventSource.BOT, at_seconds=300)])
+    r = client.post("/interviews/join", json=payload)
+    assert r.status_code == 409 and r.json()["reason"] == "rejoin_limit_reached"
+    assert len(client.spawned) == 1

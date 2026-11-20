@@ -36,6 +36,8 @@ async def client(tmp_path, monkeypatch):
     # Recordings land under the test's own directory, never the real one.
     monkeypatch.setattr(recordings, "RECORDINGS_DIR", tmp_path / "sessions" / "recordings")
     monkeypatch.setattr(recordings, "SESSIONS_DIR", tmp_path / "sessions")
+    # A storage folder set in the environment must never receive test files.
+    monkeypatch.delenv(recordings.RECORDINGS_DIR_ENV, raising=False)
 
     with TestClient(main.app) as test_client:
         test_client.post("/admin/login", json={"password": "test-admin-pw"})
@@ -86,8 +88,13 @@ async def make_interview(**overrides) -> str:
 
 
 def a_recording_file(path, size=2048):
+    """A file shaped like an MP4 to the sweep's verification (ftyp, moov, mdat,
+    tiling the file exactly; app/recordings.py verify_recording_file)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"x" * size)
+    ftyp = (24).to_bytes(4, "big") + b"ftypmp42" + b"\x00" * 4 + b"mp42isom"
+    moov = (16).to_bytes(4, "big") + b"moov" + b"\x00" * 8
+    mdat = (8 + size).to_bytes(4, "big") + b"mdat" + b"x" * size
+    path.write_bytes(ftyp + moov + mdat)
     return path
 
 
@@ -909,13 +916,20 @@ def test_only_the_bot_start_path_reads_the_switch():
     from pathlib import Path
 
     backend = Path(__file__).resolve().parents[1]
+    # Readers are CALLS of the switch, in product code. (Task 19: the candidate
+    # config contract now has a field of the same name, and tests call the
+    # switch to compare against it; neither reads it for product behaviour.
+    # main.py reads it for the consent page and its config route.)
     hits = subprocess.run(
-        ["grep", "-rln", "recording_enabled", "--include=*.py", str(backend)],
+        ["grep", "-rlE", r"recording_enabled\(", "--include=*.py",
+         "--exclude-dir=tests", "--exclude-dir=.venv", str(backend)],
         capture_output=True, text=True,
     ).stdout.splitlines()
     names = sorted(Path(h).name for h in hits)
 
-    assert names == ["config.py", "main.py", "run_bot.py", "test_recordings.py"], names
+    # main.py and hiring/room.py read it only to tell the candidate, before
+    # consent, whether the interview is recorded: the same answer the bot acts on.
+    assert names == ["config.py", "main.py", "room.py", "run_bot.py"], names
 
 
 def test_the_room_still_permits_recording_whatever_the_switch_says():

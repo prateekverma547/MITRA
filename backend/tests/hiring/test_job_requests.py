@@ -67,7 +67,7 @@ async def test_a_bu_head_starts_a_request_with_only_a_title(org_client):
     assert response.status_code == 201
     job = response.json()
     assert job["request_status"] == "draft"
-    assert job["bu_name"] == "AI"
+    assert job["bu_name"] == "AI, ML & Data Science"
     assert job["has_jd"] is False
     assert job["chat"] == [{"from": "mitra", "text": "Question 1?"}]
     assert job["can_chat"] and not job["can_approve"]
@@ -81,6 +81,16 @@ async def test_an_uploaded_jd_reaches_the_chat(org_client):
     job = create(org_client, file=jd).json()
     assert job["has_jd"] and job["source_filename"] == "jd.md"
     assert "real-time voice agents" in StubChat.calls[0]["jd_text"]
+
+
+async def test_a_typed_jd_reaches_the_chat(org_client):
+    sign_in(org_client, "ai.head@mitra.local")
+    typed = "AI Engineer. Build retrieval over client documents and report results honestly."
+    job = org_client.post("/api/jobs", data={"title": "AI Engineer", "jd": f"  {typed}  "}).json()
+    assert job["has_jd"] and job["source_filename"] is None
+    assert StubChat.calls[0]["jd_text"] == typed
+    too_long = org_client.post("/api/jobs", data={"title": "AI Engineer", "jd": "x" * 30_001})
+    assert too_long.status_code == 422
 
 
 async def test_a_title_is_required(org_client):
@@ -157,7 +167,7 @@ async def test_approval_needs_a_finished_understanding_and_happens_once(org_clie
 async def test_another_bu_head_cannot_see_or_touch_the_request(org_client):
     sign_in(org_client, "ai.head@mitra.local")
     job_id = create(org_client).json()["id"]
-    sign_in(org_client, "finance.head@mitra.local")
+    sign_in(org_client, "sales.head@mitra.local")
     assert org_client.get(f"/api/jobs/{job_id}").status_code == 404
     assert org_client.post(f"/api/jobs/{job_id}/chat", json={"message": "hi"}).status_code == 404
     assert org_client.post(f"/api/jobs/{job_id}/approve").status_code == 404
@@ -227,3 +237,48 @@ async def test_each_step_is_audited(org_client):
     assert actions == [
         "job_request_created", "job_request_understood", "job_request_approved", "job_request_edit_started",
     ]
+
+
+async def test_an_edit_can_be_left_without_changing_anything(org_client):
+    sign_in(org_client, "ai.head@mitra.local")
+    job_id = create(org_client).json()["id"]
+    finish(org_client, job_id)
+    before = org_client.get(f"/api/jobs/{job_id}").json()
+    assert org_client.post(f"/api/jobs/{job_id}/keep").status_code == 409  # nothing being edited
+
+    reopened = org_client.post(f"/api/jobs/{job_id}/edit").json()
+    assert reopened["can_keep"] and not reopened["can_edit"]
+
+    kept = org_client.post(f"/api/jobs/{job_id}/keep").json()
+    assert kept["spec_status"] == "ready" and kept["spec_version"] == before["spec_version"]
+    assert kept["understanding"] == before["understanding"] and kept["can_edit"] and not kept["can_keep"]
+
+
+async def test_a_first_description_cannot_be_kept(org_client):
+    sign_in(org_client, "ai.head@mitra.local")
+    job_id = create(org_client).json()["id"]
+    assert org_client.post(f"/api/jobs/{job_id}/keep").status_code == 409
+
+
+async def test_a_draft_request_can_be_deleted_by_its_bu_head_only(org_client):
+    sign_in(org_client, "ai.head@mitra.local")
+    job_id = create(org_client).json()["id"]
+    assert org_client.get(f"/api/jobs/{job_id}").json()["can_delete"]
+
+    sign_in(org_client, "sales.head@mitra.local")
+    assert org_client.delete(f"/api/jobs/{job_id}").status_code in (403, 404)
+    sign_in(org_client, "hr@mitra.local")
+    assert org_client.delete(f"/api/jobs/{job_id}").status_code in (403, 404)
+
+    sign_in(org_client, "ai.head@mitra.local")
+    assert org_client.delete(f"/api/jobs/{job_id}").json() == {"deleted": job_id}
+    assert org_client.get(f"/api/jobs/{job_id}").status_code == 404
+
+
+async def test_a_request_with_hr_cannot_be_deleted(org_client):
+    sign_in(org_client, "ai.head@mitra.local")
+    job_id = create(org_client).json()["id"]
+    finish(org_client, job_id)
+    org_client.post(f"/api/jobs/{job_id}/approve")
+    assert not org_client.get(f"/api/jobs/{job_id}").json()["can_delete"]
+    assert org_client.delete(f"/api/jobs/{job_id}").status_code == 409

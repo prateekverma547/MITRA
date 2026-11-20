@@ -5,6 +5,8 @@
 import { ShieldCheck } from "lucide-react";
 import type { Feature } from "../../shell/registry";
 import { AuditTrail } from "./AuditTrail";
+import { Calls } from "./Calls";
+import { Costs } from "./Costs";
 import { DecisionLog } from "./DecisionLog";
 import { Records } from "./Records";
 import { Register } from "./Register";
@@ -17,6 +19,8 @@ export const feature: Feature = {
     { path: "/transparency/records", element: <Records />, roles: [...ADMIN] },
     { path: "/transparency/ai", element: <Register />, roles: [...ADMIN] },
     { path: "/transparency/audit", element: <AuditTrail />, roles: [...ADMIN] },
+    { path: "/transparency/calls", element: <Calls />, roles: [...ADMIN] },
+    { path: "/transparency/cost", element: <Costs />, roles: [...ADMIN] },
   ],
   nav: [{ to: "/transparency", label: "Transparency", roles: [...ADMIN], order: 120, icon: ShieldCheck, section: "Organisation" }],
 };

@@ -3,11 +3,12 @@
     cd backend && uv run python scripts/simulate_technical_done.py "Candidate Name"
     cd backend && uv run python scripts/simulate_technical_done.py cand_1234abcd
 
-Until Track I's interview lands, nothing moves a candidate from "Technical
-booked" to "Technical done", so the second half of the journey (HR sends them
-to the BU head, who decides) cannot be walked through with your own candidate.
-This makes that one system move, and nothing else: no report is attached, and
-the results page says plainly that there is no technical report.
+A real technical round moves the candidate to "Technical done" by itself once
+the interview ends and is scored (hiring/technical.py, `sweep_once`). This is
+for walking through the second half of the journey (HR sends them to the BU
+head, who decides) without holding a real interview: no keys, no call. It makes
+that one system move and nothing else: no report is attached, and the results
+page says plainly that there is none.
 
 The move is recorded with the reason "Simulated locally", so it can never pass
 for a real interview. Refuses to run on a deployed instance.

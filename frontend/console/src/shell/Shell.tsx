@@ -8,6 +8,7 @@ import { Brand } from "./Brand";
 import { CommandPalette, useCommandPalette } from "./CommandPalette";
 import { Footer } from "./Footer";
 import { navFor, type NavItem } from "./registry";
+import { ThemeToggle } from "./theme";
 import { Button } from "./ui/Button";
 
 /** How many people are waiting on the signed-in user. Refreshed on every page change. */
@@ -96,6 +97,7 @@ export function Shell() {
         <div className="who">
           <span className="who-name">{me.name}</span>
           <span className="who-role">{me.bu_name ? `${ROLE_LABELS[me.role]}, ${me.bu_name}` : ROLE_LABELS[me.role]}</span>
+          <ThemeToggle />
           <Button variant="ghost" size="sm" icon={<LogOut size={15} />} loading={leaving} onClick={handleSignOut} className="who-out">
             Sign out
           </Button>

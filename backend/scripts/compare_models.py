@@ -625,7 +625,7 @@ async def run_one(
     candidate = SCENARIOS[scenario][0]()
 
     interviewer = OpenAIInterviewer(api_key=settings.openai_api_key, model=model)
-    judge = OpenAIJudge(api_key=settings.openai_api_key, model=settings.blueprint_model)
+    judge = OpenAIJudge(api_key=settings.openai_api_key, model=settings.legacy_blueprint_model)
     run = await run_interview(
         brain,
         interviewer=interviewer,

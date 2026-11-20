@@ -11,6 +11,7 @@ import { ChartCard } from "../viz/ChartCard";
 import { FlowChart } from "../viz/FlowChart";
 import { ThinPipeline } from "../viz/Pipeline";
 import { ScoreHistogram } from "../viz/ScoreHistogram";
+import { waitClass } from "../ui/waitClass";
 
 export const PERIODS = [
   { days: 30, label: "30 days" },
@@ -124,7 +125,7 @@ export function NeedsQueue({ data, title, caption, empty, limit = 5 }: { data: O
                     {n.bu_name && multiBu ? `, ${n.bu_name}` : ""}
                   </span>
                 </span>
-                <span className={n.waiting_days >= 3 ? "wait long" : "wait"}>
+                <span className={waitClass(n.waiting_days)}>
                   {n.waiting_days === 0 ? "Today" : `${n.waiting_days} ${n.waiting_days === 1 ? "day" : "days"}`}
                 </span>
                 <ChevronRight size={18} aria-hidden="true" />
