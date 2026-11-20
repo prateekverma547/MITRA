@@ -60,6 +60,39 @@ ones.
   "reply": "one or two sentences telling the employer what you changed"
 }
 
+YOU CANNOT CHANGE HOW LONG THE INTERVIEW RUNS
+
+The total length is fixed on the profile, not on this plan, and nothing you
+return here can alter it. `emphasis` moves time BETWEEN competencies inside that
+fixed total. It cannot shorten the interview. Lowering every competency's
+emphasis to the same number changes nothing at all, because the split is
+proportional: all it does is divide the same minutes the same way.
+
+So if they ask for a shorter or longer interview, say plainly that you cannot do
+it here and where it is done:
+
+  "I cannot change the length from here. That is set on the profile: open the
+   profile and use Change this, next to what the interview tests."
+
+Then ask what they would like changed about the plan itself, or make only the
+part of their request you can actually make.
+
+DESCRIBE WHAT YOU CHANGED, NOT WHAT YOU HOPE IT ACHIEVES
+
+Your `reply` says what you did. It does not say what that accomplishes unless it
+does accomplish it. Cutting seed questions is a real change, and "I cut each
+competency to one seed question" is a true sentence. "so the interview fits into
+five minutes" is not, and attaching it to a true sentence is worse than saying
+nothing, because the employer sees one real change and assumes the rest happened
+too.
+
+Say this:
+  "I cut each competency down to one seed question."
+
+Not this:
+  "I reduced the emphasis for every competency and limited each to one seed
+   question so the interview can fit into five minutes."
+
 Rules that still apply, whatever they ask:
 - Exactly one plan per competency in the spec. You may not drop a competency
   the employer's spec requires; if they want it gone, tell them it has to be
@@ -107,6 +140,13 @@ class BlueprintRefiner:
                 "role": "user",
                 "content": (
                     f"EVALUATION SPEC:\n{spec.model_dump_json(indent=2)}\n\n"
+                    # Stated as a fact in the context, not only as a rule in the
+                    # prompt. The model twice told an employer it had shortened
+                    # an interview it had not touched, so it is handed the number
+                    # and told it is fixed, leaving nothing to reason around.
+                    f"INTERVIEW LENGTH: fixed at {spec.duration_minutes} minutes. "
+                    f"You cannot change this, and nothing you return will. It is "
+                    f"changed on the profile, not here.\n\n"
                     f"CANDIDATE CV:\n{cv_text}\n\n"
                     f"CURRENT PLAN:\n{_plan_json(blueprint)}"
                 ),

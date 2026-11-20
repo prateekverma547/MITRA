@@ -1,0 +1,85 @@
+# Local stack: the app and its Postgres database, the same database engine deployment uses.
+#
+#   cp .env.example .env        # then set POSTGRES_PASSWORD and the API keys
+#   docker compose up --build
+#
+# The app container runs `alembic upgrade head` before it serves, so the schema is
+# always at head. Its data lives in the `pgdata` volume and survives `docker compose
+# down`; only `docker compose down -v` deletes it.
+#
+# Use a POSTGRES_PASSWORD made of letters and digits only (for example
+# `python -c "import secrets; print(secrets.token_hex(24))"`). It is put inside the
+# DATABASE_URL, where characters such as @ : / would need URL-encoding.
+
+name: mitra
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mitra
+      POSTGRES_USER: mitra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Published to the host loopback only, so a local client (psql, a GUI) can connect
+    # and nothing on the network can.
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mitra -d mitra"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Web UI for browsing the database. Open http://localhost:5050, sign in with PGADMIN_EMAIL and
+  # PGADMIN_PASSWORD from .env, then enter POSTGRES_PASSWORD once for the "MITRA (local)" server.
+  # Published to loopback only, like Postgres itself.
+  pgadmin:
+    image: dpage/pgadmin4:9.9
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:?Set PGADMIN_EMAIL in .env}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?Set PGADMIN_PASSWORD in .env}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - pgadmin:/var/lib/pgadmin
+    ports:
+      - "127.0.0.1:${PGADMIN_HOST_PORT:-5050}:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file: .env
+    # Overrides any DATABASE_URL in .env, so the app cannot quietly fall back to SQLite
+    # inside the container. The host name `postgres` is this compose service.
+    environment:
+      DATABASE_URL: postgresql+asyncpg://mitra:${POSTGRES_PASSWORD}@postgres:5432/mitra
+      # The stack runs like deployment, so logs are one JSON object per line.
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Recordings and session files are written to ./backend/sessions on the host, so they are
+    # in the project folder and survive a rebuild. Local storage is for now; S3 is the deployment
+    # target (see DEPLOY.md).
+    volumes:
+      - ./backend/sessions:/app/backend/sessions
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
+    restart: unless-stopped
+    # A bot process is a child of this container, and a candidate may be mid-interview.
+    # Docker's default 10 seconds would SIGKILL it before it saves its transcript.
+    stop_grace_period: 120s
+
+volumes:
+  pgdata:
+  pgadmin:

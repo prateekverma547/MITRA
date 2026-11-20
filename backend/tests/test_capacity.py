@@ -37,17 +37,17 @@ def test_a_zero_limit_is_refused(monkeypatch):
     assert max_concurrent() == DEFAULT_MAX_CONCURRENT
 
 
-def test_claiming_beyond_the_limit_raises(monkeypatch):
+def test_reserving_beyond_the_limit_raises(monkeypatch):
     monkeypatch.setenv("MAX_CONCURRENT_INTERVIEWS", "2")
     registry = BotRegistry()
 
-    registry.claim()
+    assert registry.reserve("int_1") is True
     registry.register("int_1", FakeProcess())
-    registry.claim()
+    assert registry.reserve("int_2") is True
     registry.register("int_2", FakeProcess())
 
     with pytest.raises(AtCapacity):
-        registry.claim()
+        registry.reserve("int_3")
 
 
 def test_a_finished_bot_frees_its_slot(monkeypatch):
@@ -58,10 +58,11 @@ def test_a_finished_bot_frees_its_slot(monkeypatch):
     first = FakeProcess()
     registry.register("int_1", first)
     with pytest.raises(AtCapacity):
-        registry.claim()
+        registry.reserve("int_2")
 
     first.exit()
-    registry.claim()  # no longer raises
+    assert registry.reserve("int_2") is True  # no longer raises
+    registry.release("int_2")
     assert registry.live_count() == 0
 
 
@@ -75,5 +76,59 @@ def test_a_crashed_bot_does_not_leak_a_slot(monkeypatch):
     registry.register("int_1", crashed)
     crashed.exit(code=139)  # segfault
 
-    registry.claim()
+    assert registry.reserve("int_2") is True
+    registry.release("int_2")
     assert registry.live_count() == 0
+
+
+# --- the race these were written for ----------------------------------------
+
+
+def test_a_pending_reservation_holds_its_seat(monkeypatch):
+    """The bug: a join checked the count, then awaited for several seconds before
+    registering its process. Every join that arrived in that window also saw a free
+    seat, so five running bots plus three simultaneous joins started eight.
+
+    A reservation is taken before the first await, so it counts straight away."""
+    monkeypatch.setenv("MAX_CONCURRENT_INTERVIEWS", "2")
+    registry = BotRegistry()
+
+    assert registry.reserve("int_1") is True  # not yet registered: still counts
+    assert registry.reserve("int_2") is True
+    with pytest.raises(AtCapacity):
+        registry.reserve("int_3")
+
+
+def test_the_same_interview_cannot_hold_two_seats(monkeypatch):
+    """Double-click or two tabs: the second request must not start a second bot."""
+    monkeypatch.setenv("MAX_CONCURRENT_INTERVIEWS", "6")
+    registry = BotRegistry()
+
+    assert registry.reserve("int_1") is True
+    assert registry.reserve("int_1") is False
+
+
+def test_a_failed_join_gives_its_seat_back(monkeypatch):
+    """A join that reserved and then failed before spawning must not leave a phantom
+    bot counted against the cap."""
+    monkeypatch.setenv("MAX_CONCURRENT_INTERVIEWS", "1")
+    registry = BotRegistry()
+
+    assert registry.reserve("int_1") is True
+    registry.release("int_1")
+
+    assert registry.reserve("int_2") is True
+
+
+def test_release_never_removes_a_live_bot(monkeypatch):
+    """Releasing a seat that now belongs to a running bot would free capacity that is
+    still in use, and let one more bot start than the cap allows."""
+    monkeypatch.setenv("MAX_CONCURRENT_INTERVIEWS", "1")
+    registry = BotRegistry()
+
+    registry.register("int_1", FakeProcess())
+    registry.release("int_1")
+
+    assert registry.is_running("int_1") is True
+    with pytest.raises(AtCapacity):
+        registry.reserve("int_2")

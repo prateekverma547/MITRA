@@ -20,6 +20,11 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "python-multipart>=0.0.9",
     "sqlalchemy[asyncio]>=2.0",
+    # Schema migrations. Every change to a table goes through a revision in
+    # alembic/versions/, so production and a fresh database end up identical.
+    "alembic>=1.13",
+    # S3 storage for interview recordings (app/recording_s3.py).
+    "boto3>=1.35",
     "asyncpg>=0.30",
     "aiosqlite>=0.20",
     "pypdf>=5.0",

@@ -11,8 +11,10 @@ the voice wiring correct rather than merely working —
 """
 
 import asyncio
+from contextlib import contextmanager
 
 import pytest
+from loguru import logger
 from pipecat.frames.frames import (
     LLMContextFrame,
     LLMUpdateSettingsFrame,
@@ -263,3 +265,187 @@ async def test_judgment_results_are_recorded():
     assert judgments
     assert judgments[0]["coverage"] == "sufficient"
     assert judgments[0]["claims"] == 1
+
+
+# -- a failed judgement must leave a trace -----------------------------------
+#
+# The fallback to heuristics is correct and is not what these test. What they
+# test is that the failure is *visible*. It was not: `assess` swallowed the
+# exception, so the director's own warning could never fire, and `_record` only
+# ran on success. A dead judge produced an interview that completed normally
+# with no claims, no carryover and no contradictions, which reads in the report
+# as a candidate who never said anything specific.
+
+
+@contextmanager
+def captured_warnings():
+    """Collect what loguru emits, since it does not route through caplog."""
+    lines: list[str] = []
+    sink = logger.add(lines.append, level="WARNING")
+    try:
+        yield lines
+    finally:
+        logger.remove(sink)
+
+
+class SilentlyFailingJudge:
+    """What `OpenAIJudge` actually does: handles its own error, returns None.
+
+    This is the real-world shape of the failure — a bad OPENAI_BLUEPRINT_MODEL,
+    an expired key, a timeout. Nothing propagates, so nothing upstream can see
+    it unless the None is treated as the failure it is.
+    """
+
+    def __init__(self):
+        self.calls = 0
+
+    async def assess(self, request):
+        self.calls += 1
+        return None
+
+
+async def probe_a_competency(director, lines=4):
+    """Talk long enough that the brain asks for a depth judgement."""
+    conversation = Conversation(director)
+    for line in (
+        "I have about twelve years in product management.",
+        "Mostly payments and marketplace products.",
+        "I led the payments migration end to end.",
+        "We cut failure rates by nearly forty percent.",
+        "The hardest part was the acquirer contracts.",
+        "I would sequence the rollout differently now.",
+    )[:lines]:
+        await conversation.say(line)
+    await asyncio.sleep(0.05)
+
+
+async def test_a_judge_that_raises_is_logged_and_recorded():
+    brain, director = make(
+        judge=ThrowingJudge(), config=BrainConfig(floor_turns=1, ceiling_turns=9)
+    )
+
+    with captured_warnings() as warnings:
+        await probe_a_competency(director)
+
+    failures = [e for e in director.events if e["kind"] == "judgment_failed"]
+    assert failures, "a failed judgement left no event"
+    assert failures[0]["section"]
+    assert failures[0]["request_kind"] in ("depth", "section_end")
+    assert failures[0]["error"] == "RuntimeError"
+
+    assert any("judgement failed" in line for line in warnings), (
+        "a failed judgement left no log line"
+    )
+
+
+async def test_a_judge_that_returns_nothing_is_recorded():
+    """The branch a real failure arrives on, and the one that was silent."""
+    judge = SilentlyFailingJudge()
+    brain, director = make(judge=judge, config=BrainConfig(floor_turns=1, ceiling_turns=9))
+
+    await probe_a_competency(director)
+
+    assert judge.calls, "no judgement was ever requested, so this proves nothing"
+    failures = [e for e in director.events if e["kind"] == "judgment_failed"]
+    assert len(failures) == judge.calls
+    assert all(f["section"] and f["request_kind"] for f in failures)
+
+
+async def test_the_interview_transitions_normally_when_every_judgement_fails():
+    """The fallback is the point. Visibility must not have cost it."""
+    brain, director = make(
+        judge=SilentlyFailingJudge(), config=BrainConfig(floor_turns=1, ceiling_turns=2)
+    )
+
+    await probe_a_competency(director, lines=6)
+
+    # Heuristics carried the interview: it left the opening, worked through a
+    # competency, and is still planning turns.
+    started = [e["section"] for e in director.events if e["kind"] == "section_started"]
+    assert started, "the interview never left the opening"
+    assert brain.plan_turn().section_id
+    assert not brain.is_finished
+
+
+async def test_the_failure_counter_increments_per_failed_attempt():
+    judge = SilentlyFailingJudge()
+    brain, director = make(judge=judge, config=BrainConfig(floor_turns=1, ceiling_turns=9))
+
+    await probe_a_competency(director, lines=6)
+
+    summary = director.judgment_summary()
+    assert summary["judgments_attempted"] == judge.calls
+    assert summary["judgments_failed"] == judge.calls
+    assert summary["judgments_attempted"] > 1, "only one attempt proves nothing about counting"
+
+
+class WorkingJudge:
+    async def assess(self, request):
+        return Judgment(section_id=request.section_id, coverage=CoverageLevel.PARTIAL)
+
+
+class AlternatingJudge:
+    """Succeeds, fails, succeeds... so every counter has to move independently."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def assess(self, request):
+        self.calls += 1
+        if self.calls % 2:
+            return Judgment(section_id=request.section_id, coverage=CoverageLevel.PARTIAL)
+        return None
+
+
+async def test_a_working_judge_records_no_failures():
+    brain, director = make(judge=WorkingJudge(), config=BrainConfig(floor_turns=1, ceiling_turns=9))
+
+    await probe_a_competency(director)
+
+    assert not [e for e in director.events if e["kind"] == "judgment_failed"]
+    assert director.judgment_summary()["judgments_failed"] == 0
+    assert director.judgment_summary()["judgments_attempted"] > 0
+
+
+async def test_a_working_judge_increments_succeeded_not_failed():
+    """Without this counter, a success and a teardown cancellation look alike."""
+    brain, director = make(judge=WorkingJudge(), config=BrainConfig(floor_turns=1, ceiling_turns=9))
+
+    await probe_a_competency(director, lines=6)
+
+    summary = director.judgment_summary()
+    assert summary["judgments_succeeded"] == summary["judgments_attempted"]
+    assert summary["judgments_failed"] == 0
+
+
+async def test_a_mix_of_working_and_failing_judgements_is_counted_three_ways():
+    judge = AlternatingJudge()
+    brain, director = make(judge=judge, config=BrainConfig(floor_turns=1, ceiling_turns=9))
+
+    await probe_a_competency(director, lines=6)
+
+    summary = director.judgment_summary()
+    assert judge.calls >= 2, "need at least one of each to tell the counters apart"
+    assert summary["judgments_attempted"] == judge.calls
+    assert summary["judgments_succeeded"] == (judge.calls + 1) // 2
+    assert summary["judgments_failed"] == judge.calls // 2
+    assert summary["judgments_succeeded"] > 0 and summary["judgments_failed"] > 0
+
+
+async def test_attempted_equals_succeeded_plus_failed_when_nothing_is_cancelled():
+    """The gap between them is cancellation, so with none it must close exactly.
+
+    A drift here means an outcome path that increments `attempted` and then
+    records nothing, which is the bug this counter exists to make visible.
+    """
+    for judge in (WorkingJudge(), SilentlyFailingJudge(), AlternatingJudge(), ThrowingJudge()):
+        brain, director = make(judge=judge, config=BrainConfig(floor_turns=1, ceiling_turns=9))
+
+        await probe_a_competency(director, lines=6)
+
+        summary = director.judgment_summary()
+        assert summary["judgments_attempted"] > 0, type(judge).__name__
+        assert (
+            summary["judgments_attempted"]
+            == summary["judgments_succeeded"] + summary["judgments_failed"]
+        ), f"{type(judge).__name__} left an unaccounted judgement: {summary}"

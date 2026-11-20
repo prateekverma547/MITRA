@@ -18,16 +18,16 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 DASHES = ("—", "–")  # em dash, en dash
 
-FRONTEND = [
-    REPO / "frontend" / "admin" / "admin.js",
-    REPO / "frontend" / "admin" / "index.html",
-    REPO / "frontend" / "candidate" / "index.html",
-]
+from tests.frontend_source import user_facing_files  # noqa: E402
+
+FRONTEND = user_facing_files()
 
 
 def offending_lines(path: Path) -> list[str]:
     found = []
-    for number, line in enumerate(path.read_text().splitlines(), start=1):
+    # Explicit: the source files are UTF-8, and the platform default (cp1252 on
+    # Windows) cannot decode them and fails the test for the wrong reason.
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not any(d in line for d in DASHES):
             continue
         stripped = line.strip()
@@ -71,3 +71,28 @@ def test_the_style_rule_lives_in_one_place():
     from shared.branding import PROSE_STYLE
 
     assert "em dash" in PROSE_STYLE.lower()
+
+
+def test_the_panel_does_not_keep_its_own_copy_of_the_duration_rule():
+    """The interview-length range is in the contract. The panel is served the
+    numbers rather than typing them, the same way the product name is, so it
+    cannot end up stating a rule the backend does not enforce."""
+    from shared.contracts import MAX_DURATION_MINUTES, MIN_DURATION_MINUTES
+
+    from tests.frontend_source import panel_source
+
+    source = panel_source()
+
+    # The panel reads the range from /config, which is served from the contract.
+    assert "config.duration_min" in source
+    assert "config.duration_max" in source
+    assert "20 to 90" not in source
+    assert "(20 to" not in source
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    config = TestClient(app).get("/config").json()
+    assert config["duration_min"] == MIN_DURATION_MINUTES
+    assert config["duration_max"] == MAX_DURATION_MINUTES

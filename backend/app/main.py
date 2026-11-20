@@ -7,20 +7,39 @@ is kicked off at CV upload, so the employer gets an immediate response and the
 blueprint is finished and stored long before anyone joins an interview.
 """
 
+import asyncio
+import os
+import re
+import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from functools import lru_cache
 from pathlib import Path
 from datetime import UTC, datetime
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response as FastAPIResponse, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, Response as FastAPIResponse, UploadFile, status
 from fastapi.responses import HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.auth import COOKIE_NAME, check_password, issue_token, require_admin
+from app.auth import (
+    COOKIE_NAME,
+    AdminNotConfigured,
+    LOGIN_THROTTLE,
+    SESSION_SECONDS,
+    check_password,
+    client_key,
+    is_https,
+    issue_token,
+    revoke,
+    require_admin,
+)
+from app.db import database_url
+from shared.cost import Rates, build_report
+from shared.pricing import default_cache_path, load_feed
 from app.db import (
     BlueprintStatus,
     Candidate,
@@ -28,6 +47,7 @@ from app.db import (
     Interview,
     InterviewStatus,
     Job,
+    RecordingStatus,
     SpecStatus,
     create_all,
     get_sessionmaker,
@@ -41,22 +61,203 @@ from blueprint.clarify import (
 from blueprint.documents import DocumentError, extract_text
 from blueprint.generate import BlueprintGenerationError, BlueprintGenerator
 from blueprint.refine import BlueprintRefiner, RefinementError
-from bot.config import Settings
-from shared.branding import BOT_FULL_NAME, BOT_NAME, FAVICON_URL, LOGO_URL, PRODUCT_TAGLINE
-from shared.contracts import EvaluationSpec, InterviewBlueprint
+from bot.config import Settings, recording_enabled
+from app.jd_templates import templates as load_jd_templates
+from shared.logging_setup import configure_logging, request_id_var
+from shared.branding import (
+    BOT_FULL_NAME,
+    BOT_NAME,
+    COMPANY_CREDIT,
+    COMPANY_LOGO_URL,
+    COMPANY_NAME,
+    FAVICON_URL,
+    LOGO_URL,
+    PRODUCT_TAGLINE,
+)
+from shared.contracts import (
+    MAX_DURATION_MINUTES,
+    MIN_DURATION_MINUTES,
+    RECORDING_RETENTION_DAYS,
+    EvaluationSpec,
+    InterviewBlueprint,
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Non-secret settings only. The database host is logged, never its credentials.
+    url = database_url()
+    where = url.rsplit("@", 1)[-1] if "@" in url else url
+    logger.info(
+        f"web starting: database={where} "
+        f"llm={os.environ.get('OPENAI_LLM_MODEL', 'gpt-4.1-mini')} "
+        f"blueprint={os.environ.get('OPENAI_BLUEPRINT_MODEL', 'gpt-4.1')} "
+        f"max_interviews={os.environ.get('MAX_CONCURRENT_INTERVIEWS', '6')}"
+    )
     await create_all()
-    yield
 
+    # Before anything can join: close out interviews and reports the previous
+    # process left mid-flight, so no candidate is sent into an empty room.
+    await reconcile_after_restart()
+
+    from app.recordings import warn_about_missing_files
+
+    await warn_about_missing_files()
+
+    # Recordings arrive from Daily after the call rather than during it, and
+    # they have to be deleted ten days later. Both are clock-driven, neither can
+    # hang off a request, and there is no queue in this project by decision, so
+    # they run as one background task for the life of the process. Started here
+    # so a redeploy also picks up anything the last one left behind.
+    from app.recordings import sweep_enabled, sweep_forever
+
+    sweeper = asyncio.create_task(sweep_forever()) if sweep_enabled() else None
+    try:
+        yield
+    finally:
+        if sweeper is not None:
+            sweeper.cancel()
+            with suppress(asyncio.CancelledError):
+                await sweeper
+
+
+configure_logging("web")
 
 app = FastAPI(title=f"{BOT_NAME}: {BOT_FULL_NAME}", lifespan=lifespan)
 
+
+def _media_sources() -> str:
+    """Where the admin page may load video from.
+
+    Recordings in S3 play from a presigned link on the bucket's own host, so that host
+    must be allowed here or the browser blocks the playback redirect. Nothing else is
+    allowed. Without a bucket, playback is same-origin only.
+    """
+    from app.recording_s3 import configured_store
+
+    store = configured_store()
+    if store is None:
+        return "'self' blob:"
+    return (
+        f"'self' blob: https://{store.bucket}.s3.amazonaws.com "
+        f"https://{store.bucket}.s3.{store.region}.amazonaws.com"
+    )
+
+
+#: The policy for every response. Written against what the two pages actually load: our own
+#: files, and Daily's own servers for the call. Nothing else is needed, so nothing else is allowed.
+#:
+#: Scripts come only from this origin and from Daily. There is no 'unsafe-inline' and no
+#: 'unsafe-eval'. The pages have no inline script and no inline event handler (buttons use
+#: data-action and one delegated listener). The Daily SDK is vendored under frontend/static/vendor,
+#: so no CDN is needed for it.
+#:
+#: Styles keep 'unsafe-inline': the pages set a few element styles as inline style attributes.
+CONTENT_SECURITY_POLICY = "; ".join(
+    [
+        "default-src 'self'",
+        # blob: and 'wasm-unsafe-eval' are for the candidate's noise filter (frontend/static/candidate/noise-filter.js).
+        # Daily documents blob: (Krisp starts its worker from a blob: URL). 'wasm-unsafe-eval' lets the
+        # browser compile Krisp's WebAssembly; it permits WASM compilation only, not JavaScript eval.
+        # Without them the filter fails to load and the interview carries on unfiltered.
+        "script-src 'self' blob: 'wasm-unsafe-eval' "
+        "https://*.daily.co https://*.dailywebrtc.com https://*.dailywebrtc.net",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        f"media-src {_media_sources()}",
+        "font-src 'self'",
+        # Daily's call SDK loads its call bundle from dailywebrtc.net, and signalling runs
+        # over daily.co. Both are needed. A blocked bundle shows as "Failed to fetch".
+        "connect-src 'self' https://*.daily.co wss://*.daily.co "
+        "https://*.dailywebrtc.net wss://*.dailywebrtc.net",
+        "worker-src 'self' blob:",
+        "frame-src 'none'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    ]
+)
+
+
+#: A request ID the caller may supply and we will echo: short, and only URL-safe characters,
+#: so a header cannot inject a newline or a flood of text into the log.
+_REQUEST_ID_SHAPE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+
+
+@app.middleware("http")
+async def access_log(request: Request, call_next):
+    """One log line per request, and a request ID that ties the lines together.
+
+    Logs the method, the path, the status, the duration and the request ID. It does not
+    log headers, cookies, query strings or bodies: a cookie is a credential, and a body
+    can hold a password or a CV. The path carries IDs, not secrets.
+
+    `/health` is logged at DEBUG, because the load balancer calls it every few seconds
+    and it would otherwise bury everything else.
+    """
+    supplied = request.headers.get("x-request-id", "")
+    request_id = supplied if _REQUEST_ID_SHAPE.match(supplied) else uuid.uuid4().hex
+    token = request_id_var.set(request_id)
+    started = time.perf_counter()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        response.headers["X-Request-ID"] = request_id
+        return response
+    except Exception:
+        # The traceback is logged here, once, with the request ID. The re-raise lets the
+        # framework produce its 500 as it normally would.
+        logger.exception(f"unhandled error on {request.method} {request.url.path}", request_id=request_id)
+        raise
+    finally:
+        duration_ms = round((time.perf_counter() - started) * 1000, 1)
+        level = "DEBUG" if request.url.path == "/health" else "INFO"
+        logger.log(
+            level,
+            f"{request.method} {request.url.path} {status} {duration_ms}ms",
+            method=request.method,
+            path=request.url.path,
+            status=status,
+            duration_ms=duration_ms,
+            request_id=request_id,
+        )
+        request_id_var.reset(token)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Headers on every response. Not clickjacking, sniffing or downgrade-able.
+
+    Clickjacking matters here: without `frame-ancestors`, another site could put the
+    admin panel under a transparent layer and have an admin click Delete or Start
+    interview. The candidate page could be framed the same way to get them to press
+    "end".
+
+    `setdefault` so a route that needs a different value can set its own.
+    """
+    response = await call_next(request)
+    headers = response.headers
+    headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+    headers.setdefault("X-Frame-Options", "DENY")
+    headers.setdefault("X-Content-Type-Options", "nosniff")
+    headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # The candidate's own page needs the microphone and camera. Nothing else
+    # needs any device or location.
+    headers.setdefault(
+        "Permissions-Policy", "camera=(self), microphone=(self), geolocation=(), display-capture=()"
+    )
+    if is_https(request):
+        headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+    return response
+
+from app.interviews import reconcile_after_restart  # noqa: E402
 from app.interviews import router as interviews_router  # noqa: E402
+from app.recordings import router as recordings_router  # noqa: E402
 
 app.include_router(interviews_router)
+app.include_router(recordings_router)
 
 
 def _settings() -> Settings:
@@ -377,35 +578,92 @@ async def get_job(job_id: str) -> dict:
 async def admin_login(
     body: LoginRequest, request: Request, response: FastAPIResponse
 ) -> dict:
-    if not check_password(body.password):
+    # Checked before the password, so a locked-out client is refused even with
+    # the right password. Otherwise the lockout only slows guessing and a correct
+    # guess still gets in.
+    key = client_key(request)
+    wait = LOGIN_THROTTLE.retry_after(key)
+    if wait:
+        minutes = max(1, -(-wait // 60))
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed sign-in attempts. Try again in {minutes} minutes.",
+            headers={"Retry-After": str(wait)},
+        )
+
+    try:
+        valid = check_password(body.password)
+    except AdminNotConfigured as exc:
+        # A missing or too-short ADMIN_PASSWORD is the deployment's fault, not the
+        # person's, so it is a 503 and does not count as a failed attempt.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not valid:
+        LOGIN_THROTTLE.record_failure(key)
         raise HTTPException(status_code=401, detail="Incorrect password.")
+
+    LOGIN_THROTTLE.reset(key)
     response.set_cookie(
         COOKIE_NAME,
         issue_token(),
         httponly=True,  # not readable from JavaScript
         samesite="lax",
-        # Secure only when the connection actually is. Hardcoding True means the
-        # browser never sends the cookie back over plain HTTP, so login silently
-        # succeeds and every subsequent request 401s — which is exactly what it
-        # did on localhost.
-        secure=request.url.scheme == "https",
-        max_age=12 * 60 * 60,
+        # Secure whenever the browser's connection is HTTPS, including behind
+        # Railway's proxy. Hardcoding True would stop the cookie being sent back
+        # over plain HTTP on localhost, so login would silently succeed and every
+        # later request would 401.
+        secure=is_https(request),
+        max_age=SESSION_SECONDS,
     )
     return {"ok": True}
 
 
 @app.post("/admin/logout")
-async def admin_logout(response: FastAPIResponse) -> dict:
+async def admin_logout(request: Request, response: FastAPIResponse) -> dict:
+    # Revoke server-side as well as clearing the cookie: a copied cookie would otherwise
+    # stay valid until its own expiry, twelve hours on.
+    await revoke(request.cookies.get(COOKIE_NAME))
     response.delete_cookie(COOKIE_NAME)
     return {"ok": True}
+
+
+@app.get("/admin/costs", dependencies=[Depends(require_admin)])
+async def admin_costs(limit: int = 50) -> dict:
+    """The cost estimate for recent interviews. Read-only.
+
+    Selects only the four columns it needs, so transcripts are never loaded, and returns
+    interview IDs and numbers. No candidate is named. The prices are the feed's, cached, and
+    a missing rate is listed rather than estimated (see shared/cost.py).
+    """
+    limit = max(1, min(limit, 200))
+    async with get_sessionmaker()() as session:
+        rows = (
+            await session.execute(
+                select(Interview.id, Interview.status, Interview.created_at, Interview.session_metrics)
+                .order_by(Interview.created_at.desc())
+                .limit(limit)
+            )
+        ).all()
+    interviews = [
+        {
+            "id": row.id,
+            "status": row.status,
+            "created_at": row.created_at,
+            "usage": ((row.session_metrics or {}).get("usage")) or None,
+        }
+        for row in rows
+    ]
+    # The feed may need a network fetch, so it runs off the event loop.
+    feed = await asyncio.to_thread(load_feed, cache_path=default_cache_path())
+    return build_report(interviews, Rates.from_env(feed=feed))
 
 
 @app.get("/admin/session")
 async def admin_session(request: Request) -> dict:
     """Lets the panel decide whether to show the login screen."""
-    from app.auth import token_is_valid
+    from app.auth import is_revoked, token_is_valid
 
-    return {"signed_in": token_is_valid(request.cookies.get(COOKIE_NAME))}
+    token = request.cookies.get(COOKIE_NAME)
+    return {"signed_in": token_is_valid(token) and not await is_revoked(token)}
 
 
 @app.delete("/jobs/{job_id}", dependencies=[Depends(require_admin)])
@@ -414,11 +672,77 @@ async def delete_job(job_id: str) -> dict:
 
     Cascades to its clarification chat, candidates, blueprints and interviews —
     including transcripts. There is no undo, which is why the panel asks first.
+
+    **Refused while any of its interviews is live.** Deleting under a running bot
+    removes the row it is about to write the transcript to, so the transcript
+    survives only in a session file on a disk that is erased on redeploy. This
+    mirrors `cancel_interview`, which refuses live sessions for the same reason.
+
+    **Recordings are removed first, while the rows still point at them.** Once the
+    rows are gone nothing can find the files again, and a recording Daily keeps
+    is billed and kept after its candidate was told it was deleted. If a
+    recording cannot be removed, nothing is deleted, so the admin can retry.
     """
+    from app.recordings import remove_recording
+    from bot.config import daily_api_key
+
+    live_statuses = [InterviewStatus.SCHEDULED, InterviewStatus.IN_PROGRESS]
     async with get_sessionmaker()() as session:
         job = await session.get(Job, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail=f"No profile '{job_id}'.")
+        interviews = list(
+            await session.scalars(
+                select(Interview)
+                .join(Candidate, Interview.candidate_id == Candidate.id)
+                .where(Candidate.job_id == job_id)
+            )
+        )
+
+    if any(i.status in live_statuses for i in interviews):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This profile has an interview that is scheduled or in progress. "
+                "Cancel a scheduled one, or wait for a live one to finish, before "
+                "deleting the profile."
+            ),
+        )
+
+    for interview in interviews:
+        if interview.recording_status in (RecordingStatus.RECORDING, RecordingStatus.STORED):
+            try:
+                await remove_recording(
+                    interview.id, status=RecordingStatus.DELETED, api_key=daily_api_key()
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"[{job_id}] could not remove recording of {interview.id}: {exc}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"A recording for interview {interview.id} could not be removed, "
+                        "so the profile was not deleted. Nothing has been deleted. "
+                        "Try again."
+                    ),
+                ) from exc
+
+    async with get_sessionmaker()() as session:
+        job = await session.get(Job, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"No profile '{job_id}'.")
+        # Checked again in the same transaction as the delete: a join may have
+        # started a bot while the recordings were being removed.
+        live_now = await session.scalar(
+            select(Interview.id)
+            .join(Candidate, Interview.candidate_id == Candidate.id)
+            .where(Candidate.job_id == job_id, Interview.status.in_(live_statuses))
+            .limit(1)
+        )
+        if live_now is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="An interview started while this profile was being deleted. Nothing has been deleted.",
+            )
         await session.delete(job)
         await session.commit()
     logger.info(f"[{job_id}] profile deleted")
@@ -657,32 +981,15 @@ async def get_candidate(candidate_id: str) -> BlueprintResponse:
 
 
 #: The UIs live at the repository root, outside the Python package: they are
-#: their own thing and will become React apps (CLAUDE.md). The Docker image
+#: their own thing, plain HTML and JavaScript with no build step. The Docker image
 #: mirrors this layout so the path resolves identically in both places.
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
+#: The pages' scripts and styles, served exactly as they are in the repository. The
+#: HTML pages (admin/index.html, candidate/index.html) are read and returned below.
+STATIC_DIR = FRONTEND_DIR / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-#: One more than the number of pages served, so every page stays cached. At
-#: maxsize=2 with three pages the cache thrashed and each request re-read disk.
-@lru_cache(maxsize=8)
-def _render_page(name: str) -> str:
-    """A page with the product's identity substituted in.
-
-    Read and rendered once. The name reaches the candidate through the spoken
-    introduction, the call, and this page, and all three read from
-    shared/branding.py so they cannot drift apart. The logo's URL comes from
-    the same module for the same reason.
-    """
-    html = (FRONTEND_DIR / name).read_text()
-    for token, value in (
-        ("{{BOT_NAME}}", BOT_NAME),
-        ("{{BOT_FULL_NAME}}", BOT_FULL_NAME),
-        ("{{PRODUCT_TAGLINE}}", PRODUCT_TAGLINE),
-        ("{{LOGO_URL}}", LOGO_URL),
-        ("{{FAVICON_URL}}", FAVICON_URL),
-    ):
-        html = html.replace(token, value)
-    return html
 
 
 #: Pages and scripts are rendered from files that change on every deploy, and
@@ -701,7 +1008,56 @@ async def join_page() -> HTMLResponse:
     Serving this from the backend keeps the candidate on our own domain: they
     see a meeting ID prompt and a consent notice, never a Daily URL.
     """
-    return HTMLResponse(_render_page("candidate/index.html"), headers=NO_CACHE)
+    page = FRONTEND_DIR / "candidate" / "index.html"
+    if not page.is_file():
+        raise HTTPException(status_code=503, detail="The interview page is missing from this deployment.")
+    return HTMLResponse(page.read_text(encoding="utf-8"), headers=NO_CACHE)
+
+
+@app.get("/config", include_in_schema=False)
+async def app_config(response: FastAPIResponse) -> dict:
+    """The product's identity and the rules the pages state, for the pages' scripts.
+
+    Public, and it holds nothing secret: the names, the logo paths, the interview-length
+    rule, the retention period and whether recording is on. Each comes from the module
+    that owns it, so a page cannot state a number the contract does not enforce.
+    """
+    # Not cached: the interview-length rule and the retention period change with a deploy, and a
+    # browser holding last week's copy would show a rule the server no longer enforces.
+    response.headers.update(NO_CACHE)
+    return {
+        "bot_name": BOT_NAME,
+        "bot_full_name": BOT_FULL_NAME,
+        "product_tagline": PRODUCT_TAGLINE,
+        "logo_url": LOGO_URL,
+        "favicon_url": FAVICON_URL,
+        "company_name": COMPANY_NAME,
+        "company_credit": COMPANY_CREDIT,
+        "company_logo_url": COMPANY_LOGO_URL,
+        "duration_min": MIN_DURATION_MINUTES,
+        "duration_max": MAX_DURATION_MINUTES,
+        "retention_days": RECORDING_RETENTION_DAYS,
+        "recording_enabled": recording_enabled(),
+    }
+
+
+@app.get("/jd-templates", dependencies=[Depends(require_admin)], include_in_schema=False)
+async def jd_templates() -> list[dict]:
+    """Starting points for a job description, for the profile screen.
+
+    Guarded like everything else in the panel. Nothing here is secret, but an
+    open endpoint is one more thing to reason about at the edge, and the only
+    caller is a screen you have to sign in to reach anyway.
+
+    The full text ships with the list rather than behind a second request per
+    role. Six templates is about 12KB, the panel is not on a phone network, and
+    it means picking one is instant instead of showing a spinner over a textarea
+    the employer is about to type into.
+    """
+    return [
+        {"slug": t.slug, "title": t.title, "text": t.text}
+        for t in load_jd_templates()
+    ]
 
 
 @app.get("/assets/{filename}", include_in_schema=False)
@@ -730,20 +1086,14 @@ async def asset(filename: str) -> Response:
 async def admin_page() -> HTMLResponse:
     """The admin panel: JD -> clarification -> CV -> blueprint -> interview.
 
-    Behind `ADMIN_PASSWORD`: it lists every job description, every CV and every
-    interview transcript in the database. The page itself renders the sign-in
-    screen, so it is reachable while the data behind it is not.
+    Served as a plain HTML page; its script is frontend/static/admin/admin.js. Behind
+    `ADMIN_PASSWORD`: the data behind the page is guarded by the API, and the page itself
+    renders the sign-in screen.
     """
-    return HTMLResponse(_render_page("admin/index.html"), headers=NO_CACHE)
-
-
-@app.get("/admin/admin.js", include_in_schema=False)
-async def admin_script() -> Response:
-    return Response(
-        _render_page("admin/admin.js"),
-        media_type="application/javascript",
-        headers=NO_CACHE,
-    )
+    page = FRONTEND_DIR / "admin" / "index.html"
+    if not page.is_file():
+        raise HTTPException(status_code=503, detail="The admin panel is missing from this deployment.")
+    return HTMLResponse(page.read_text(encoding="utf-8"), headers=NO_CACHE)
 
 
 @app.post("/candidates/{candidate_id}/refine", dependencies=[Depends(require_admin)])
@@ -792,6 +1142,6 @@ async def refine_blueprint(candidate_id: str, request: RefineRequest) -> dict:
     }
 
 
-@app.get("/health")
+@app.get("/health", status_code=status.HTTP_200_OK)
 async def health() -> dict:
     return {"status": "ok"}

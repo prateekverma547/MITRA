@@ -73,6 +73,17 @@ def test_deepgram_waits_far_less_for_a_transcript():
     assert stt.DEEPGRAM_FINALIZATION_WAIT_SECONDS < stt.STT_FINALIZATION_WAIT_SECONDS
 
 
+def test_the_deepgram_wait_clears_its_measured_maximum():
+    """Measured max was 0.52s across 14 samples from two full interviews.
+
+    Below that the timer fires before Deepgram has confirmed, so one spoken
+    sentence arrives as several turns: words are corrupted at the split and the
+    turn counts that end a section are inflated. The old 0.35 was under every
+    sample taken, which is how that shipped unnoticed.
+    """
+    assert stt.DEEPGRAM_FINALIZATION_WAIT_SECONDS > 0.52
+
+
 def test_the_openai_wait_still_clears_its_measured_maximum():
     """Measured max was 1.08s. Below that the timer fires on a fragment and the
     interviewer answers half a sentence, which costs more than the latency

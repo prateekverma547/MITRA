@@ -258,3 +258,145 @@ async def test_a_broken_over_check_never_stops_the_ladder():
     await escalation.handle_idle(aggregator=None)
 
     assert len(worker.of_type(TTSSpeakFrame)) == 1
+
+
+# -- an interview ends with somebody leaving ---------------------------------
+#
+# Every departure was counted as a disconnect, and an interview ends with the
+# candidate leaving, so every interview recorded one. `disconnects > 0` is on
+# its own enough to mark a report degraded, so every report in the system said
+# the recording was poor and the candidate "dropped out of the call 1 time",
+# on the strength of a normal goodbye. Six of six stored interviews, no
+# exceptions and no correct hits.
+#
+# Presence alone cannot tell the two apart: a connection that dies mid-answer
+# and never comes back looks exactly like hanging up at the end. The brain can,
+# because it knows whether the interview had reached its close, so it is asked.
+
+
+def finished(over: bool = True) -> RoomPresence:
+    """Presence that believes the interview is, or is not, already over."""
+    return RoomPresence(interview_over=lambda: over)
+
+
+def test_hanging_up_at_the_end_is_not_a_disconnect():
+    """The bug. The candidate is thanked, says goodbye, and closes the tab."""
+    presence = finished(over=True)
+    presence.joined("cand-1")
+
+    presence.left("cand-1", "user left")
+
+    assert presence.disconnects == 0
+    assert presence.candidate_present is False
+    assert presence.summary()["present_at_end"] == 0
+
+
+def test_a_connection_that_dies_mid_interview_is_still_counted():
+    """The guard against overcorrecting, and the one that matters most.
+
+    This looks identical to the case above from presence alone: one departure,
+    empty room, never comes back. It is a truncated interview, which is exactly
+    when a report most needs to explain itself, so it must still be counted.
+    """
+    presence = finished(over=False)  # the brain is mid-competency
+    presence.joined("cand-1")
+
+    presence.left("cand-1", "connection lost")
+
+    assert presence.disconnects == 1, (
+        "a candidate who dropped out mid-interview was silently written off as a "
+        "normal goodbye, which is the failure this change must not introduce"
+    )
+
+
+def test_a_drop_and_a_rejoin_is_one_disconnect_not_two():
+    """The real drop counts. The departure at the end does not."""
+    over = False
+    presence = RoomPresence(interview_over=lambda: over)
+
+    presence.joined("cand-1")
+    presence.left("cand-1", "connection lost")   # mid-interview: a real drop
+    presence.joined("cand-1")                    # they come back
+    over = True                                  # the interview reaches its close
+    presence.left("cand-1", "user left")         # and they say goodbye
+
+    assert presence.disconnects == 1
+
+
+def test_a_bystander_leaving_mid_interview_is_still_counted():
+    """Two in the room, one goes. The interview has not finished, so it counts."""
+    presence = finished(over=False)
+    presence.joined("cand-1")
+    presence.joined("someone-else")
+
+    presence.left("someone-else", "left the room")
+
+    assert presence.disconnects == 1
+    assert presence.candidate_present is True
+    assert presence.peak_others == 2
+
+
+def test_without_a_brain_every_departure_is_counted_exactly_as_before():
+    """No signal, no discounting. A transport that cannot report this, and the
+    text harness, keep the behaviour they had rather than a broken half of it."""
+    presence = RoomPresence()
+    presence.joined("cand-1")
+
+    presence.left("cand-1", "user left")
+
+    assert presence.disconnects == 1
+
+
+def test_a_broken_over_check_counts_the_departure():
+    """The safe direction. Over-reporting a dropped call is recoverable by
+    reading the transcript; silencing a real one is not."""
+    def explode() -> bool:
+        raise RuntimeError("brain unavailable")
+
+    presence = RoomPresence(interview_over=explode)
+    presence.joined("cand-1")
+
+    presence.left("cand-1")
+
+    assert presence.disconnects == 1
+
+
+def test_a_clean_interview_no_longer_reads_as_a_poor_recording():
+    """The consequence. With nothing else firing, a clean interview stops
+    claiming the recording was bad, and the report says nothing about it."""
+    from feedback.health import assess
+    from shared.contracts import Speaker, Transcript, TranscriptTurn
+
+    presence = finished(over=True)
+    presence.joined("cand-1")
+    presence.left("cand-1", "user left")
+
+    turns = [
+        TranscriptTurn(index=0, speaker=Speaker.INTERVIEWER, text="Tell me about your work.", at_seconds=0.0),
+        TranscriptTurn(index=1, speaker=Speaker.CANDIDATE, text="I led the payments migration end to end for about nine months.", at_seconds=5.0),
+    ]
+    health = assess(Transcript(interview_id="int_1", turns=turns), presence.summary())
+
+    assert health.disconnects == 0
+    assert health.degraded is False
+    assert health.as_sentence is None
+
+
+def test_a_truncated_interview_still_says_so():
+    """And the other direction still reaches the report."""
+    from feedback.health import assess
+    from shared.contracts import Speaker, Transcript, TranscriptTurn
+
+    presence = finished(over=False)
+    presence.joined("cand-1")
+    presence.left("cand-1", "connection lost")
+
+    turns = [
+        TranscriptTurn(index=0, speaker=Speaker.INTERVIEWER, text="Tell me about your work.", at_seconds=0.0),
+        TranscriptTurn(index=1, speaker=Speaker.CANDIDATE, text="I led the payments migration end to end for about nine months.", at_seconds=5.0),
+    ]
+    health = assess(Transcript(interview_id="int_1", turns=turns), presence.summary())
+
+    assert health.disconnects == 1
+    assert health.degraded is True
+    assert "dropped out of the call" in health.as_sentence

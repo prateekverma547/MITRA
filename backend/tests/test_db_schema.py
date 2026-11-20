@@ -1,16 +1,12 @@
-"""Schema tests — the part of the database that bites in deployment, not locally.
+"""Schema tests for a freshly created database.
 
-`create_all` creates missing tables and silently ignores tables that already
-exist. So adding a field to a model works perfectly on a developer's fresh
-SQLite file and does nothing at all to the Railway Postgres that was created
-before the field existed. The failure surfaces as a query error in production
-against a schema that looked fine in every test.
-
-These tests pin the additive-migration step that closes that gap.
+The earlier version of this file tested a runtime step that added missing columns to
+live tables. That step is gone: the schema now changes only through Alembic revisions,
+and the tests that matter for that live in test_migrations.py.
 """
 
 import pytest
-from sqlalchemy import Column, Integer, String, inspect, text
+from sqlalchemy import inspect
 
 from app import db
 
@@ -30,71 +26,13 @@ async def columns_of(table: str) -> set[str]:
         )
 
 
-async def test_a_new_nullable_column_is_added_to_an_existing_table(database):
-    await db.create_all()
-    assert "late_addition" not in await columns_of("candidates")
-
-    # Simulate a developer adding a field to the model after the table exists.
-    table = db.Candidate.__table__
-    table.append_column(Column("late_addition", String, nullable=True))
-    try:
-        await db.create_all()
-        assert "late_addition" in await columns_of("candidates")
-    finally:
-        table._columns.remove(table.c.late_addition)
-
-
-async def test_a_new_not_null_column_refuses_rather_than_guessing(database):
-    """Existing rows have no value for it, and inventing one corrupts records."""
-    await db.create_all()
-
-    table = db.Candidate.__table__
-    table.append_column(Column("required_addition", String, nullable=False))
-    try:
-        with pytest.raises(RuntimeError, match="needs a real migration"):
-            await db.create_all()
-    finally:
-        table._columns.remove(table.c.required_addition)
-
-
-async def test_a_not_null_column_with_a_server_default_is_allowed(database):
-    """The default answers "what do existing rows get?", so nothing is guessed."""
-    await db.create_all()
-
-    table = db.Candidate.__table__
-    table.append_column(
-        Column("counted", Integer, nullable=False, server_default="1")
-    )
-    try:
-        await db.create_all()
-        assert "counted" in await columns_of("candidates")
-    finally:
-        table._columns.remove(table.c.counted)
-
-
-async def test_existing_rows_survive_the_migration(database):
-    """The whole point: adding a field must not cost the data already stored."""
-    await db.create_all()
-    async with db.get_engine().begin() as connection:
-        await connection.execute(
-            text(
-                "INSERT INTO jobs (id, source_filename, jd_text, spec_status) "
-                "VALUES ('job_keep', 'jd.txt', 'text', 'ready')"
-            )
-        )
-
-    table = db.Job.__table__
-    table.append_column(Column("late_addition", String, nullable=True))
-    try:
-        await db.create_all()
-        async with db.get_engine().begin() as connection:
-            rows = (await connection.execute(text("SELECT id FROM jobs"))).all()
-        assert [r[0] for r in rows] == ["job_keep"]
-    finally:
-        table._columns.remove(table.c.late_addition)
-
-
-async def test_the_refinement_column_the_panel_depends_on_exists(database):
-    """Named explicitly because it is the column that motivated the migration."""
+async def test_a_fresh_database_has_the_refinement_column_the_panel_depends_on(database):
     await db.create_all()
     assert "blueprint_refinements" in await columns_of("candidates")
+
+
+async def test_a_fresh_database_has_the_recording_columns(database):
+    await db.create_all()
+    assert {"recording_status", "recording_expires_at", "recording_path"} <= await columns_of(
+        "interviews"
+    )

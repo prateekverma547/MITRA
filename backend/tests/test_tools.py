@@ -229,3 +229,92 @@ def test_a_brain_with_no_tool_call_carries_on():
 
     assert brain.withdrew is False
     assert brain.current_section.kind != "closing"
+
+
+# -- a skip is not a withdrawal ----------------------------------------------
+
+
+async def test_the_tool_called_on_a_skip_does_not_offer_to_stop():
+    """The bug from `int_7e31aaff4ab2`, at 234s.
+
+    The candidate said "right now, I don't know the answer of this question.
+    Can we skip it?" and the interviewer replied "Okay. Would you like to end
+    the interview here or continue?" — the `OFFER_TO_STOP` block, word for word.
+
+    The corroboration gate worked: the patterns disagreed, so nothing ended. But
+    being asked to confirm leaving is not a free sentence when all they wanted
+    was a different question.
+    """
+    said = "right now, I don't know the answer of this question. Can we skip it?"
+    brain = InterviewBrain(tiny_blueprint())
+    brain.observe(bot_text="Tell me about a project.")
+    brain.observe(candidate_text=said)
+    llm = FakeLLM()
+    register(llm, brain)
+
+    params = FakeParams(said=said, explicit=True)
+    await llm.registered[END_INTERVIEW](params)
+
+    assert brain.withdrew is False
+    assert params.result["ended"] is False
+    assert "THEY HAVE ASKED TO STOP" not in brain.plan_turn().system_instruction
+    assert "ask a different question" in params.result["next"]
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        # The patterns catch this one, so it ends at once.
+        ("just end this interview", True),
+        # These they do not, so they get the one confirming question. Either
+        # way the veto must stay out of it: "skip" appearing in a sentence
+        # cannot be what decides whether somebody is allowed to leave.
+        ("can we skip the rest of this interview", False),
+        ("skip this, I'm done", False),
+    ],
+    ids=lambda v: v[0] if isinstance(v, tuple) else str(v),
+)
+def test_a_skip_never_swallows_a_real_withdrawal(said):
+    """The direction that must not be traded away."""
+    from bot.brain.withdrawal import asked_to_skip_question
+
+    assert asked_to_skip_question(said[0]) is False
+
+
+async def test_a_withdrawal_the_patterns_miss_is_still_asked_about():
+    """Unchanged by the skip veto, and checked because "skip" is in it."""
+    said = "can we skip the rest of this interview"
+    brain = InterviewBrain(tiny_blueprint())
+    brain.observe(bot_text="Tell me about a project.")
+    brain.observe(candidate_text=said)
+    llm = FakeLLM()
+    register(llm, brain)
+
+    await llm.registered[END_INTERVIEW](FakeParams(said=said, explicit=True))
+
+    assert "THEY HAVE ASKED TO STOP" in brain.plan_turn().system_instruction
+
+
+async def test_a_withdrawal_the_patterns_catch_still_ends_at_once():
+    """The explicit path is untouched: the veto is only ever consulted when the
+    patterns did not corroborate."""
+    brain = InterviewBrain(tiny_blueprint())
+    brain.observe(bot_text="Tell me about a project.")
+    brain.observe(candidate_text="Skip all this, just end this interview.")
+    llm = FakeLLM()
+    register(llm, brain)
+
+    await llm.registered[END_INTERVIEW](
+        FakeParams(said="just end this interview", explicit=True)
+    )
+
+    assert brain.withdrew is True
+    assert brain.current_section.kind == "closing"
+
+
+def test_the_description_separates_skipping_from_leaving():
+    schema = TOOLS.standard_tools[0]
+
+    assert "can we skip it" in schema.description
+    assert "Asking to skip" in schema.description
+    assert "not for the interview" in schema.description

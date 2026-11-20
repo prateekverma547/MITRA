@@ -17,9 +17,13 @@
 // ordinary <a href> links rather than click handlers, which is what makes
 // middle-click and copy-link-address work too.
 //
-// Plain JavaScript, no build step. CLAUDE.md specifies React + Vite, which is
-// still right once this settles; it talks to the real API, so a rewrite swaps
-// the view layer and nothing else.
+// Plain JavaScript, no build step. Every request goes through api(), and every
+// product fact the screens state comes from /config, so the panel cannot drift
+// from the server it describes.
+//
+// Inline handlers (onclick="...") are not used: the page's Content-Security-Policy
+// forbids them. Buttons carry data-action and data-id instead, and one listener on
+// #app dispatches them (see ACTIONS below).
 
 const app = document.getElementById("app");
 
@@ -44,6 +48,16 @@ const when = (iso) =>
   new Date(iso).toLocaleString(undefined, {
     day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
   });
+
+// Filled in from /config before the first render (see start() at the bottom).
+// The interview-length rule is shown wherever the length appears, so it is visible
+// while someone is deciding rather than after a spec has been refused. The retention
+// period is the number the candidate is promised on the consent notice, so the panel
+// must state the same one.
+let config = {};
+let DURATION_MIN = 0;
+let DURATION_MAX = 0;
+let RETENTION_DAYS = 0;
 
 const LABELS = {
   not_scheduled: "no session",
@@ -107,7 +121,7 @@ function go(path) {
 function renderLogin() {
   app.innerHTML = `
     <div class="signin">
-      <img class="logo" src="{{LOGO_URL}}" alt="{{BOT_NAME}}: {{BOT_FULL_NAME}}" />
+      <img class="logo" src="${esc(config.logo_url)}" alt="${esc(config.bot_name)}: ${esc(config.bot_full_name)}" />
       <div class="card">
         <h2>Sign in</h2>
         <p class="sub">This panel shows every job description, CV and interview
@@ -228,7 +242,8 @@ async function viewProfiles() {
     <div class="spread">
       <div><h2>Profiles</h2><p class="sub">One profile per role you are hiring for.</p></div>
       <div class="row">
-        <button onclick="signOut()">Sign out</button>
+        <a class="btn" href="#/costs">Costs</a>
+        <button data-action="signOut">Sign out</button>
         <a class="btn primary" href="#/profiles/new">New profile</a>
       </div>
     </div>
@@ -250,14 +265,14 @@ async function viewProfiles() {
           </a>
           <div class="row">
             ${pill(p.spec_status)}
-            <button class="danger" onclick="removeProfile('${p.job_id}')">Delete</button>
+            <button class="danger" data-action="removeProfile" data-id="${esc(p.job_id)}">Delete</button>
           </div>
         </div>
       </div>`).join("")}
   `;
 }
 
-window.removeProfile = async (jobId) => {
+const removeProfile = async (jobId) => {
   if (!confirm(
     "Delete this profile and everything under it: CVs, interview plans and " +
     "transcripts?\n\nThis cannot be undone."
@@ -266,12 +281,26 @@ window.removeProfile = async (jobId) => {
   render();
 };
 
+/*  A starting point for the job description, never a replacement for the chat.
+ *
+ *  The template only fills the box. What the interview actually tests is still
+ *  decided by the clarification chat, which runs exactly as it did: the
+ *  employer answers the same questions and the EvaluationSpec is produced the
+ *  same way. Nothing here pre-builds a spec, and nothing here skips a step.
+ *
+ *  Loading it into an editable textarea rather than attaching it as a file is
+ *  the point. A template that could not be changed before the chat would be
+ *  worse than no template, because it would feed the model words the employer
+ *  never meant and every competency after that would be derived from them.
+ *  Writing from scratch and uploading a real file both still work, and an
+ *  uploaded file wins if somebody does both.
+ */
 function viewNewProfile() {
   app.innerHTML = `
     ${crumbs([{ label: "Profiles", href: "#/profiles" }, { label: "New profile" }])}
     <div class="card">
       <h2>New profile</h2>
-      <p class="sub">Name it, then upload the job description. Mitra reads the JD
+      <p class="sub">Name it, then give us the job description. Mitra reads the JD
         and asks you a few questions to work out what the interview should test.</p>
 
       <label class="lbl">What are you hiring for?</label>
@@ -283,7 +312,18 @@ function viewNewProfile() {
         same role apart.</div>
 
       <label class="lbl">Job description</label>
+      <div class="small muted" style="margin-bottom:8px">Start from one of these
+        and edit it, or write your own below, or upload a file.</div>
+      <div class="row" id="tpl" style="flex-wrap:wrap;gap:8px;margin-bottom:12px">
+        <span class="muted small">Loading templates…</span>
+      </div>
+      <textarea id="jdtext" rows="14" placeholder="Paste or write the job description here."></textarea>
+      <div class="small muted" style="margin-top:5px" id="tplnote"></div>
+
+      <label class="lbl">Or upload a file <span class="muted">(optional)</span></label>
       <input type="file" id="jd" accept=".pdf,.docx,.txt,.md" />
+      <div class="small muted" style="margin-top:5px">A file takes precedence over
+        the text above.</div>
 
       <div class="row" style="margin-top:18px">
         <button class="primary" id="up">Create profile</button>
@@ -292,19 +332,57 @@ function viewNewProfile() {
       <div class="err hidden" id="err"></div>
     </div>`;
 
+  const box = document.getElementById("jdtext");
+  const note = document.getElementById("tplnote");
+  let chosen = "";
+
+  // Templates are a convenience. If the request fails the row says so and the
+  // employer carries on with the textarea and the file input, which are the
+  // two routes that existed before this.
+  api("/jd-templates").then((list) => {
+    const row = document.getElementById("tpl");
+    if (!list.length) { row.innerHTML = `<span class="muted small">No templates.</span>`; return; }
+    row.innerHTML = list
+      .map((t) => `<button type="button" class="tplbtn" data-slug="${esc(t.slug)}">${esc(t.title)}</button>`)
+      .join("");
+    row.querySelectorAll(".tplbtn").forEach((button) => {
+      button.onclick = () => {
+        const template = list.find((t) => t.slug === button.dataset.slug);
+        // Anything already typed is somebody's work. Replacing it silently is
+        // the one move here that loses something that cannot be recovered.
+        if (box.value.trim() && box.value !== chosen &&
+            !confirm("Replace what you have written with this template?")) return;
+        box.value = template.text;
+        chosen = template.text;
+        note.textContent = "Loaded the " + template.title + " template. Edit it before you continue.";
+        const title = document.getElementById("title");
+        if (!title.value.trim()) title.value = template.title;
+        box.focus();
+      };
+    });
+  }).catch(() => {
+    document.getElementById("tpl").innerHTML =
+      `<span class="muted small">Templates could not be loaded. Write or upload a JD instead.</span>`;
+  });
+
   document.getElementById("up").onclick = async () => {
     const file = document.getElementById("jd").files[0];
+    const typed = box.value.trim();
     const err = document.getElementById("err");
-    if (!file) {
-      err.textContent = "Choose a job description file first.";
+    if (!file && !typed) {
+      err.textContent = "Add a job description, either as text or as a file.";
       err.classList.remove("hidden");
       return;
     }
+    err.classList.add("hidden");
     document.getElementById("up").disabled = true;
     document.getElementById("status").textContent = "Reading the job description…";
     try {
       const form = new FormData();
-      form.append("file", file);
+      // The endpoint takes a file, so typed text is sent as one. Named .md
+      // because that is what it is, and because source_filename is what the
+      // panel later shows as the provenance of the spec.
+      form.append("file", file || new File([typed], "job-description.md", { type: "text/markdown" }));
       form.append("title", document.getElementById("title").value);
       form.append("business_unit", document.getElementById("bu").value);
       const created = await api("/jobs", { method: "POST", body: form });
@@ -375,6 +453,19 @@ async function viewProfile(jobId) {
     ${ready ? cvsCard(candidates) : ""}
   `;
 
+  // **A plan finishing does not redraw the list it is listed in.** Blueprint
+  // generation is a BackgroundTask kicked off at CV upload, so this screen is
+  // rendered once with "plan generating" and then never again: the pill stayed
+  // wrong until the row was clicked, because the candidate detail view is the
+  // only one that polls. Not a cache and not a stale poll — a state nobody
+  // refreshed.
+  //
+  // Same ticket mechanism the detail view uses, so navigating away cancels it
+  // rather than redrawing over whatever was opened next.
+  if (candidates.some((c) => ["pending", "generating"].includes(c.blueprint_status))) {
+    poll(2500);
+  }
+
   if (!ready) {
     document.getElementById("send").onclick = async () => {
       const text = document.getElementById("reply").value.trim();
@@ -427,12 +518,14 @@ function specCard(spec, jobId) {
     <div class="card">
       <div class="spread">
         <h3 style="margin:0">What this interview tests</h3>
-        <button onclick="reopenSpec('${jobId}')">Change this</button>
+        <button data-action="reopenSpec" data-id="${esc(jobId)}">Change this</button>
       </div>
       <div class="kv" style="margin-top:14px">
         <div>Seniority</div><div>${esc(spec.seniority)}</div>
         <div>Experience</div><div>${esc(spec.experience_expectation)}</div>
-        <div>Length</div><div>${spec.duration_minutes} min</div>
+        <div>Length</div>
+        <div>${spec.duration_minutes} min
+          <span class="muted small">(${DURATION_MIN} to ${DURATION_MAX} allowed)</span></div>
       </div>
       <h3>Competencies</h3>
       ${spec.competencies.map((c) => `
@@ -450,7 +543,7 @@ function specCard(spec, jobId) {
     </div>`;
 }
 
-window.reopenSpec = async (jobId) => {
+const reopenSpec = async (jobId) => {
   if (!confirm(
     "Reopen the discussion to change what this interview tests?\n\n" +
     "When you confirm a new summary, plans are rebuilt for candidates who have " +
@@ -578,7 +671,7 @@ async function viewCandidate(candidateId) {
         <div class="row" style="margin-top:14px">
           <a class="btn" href="#/interviews/${open.interview_id}">Open session</a>
           ${open.status === "scheduled"
-            ? `<button class="danger" onclick="cancelSession('${open.interview_id}')">Cancel</button>`
+            ? `<button class="danger" data-action="cancelSession" data-id="${esc(open.interview_id)}">Cancel</button>`
             : ""}
           ${pill(open.status)}
         </div>
@@ -675,7 +768,7 @@ async function viewCandidate(candidateId) {
   };
 }
 
-window.cancelSession = async (interviewId) => {
+const cancelSession = async (interviewId) => {
   if (!confirm(
     "Cancel this session?\n\nThe meeting ID and password stop working. You can " +
     "start a new session afterwards."
@@ -706,10 +799,13 @@ async function viewInterview(interviewId) {
     </div>
 
     ${done ? reportCard(iv) : ""}
+    ${done ? recordingCard(iv) : ""}
     ${done ? brainCard(iv, metrics, latency) : `<div class="card muted">
       Waiting for the candidate to join. Mitra starts when they do, and this page
       refreshes on its own.</div>`}
   `;
+
+  wireRecording(iv);
 
   const retry = document.getElementById("rescore");
   if (retry) {
@@ -728,9 +824,131 @@ async function viewInterview(interviewId) {
     };
   }
 
-  // Poll while the interview is live, and while scoring is still running.
+  // Poll while the interview is live, while scoring is still running, and while
+  // the recording is still on its way over from the video service.
   if (!done) poll(5000);
   else if (["pending", "generating"].includes(iv.feedback_status)) poll(4000);
+  else if (iv.recording_status === "recording") poll(15000);
+}
+
+// -- the recording ----------------------------------------------------------
+//
+// For a person to watch. It is not scored, nothing reads it, and no model sees
+// it: it is here so a reviewer can hear how an answer was given, and judge
+// things a transcript cannot show them, including whether somebody had help.
+//
+// **When there is no recording, this says so in words.** Every branch below
+// ends in a sentence rather than an empty player. A video element with a broken
+// source looks like a bug in the panel, and a reviewer who cannot tell "there is
+// no recording" from "the recording will not load" has been told nothing.
+
+function recordingCard(iv) {
+  const status = iv.recording_status || "not_recorded";
+
+  if (status === "stored") {
+    const size = iv.recording_bytes
+      ? ` · ${(iv.recording_bytes / 1e6).toFixed(0)} MB` : "";
+    return `<div class="card">
+      <div class="spread">
+        <h3 style="margin:0">Watch it back</h3>
+        <button id="rec-delete" class="danger">Delete recording</button>
+      </div>
+      <video id="rec" controls preload="metadata" playsinline
+             style="width:100%;margin-top:12px;border-radius:8px;background:#000"
+             src="/interviews/${esc(iv.interview_id)}/recording/video"></video>
+      <p class="small muted" style="margin-bottom:0">
+        ${iv.recording_expires_at
+          ? `Kept until ${esc(when(iv.recording_expires_at))}, then deleted automatically.`
+          : `Kept for ${RETENTION_DAYS} days, then deleted automatically.`}${size}
+        Click any line of the transcript below to jump to that moment.</p>
+    </div>`;
+  }
+
+  if (status === "recording") {
+    return `<div class="card muted">
+      <h3 style="margin-top:0">Watch it back</h3>
+      <p style="margin-bottom:0">The recording is still being put together by the
+        video service. It usually takes a few minutes after the interview ends,
+        and this page checks on its own.</p>
+    </div>`;
+  }
+
+  if (status === "unavailable") {
+    return `<div class="card note">
+      <h3 style="margin-top:0">There is no recording of this interview</h3>
+      <p class="small muted" style="margin-bottom:0">${esc(
+        iv.recording_error || "The recording did not happen and no reason was recorded.")}
+        The transcript and the report are unaffected.</p>
+    </div>`;
+  }
+
+  if (status === "deleted") {
+    return `<div class="card muted">
+      <h3 style="margin-top:0">The recording was deleted</h3>
+      <p style="margin-bottom:0">Somebody deleted it${
+        iv.recording_deleted_at ? ` on ${esc(when(iv.recording_deleted_at))}` : ""
+      }. It cannot be recovered. The transcript is still here.</p>
+    </div>`;
+  }
+
+  if (status === "expired") {
+    return `<div class="card muted">
+      <h3 style="margin-top:0">The recording has been deleted</h3>
+      <p style="margin-bottom:0">Recordings are kept for ${RETENTION_DAYS} days and
+        this one has passed that${
+          iv.recording_deleted_at ? `, on ${esc(when(iv.recording_deleted_at))}` : ""
+        }. The transcript is still here.</p>
+    </div>`;
+  }
+
+  return `<div class="card muted">
+    <h3 style="margin-top:0">This interview was not recorded</h3>
+    <p style="margin-bottom:0">It ran before recording existed, so there is
+      nothing to watch back. The transcript is below.</p>
+  </div>`;
+}
+
+function wireRecording(iv) {
+  const video = document.getElementById("rec");
+
+  // A transcript line seeks the video. The offset is the gap between the
+  // transcript's clock, which starts when the bot process does, and the video's,
+  // which starts a moment later when it reaches the room. Without subtracting it
+  // every jump lands slightly early, and "slightly" is a whole answer when turns
+  // are short.
+  if (video) {
+    const offset = iv.recording_offset_seconds || 0;
+    for (const line of document.querySelectorAll("[data-at]")) {
+      line.addEventListener("click", () => {
+        video.currentTime = Math.max(0, Number(line.dataset.at) - offset);
+        video.play();
+        video.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    }
+  }
+
+  const remove = document.getElementById("rec-delete");
+  if (!remove) return;
+  remove.onclick = async () => {
+    if (!confirm(
+      "Delete the recording of this interview?\n\n" +
+      "The video file is removed for good and cannot be recovered. The " +
+      "transcript and the report are not affected."
+    )) return;
+    remove.disabled = true;
+    remove.textContent = "Deleting...";
+    try {
+      await api(`/interviews/${iv.interview_id}/recording`, { method: "DELETE" });
+    } catch (e) {
+      // The recording is still there. Say that, rather than leaving a disabled
+      // button that reads as though something happened.
+      remove.disabled = false;
+      remove.textContent = "Delete recording";
+      alert(`The recording was not deleted.\n\n${e.message}`);
+      return;
+    }
+    render();
+  };
 }
 
 // -- the report -------------------------------------------------------------
@@ -761,6 +979,25 @@ function reportCard(iv) {
         unaffected. Only the report needs rebuilding.</p>
     </div>`;
   }
+  // A report that was scored and saved, but could not be read back against the
+  // current shape, arrives as null with the status still "ready". Saying
+  // "scoring the transcript" there would be a system failure wearing the look
+  // of a normal state: nobody retries, nobody looks.
+  if (!iv.feedback_report && iv.feedback_status === "ready") {
+    return `<div class="card note">
+      <div class="spread">
+        <div>
+          <strong>This report could not be opened.</strong>
+          <div class="small muted" style="margin-top:4px">It was saved in an
+            older format that no longer matches how reports are read. Rebuilding
+            it from the transcript will fix it.</div>
+        </div>
+        <button id="rescore">Rebuild report</button>
+      </div>
+      <p class="small muted" style="margin-bottom:0">The transcript and the
+        session record are unaffected, and are shown below.</p>
+    </div>`;
+  }
   if (!iv.feedback_report) {
     return `<div class="card muted">
       Scoring the transcript… this page updates itself.
@@ -769,6 +1006,19 @@ function reportCard(iv) {
 
   const r = iv.feedback_report;
   const health = r.conversation_health;
+  // Three independent degradations: the recording, our own analysis of it, and
+  // how the interview was conducted. All three render, in that order, and none
+  // hides another — a report can be degraded on every count and a reader has to
+  // see each reason separately.
+  //
+  // The third was derived, attached to the report and used to cap the
+  // recommendation for a week while never reaching this file, so the one thing
+  // it exists to tell a recruiter — that thin answers may be the interviewer
+  // repeating itself rather than the candidate having nothing — was the one
+  // thing they could not read. `banner()` was already generic over any health
+  // object; only this list was not.
+  const analysis = r.judgment_health;
+  const questioning = r.questioning_health;
   const scored = r.competency_scores.filter((s) => s.score !== null);
   const average = scored.length
     ? scored.reduce((a, s) => a + s.score, 0) / scored.length
@@ -795,8 +1045,10 @@ function reportCard(iv) {
       <p class="small muted" style="margin:14px 0 0">
         Evidence for a person to weigh, not a hiring decision. Every score below
         is backed by quotes you can check against the transcript.</p>
-      ${health && health.degraded ? `<div class="note" style="margin:14px 0 0">
-        <strong>Read this first.</strong> ${esc(healthSentence(health))}</div>` : ""}
+      ${banner(health)}
+      ${banner(analysis)}
+      ${banner(questioning)}
+      ${focusLine(iv)}
       <div class="spread" style="margin-top:16px;align-items:center">
         <span class="small muted">
           ${rebuilding
@@ -804,6 +1056,13 @@ function reportCard(iv) {
             : iv.feedback_generated_at
               ? `Generated ${when(iv.feedback_generated_at)}`
               : "Generated from the saved transcript"}
+          ${/* How long the interview actually ran, next to what the report cannot
+                tell you rather than on its own. A thin report reads differently
+                when the interview was eleven minutes of a planned twenty, and
+                that is the only question this number answers. */ ""}
+          ${!rebuilding && r.interview_duration_seconds
+            ? ` · interview ran ${Math.round(r.interview_duration_seconds / 60)} min`
+            : ""}
         </span>
         <button id="rescore" ${rebuilding ? "disabled" : ""}>Regenerate</button>
       </div>
@@ -811,14 +1070,7 @@ function reportCard(iv) {
 
     ${r.competency_scores.map(competencyCard).join("")}
 
-    ${r.red_flags_observed?.length ? `<div class="card">
-      <h3 style="margin-top:0">Dealbreakers observed</h3>
-      ${r.red_flags_observed.map((f) => `
-        <div class="turn">
-          <strong>${esc(f.description)}</strong>
-          ${f.evidence.map(quoteBlock).join("")}
-        </div>`).join("")}
-    </div>` : ""}
+    ${dealbreakerCard(r)}
 
     ${r.contradictions?.length ? `<div class="card">
       <h3 style="margin-top:0">Inconsistencies noted</h3>
@@ -844,25 +1096,108 @@ function reportCard(iv) {
     </div>`;
 }
 
-/** Why the recording, rather than the candidate, may explain a thin report.
- *  Built here rather than sent as prose so the panel can word it its own way. */
-function healthSentence(h) {
-  const plural = (n, one, many) => (n === 1 ? one : many);
-  const parts = [];
-  if (h.repair_requests) parts.push(
-    `was asked to repeat themselves ${h.repair_requests} ${plural(h.repair_requests, "time", "times")}`);
-  if (h.fragmentary_turns) parts.push(
-    `had ${h.fragmentary_turns} ${plural(h.fragmentary_turns, "answer", "answers")} arrive incomplete`);
-  if (h.echo_turns) parts.push("was heard through their own speakers rather than headphones");
-  if (h.prompted_silences) parts.push(
-    `went quiet ${h.prompted_silences} ${plural(h.prompted_silences, "time", "times")} long enough to be prompted`);
-  if (h.disconnects) parts.push(
-    `dropped out of the call ${h.disconnects} ${plural(h.disconnects, "time", "times")}`);
-  const list = parts.length > 1
-    ? parts.slice(0, -1).join(", ") + " and " + parts[parts.length - 1]
-    : parts[0] || "could not be heard clearly";
-  return `The recording was poor: the candidate ${list}. Where the scores below `
-    + `are thin, the connection is a likely cause and not a conclusion about them.`;
+/** One "read this first" banner, from a health record on the report.
+ *
+ *  The sentence is written once, in shared/contracts.py, and sent. The panel
+ *  used to compose its own copy of the recording-quality one, which drifted:
+ *  the scoring model was told one wording and the employer read another, both
+ *  claiming to describe the same recording. Render what you are given.
+ */
+/*  When the interview page was not in front of the candidate.
+ *
+ *  Context beside the report, not a finding inside it. It is deliberately the
+ *  plainest thing on this screen: a count, a duration, and no verdict. No
+ *  score, no threshold, no percentage and no colour that implies one, because
+ *  a number here would suggest a model nobody has validated, and ten stored
+ *  interviews with no real cheating in them cannot validate one.
+ *
+ *  It also catches only the same-device case. A phone, a second monitor with
+ *  the browser still focused, or somebody else in the room produce nothing at
+ *  all, so a clean line here is not evidence of anything and the wording must
+ *  never suggest it is.
+ *
+ *  Silent when the page was never left. An absence is not a result, and a row
+ *  reading "0 times" would turn one into one.
+ */
+function focusLine(iv) {
+  const events = iv.focus_events || [];
+  if (!events.length) return "";
+  const total = Math.round(events.reduce((a, e) => a + (e.seconds || 0), 0));
+  const spell = total >= 90
+    ? `${Math.round(total / 60)} minutes`
+    : `${total} second${total === 1 ? "" : "s"}`;
+  const times = events.length === 1 ? "once" : `${events.length} times`;
+  return `<p class="small muted" style="margin:14px 0 0">
+    The interview page was out of view ${times}, ${esc(spell)} in total. The
+    candidate was told this is recorded. It shows only what happened on this
+    device, so it says nothing about a second screen, a phone, or anyone else
+    in the room.</p>`;
+}
+
+function banner(health) {
+  if (!health || !health.degraded || !health.as_sentence) return "";
+  return `<div class="note" style="margin:14px 0 0">
+    <strong>Read this first.</strong> ${esc(health.as_sentence)}</div>`;
+}
+
+/**
+ *  Every dealbreaker the employer named, and which of three the interview could
+ *  say about it.
+ *
+ *  `red_flags_observed` only ever held what fired, so silence meant "we asked
+ *  and they were fine" or "nobody looked" and a reader could not tell which.
+ *  Across 24 stored reports one dealbreaker fired in 10 and the other three
+ *  fired zero times, with nothing recording whether they were cleared or never
+ *  put.
+ *
+ *  The three states are given different weight on purpose, because they are
+ *  different kinds of fact:
+ *
+ *    observed     a finding about the candidate. Quoted, and marked like a
+ *                 failure, because that is what the employer said it was.
+ *    cleared      reassurance. Quoted too, held to the same evidence standard,
+ *                 and marked as settled rather than merely absent.
+ *    not reached  a limitation of the INTERVIEW. Muted, unquoted, and it says
+ *                 in words that it is not a mark against the candidate. The
+ *                 same distinction `questioning_health` exists for.
+ *
+ *  `as_sentence` comes from the contract so the wording lives in one place; the
+ *  panel used to compose its own copy of the recording-quality sentence and it
+ *  drifted three ways.
+ *
+ *  Falls back to the old card for reports scored before the field existed,
+ *  which are still in the database and still readable.
+ */
+function dealbreakerCard(r) {
+  if (!r.dealbreakers?.length) {
+    if (!r.red_flags_observed?.length) return "";
+    return `<div class="card">
+      <h3 style="margin-top:0">Dealbreakers observed</h3>
+      ${r.red_flags_observed.map((f) => `
+        <div class="turn">
+          <strong>${esc(f.description)}</strong>
+          ${f.evidence.map(quoteBlock).join("")}
+        </div>`).join("")}
+    </div>`;
+  }
+
+  const mark = { observed: "bad", cleared: "ok", not_reached: "warn" };
+  const label = { observed: "observed", cleared: "addressed", not_reached: "not reached" };
+
+  return `<div class="card">
+    <h3 style="margin-top:0">Dealbreakers</h3>
+    <p class="small muted" style="margin-top:0">Everything the employer said
+      would rule someone out, and what this interview could establish.</p>
+    ${r.dealbreakers.map((d) => `
+      <div class="turn">
+        <div class="spread" style="align-items:flex-start;gap:10px">
+          <strong ${d.state === "not_reached" ? `class="muted"` : ""}>${esc(d.dealbreaker)}</strong>
+          <span class="pill ${mark[d.state] || "warn"}">${esc(label[d.state] || d.state)}</span>
+        </div>
+        <div class="small muted" style="margin-top:4px">${esc(d.as_sentence)}</div>
+        ${(d.evidence || []).map(quoteBlock).join("")}
+      </div>`).join("")}
+  </div>`;
 }
 
 function competencyCard(s) {
@@ -899,10 +1234,49 @@ function quoteBlock(q) {
   </blockquote>`;
 }
 
+// How long the interviewer took to answer, said in a way that cannot mislead.
+//
+// **The number here used to be a median, and a median cannot describe this.**
+// A turn ends one of two ways: the turn model was confident and the interviewer
+// answers in about 1.7s, or it was unsure and waits out the four second
+// fallback before answering in about 5.4s. Across five real interviews both
+// modes were identical every time; only the proportion moved. When it crossed
+// one half the median stepped from 2.04s to 5.27s and this panel reported a
+// 2.6x regression in a system nobody had touched.
+//
+// So it shows the speed when the interviewer was ready to answer, which is the
+// system, and separately how often it waited, which is the candidate. Those are
+// different facts and the old line could not tell them apart. The mean is given
+// as the overall figure because it moves with the mix rather than jumping
+// across it.
+function responseTime(latency) {
+  const ready = latency.ttfa_median_ready_ms;
+  const mean = latency.ttfa_mean_ms;
+  if (ready == null && mean == null) {
+    return latency.ttfa_median_ms
+      ? `${(latency.ttfa_median_ms / 1000).toFixed(2)}s median`
+      : "n/a";
+  }
+  const share = latency.fallback_share;
+  const secs = (ms) => `${(ms / 1000).toFixed(2)}s`;
+  // No waiting at all: one number is the whole truth, so say only that.
+  if (!share) return `${secs(ready ?? mean)} when ready`;
+  const waited = Math.round(share * 100);
+  return `${secs(ready)} when ready, ${secs(mean)} overall`
+    + `<div class="small muted">waited to be sure on ${waited}% of turns`
+    + `${latency.ttfa_median_waiting_ms
+        ? `, ${secs(latency.ttfa_median_waiting_ms)} on those` : ""}</div>`;
+}
+
+
 function brainCard(iv, metrics, latency) {
   const turns = iv.transcript?.turns || [];
   const outcomes = (iv.section_outcomes || []).filter((o) => o.turns_spent > 0);
   const events = metrics.brain_events || [];
+  // Only make lines clickable when there is something for them to seek. A
+  // pointer cursor over text that does nothing is a worse offence than no
+  // feature at all.
+  const seekable = iv.recording_status === "stored";
 
   return `
     <div class="card">
@@ -910,8 +1284,8 @@ function brainCard(iv, metrics, latency) {
       <div class="kv">
         <div>Length</div><div>${((iv.transcript?.duration_seconds || 0) / 60).toFixed(1)} min</div>
         <div>Turns</div><div>${turns.length}</div>
-        <div>Median response</div>
-        <div>${latency.ttfa_median_ms ? (latency.ttfa_median_ms / 1000).toFixed(2) + "s" : "n/a"}</div>
+        <div>Response time</div>
+        <div>${responseTime(latency)}</div>
         <div>Longest pause tolerated</div>
         <div>${latency.longest_tolerated_pause_s == null
           ? "n/a" : `${latency.longest_tolerated_pause_s}s`}</div>
@@ -951,7 +1325,8 @@ function brainCard(iv, metrics, latency) {
     <div class="card">
       <h3 style="margin-top:0">Transcript</h3>
       ${turns.map((t) => `
-        <div class="turn">
+        <div class="turn${seekable ? " seekable" : ""}"${
+          seekable ? ` data-at="${t.at_seconds}" title="Jump to this moment"` : ""}>
           <span class="who ${t.speaker === "interviewer" ? "int" : ""}">
             ${t.speaker === "interviewer" ? "Mitra" : "Candidate"}</span>
           <span class="muted small">${Math.round(t.at_seconds)}s</span>
@@ -974,6 +1349,7 @@ async function render() {
     else if (section === "profiles") await viewProfiles();
     else if (section === "candidates" && id) await viewCandidate(id);
     else if (section === "interviews" && id) await viewInterview(id);
+    else if (section === "costs") await viewCosts();
     else go("/profiles");
   } catch (e) {
     if (e.message === "Signed out.") return;
@@ -983,11 +1359,119 @@ async function render() {
   }
 }
 
-window.signOut = async () => {
+const signOut = async () => {
   await api("/admin/logout", { method: "POST" });
   go("/profiles");
   renderLogin();
 };
 
-window.addEventListener("hashchange", render);
-render();
+// Buttons that act rather than navigate. Looked up at click time, so the order the
+// functions are declared in does not matter.
+const ACTIONS = {
+  signOut: () => signOut(),
+  removeProfile: (id) => removeProfile(id),
+  reopenSpec: (id) => reopenSpec(id),
+  cancelSession: (id) => cancelSession(id),
+};
+
+app.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-action]");
+  if (!button || !app.contains(button)) return;
+  const action = ACTIONS[button.dataset.action];
+  if (action) action(button.dataset.id);
+});
+
+// ------------------------------------------------------------------- costs
+
+const money = (value) => (value == null ? "not priced" : `$${value.toFixed(4)}`);
+
+function costRow(iv) {
+  const tone = iv.complete ? "ok" : iv.has_usage ? "warn" : "";
+  const label = iv.complete ? "priced" : iv.has_usage ? "partly priced" : "no usage";
+  const usage = iv.has_usage
+    ? ` · ${iv.call_minutes} min call · ${iv.llm_calls} model calls · ${iv.tts_characters} speech chars`
+    : "";
+  const estimate = iv.has_usage
+    ? `<div class="small">Estimate: <strong>${money(iv.estimate_usd)}</strong>${
+        iv.notes.length
+          ? `<div class="small muted">${iv.notes.map((n) => `<div>${esc(n)}</div>`).join("")}</div>`
+          : ""
+      }</div>`
+    : "";
+  return `
+    <div class="list-item">
+      <div class="spread">
+        <a href="#/interviews/${esc(iv.id)}" class="mono small" style="text-decoration:none;color:inherit">${esc(iv.id)}</a>
+        <span class="pill ${tone}">${label}</span>
+      </div>
+      <div class="small muted">${esc(iv.status)} · ${esc(when(iv.created_at))}${usage}</div>
+      ${estimate}
+    </div>`;
+}
+
+/** The estimate for recent interviews. Read-only, and it names no candidate. An unpriced line is
+ *  said to be unpriced, never filled in. */
+async function viewCosts() {
+  const r = await api("/admin/costs?limit=50");
+  const t = r.totals;
+  const prices = r.prices
+    ? `LLM prices: ${esc(r.prices.source)} copy of llm-prices.com, dated ${esc(r.prices.updated_at)}, retrieved ${esc(when(r.prices.fetched_at))}.`
+    : "LLM prices are unavailable: the price feed is unreachable and no copy is cached. LLM costs are not shown.";
+  const missing = r.missing_rates.length
+    ? `<div class="card note"><strong>Not included in the estimate:</strong> ${r.missing_rates
+        .map((m) => `<code>${esc(m)}</code>`)
+        .join(", ")}. These are set through environment variables, so they are missing from the total.</div>`
+    : "";
+
+  app.innerHTML = `
+    <div class="spread">
+      <div>
+        <h2>Costs</h2>
+        <p class="sub">An estimate from usage the software counted, priced at current list rates. It is not an invoice.
+          Reconcile it against the provider bills before relying on it.</p>
+      </div>
+      <div class="row"><a class="btn" href="#/profiles">Back to profiles</a></div>
+    </div>
+
+    <p class="small muted">${prices}</p>
+    ${missing}
+
+    <div class="card">
+      <div class="row" style="gap: 32px">
+        <div><div class="small muted">Estimated total</div><div style="font-size: 24px; font-weight: 600">${money(t.estimate_usd)}</div></div>
+        <div><div class="small muted">Priced in full</div><div>${t.complete}</div></div>
+        <div><div class="small muted">Partly priced</div><div>${t.partial}</div></div>
+        <div><div class="small muted">No usage recorded</div><div>${t.no_usage}</div></div>
+      </div>
+      <p class="small muted">Totals include only the lines that have a price. Partly priced interviews are counted at what could be priced.</p>
+    </div>
+
+    <h3>Recent interviews</h3>
+    ${r.interviews.length === 0 ? `<div class="card muted">No interviews yet.</div>` : ""}
+    ${r.interviews.map(costRow).join("")}`;
+}
+
+// ------------------------------------------------------------------ start
+
+async function start() {
+  try {
+    const response = await fetch("/config", { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`Could not load the configuration (${response.status}).`);
+    config = await response.json();
+  } catch (e) {
+    app.innerHTML = `<div class="card"><h2>The panel could not start</h2><p class="sub">${esc(e.message)}</p></div>`;
+    return;
+  }
+  DURATION_MIN = config.duration_min;
+  DURATION_MAX = config.duration_max;
+  RETENTION_DAYS = config.retention_days;
+  document.title = `${config.bot_name} Admin Panel`;
+  document.getElementById("brand").textContent = config.bot_name;
+  document.getElementById("credit").textContent = config.company_credit;
+  document.getElementById("company").textContent = config.company_name;
+
+  window.addEventListener("hashchange", render);
+  render();
+}
+
+void start();

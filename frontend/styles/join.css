@@ -1,0 +1,435 @@
+    :root {
+      --ink: #12141a;
+      --muted: #5c6272;
+      --line: #e3e6ec;
+      --accent: #2f5bd7;
+      --bg: #f7f8fa;
+      --live: #1c8f5a;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    .hidden { display: none !important; }
+
+    /* ---- Step 1: credentials + consent. Narrow column is right here. ---- */
+    #entry-wrap {
+      min-height: 100%;
+      display: flex; flex-direction: column; justify-content: flex-start;
+      align-items: center;
+      padding: 40px 20px;
+    }
+    /* Who built it, at both ends of every page the candidate sees.
+       Deliberately the smallest and quietest type on the screen. Somebody
+       about to be interviewed should notice the interview, not the vendor,
+       and this is a credit rather than an advertisement. */
+    .brandline {
+      width: 100%; max-width: 560px;
+      color: var(--muted); font-size: 12px; text-align: center;
+    }
+    .brandline.top { margin-bottom: 14px; }
+    .brandline.foot { margin-top: 22px; }
+    .card {
+      width: 100%; max-width: 560px;
+      background: #fff; border: 1px solid var(--line);
+      border-radius: 14px; padding: 32px;
+    }
+    h1 { font-size: 22px; margin: 0 0 6px; letter-spacing: -0.01em; }
+    p.sub { color: var(--muted); margin: 0 0 26px; }
+    label { display: block; font-weight: 600; font-size: 14px; margin: 18px 0 6px; }
+    input[type="text"] {
+      width: 100%; padding: 12px 14px; font-size: 16px;
+      border: 1px solid var(--line); border-radius: 9px; background: #fff;
+    }
+    input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+    button.primary {
+      width: 100%; margin-top: 24px; padding: 13px 18px;
+      font-size: 16px; font-weight: 600; color: #fff;
+      background: var(--accent); border: 0; border-radius: 9px; cursor: pointer;
+    }
+    button.primary:disabled { background: #a9b4cf; cursor: not-allowed; }
+    .notice {
+      background: #f4f6fb; border: 1px solid var(--line);
+      border-radius: 10px; padding: 18px; margin-top: 22px; font-size: 15px;
+    }
+    .notice h2 { font-size: 15px; margin: 0 0 10px; }
+    .notice ul { margin: 0; padding-left: 20px; color: var(--muted); }
+    .notice li { margin-bottom: 6px; }
+    .consent { display: flex; gap: 11px; align-items: flex-start; margin-top: 18px; font-size: 15px; }
+    .consent input { margin-top: 3px; width: 17px; height: 17px; flex: none; }
+    .error { color: #b3261e; margin-top: 16px; font-size: 15px; }
+
+    /* ---- Step 1b: device check. ----
+       The one screen where a bit of meeting-app furniture is right, because it
+       is doing a meeting-app job. Kept brief: two devices, one playback, and a
+       way through. */
+    #check-wrap {
+      min-height: 100%;
+      display: flex; flex-direction: column; justify-content: flex-start;
+      align-items: center;
+      padding: 40px 20px;
+    }
+    #check-wrap .card { max-width: 620px; }
+    .preview {
+      width: 100%; aspect-ratio: 4 / 3; background: #0f1117;
+      border-radius: 11px; overflow: hidden; margin-top: 18px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .preview video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    .preview .placeholder { color: #9aa3b5; font-size: 15px; padding: 20px; text-align: center; }
+    .device { margin-top: 20px; }
+    .device h2 { font-size: 15px; margin: 0 0 8px; }
+    select {
+      width: 100%; padding: 11px 12px; font-size: 15px;
+      border: 1px solid var(--line); border-radius: 9px; background: #fff;
+    }
+    /* The meter answers "is it hearing me" without needing words. */
+    .meter { height: 10px; background: #eceff4; border-radius: 999px; overflow: hidden; margin-top: 10px; }
+    .meter-fill { height: 100%; width: 0%; background: var(--live); transition: width .08s linear; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    button.plain {
+      padding: 11px 16px; font-size: 15px; font-weight: 600;
+      border: 1px solid var(--line); border-radius: 9px;
+      background: #fff; color: var(--ink); cursor: pointer;
+    }
+    button.plain:disabled { color: #a9b4cf; cursor: not-allowed; }
+    .status { font-size: 14px; color: var(--muted); margin-top: 10px; }
+    .status.good { color: var(--live); }
+    .status.warn { color: #8a6100; }
+    .status.bad { color: #b3261e; }
+
+    @media (max-width: 560px) {
+      .card { padding: 22px; }
+      .preview { aspect-ratio: 3 / 4; }
+    }
+
+    /* ---- Step 2: the interview itself. Full bleed, with the candidate's own
+       camera in the corner and no tile for the interviewer. ---- */
+    #stage {
+      min-height: 100%;
+      display: flex; flex-direction: column;
+      background: #0f1117; color: #fff;
+      position: relative;
+    }
+    .bar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 18px 26px; border-bottom: 1px solid #232733;
+    }
+    .role { font-weight: 600; font-size: 15px; }
+    .timer { font-variant-numeric: tabular-nums; color: #9aa3b5; font-size: 15px; }
+    /* The bar was two items at opposite ends. A third between them sits centred
+       without any of the three needing a width, which is why the credit goes
+       here rather than beside the role: nothing moves when the timer changes
+       width. Muted to the same grey as the timer, and two points smaller, so
+       the eye reads name, then time, then this, in that order. */
+    .bar .by { color: #7d8698; font-size: 13px; }
+    /* Two halves, each one filling its half.
+       **The first version did not read as halves and this is what was wrong.**
+       Neither side had a surface, so both were transparent to the page and the
+       eye had nothing to tell it where one ended. The camera was capped at
+       620px inside a much wider column, so it floated with margin all around
+       instead of occupying its side. The result was two objects on a dark
+       background rather than a screen divided in two.
+       So each side is now a panel: its own surface, lighter than the page,
+       filling its grid cell edge to edge and top to bottom. The separation is
+       the page showing through a gap of one consistent width, which is a seam
+       rather than a border and needs no line drawn.
+       Still not a participant grid. There are no name badges, no pin controls
+       and no toolbar, which is what makes a pair of panels read as a meeting.
+       Two surfaces and the controls that were always there. */
+    .centre {
+      flex: 1; display: grid; grid-template-columns: 1fr 1fr;
+      gap: 12px; padding: 12px; min-height: 0;
+    }
+    .side {
+      min-width: 0; min-height: 0; height: 100%;
+      background: #171b26; border-radius: 14px; overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+    }
+    /* Centred in its own half, not in the page. The column is capped so that a
+       very wide monitor does not stretch a caption line past reading comfort;
+       the panel still fills the half, the text inside it does not. */
+    .side.listen {
+      flex-direction: column; gap: 20px;
+      padding: 26px 22px;
+    }
+    .side.listen > * { max-width: 620px; width: 100%; }
+    .side.listen > .orb { width: clamp(150px, 24vh, 280px); }
+    .side.you { position: relative; padding: 0; }
+
+    /* The orb is the only thing that says the interviewer is here, so at this
+       size it has to read as somebody present rather than as a widget waiting
+       for something.
+
+       Nothing rotates and nothing travels. Rotation is the language of loading,
+       and a shape going round in circles at half a screen would say "still
+       thinking" for forty minutes. Instead it breathes: a very slow, very small
+       scale cycle that reads as alive and idle, the way a person sitting still
+       is obviously still there.
+
+       Speaking is a different KIND of motion rather than more of the same. The
+       ring lights up and a second ring expands out of it in time with the turn,
+       so the change is legible from across a room and never ambiguous with the
+       idle state. */
+    .orb {
+      position: relative;
+      width: clamp(150px, 24vh, 280px); aspect-ratio: 1; border-radius: 50%;
+      background: radial-gradient(circle at 34% 30%, #232a3d 0%, #171c28 62%, #141824 100%);
+      border: 2px solid #2b3244;
+      display: flex; align-items: center; justify-content: center;
+      transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+      animation: breathe 6s ease-in-out infinite;
+    }
+    @keyframes breathe {
+      0%, 100% { transform: scale(1); }
+      50%      { transform: scale(1.018); }
+    }
+    /* The expanding ring. Present but inert until the interviewer speaks, so
+       there is one element rather than two states of the DOM to keep in step. */
+    .orb::after {
+      content: ""; position: absolute; inset: -2px; border-radius: 50%;
+      border: 2px solid var(--live); opacity: 0;
+    }
+    .orb.speaking {
+      border-color: var(--live);
+      background: radial-gradient(circle at 34% 30%, #1d3a2b 0%, #16281f 62%, #142219 100%);
+      box-shadow: 0 0 0 1px rgba(45, 200, 120, .18), 0 0 46px rgba(45, 200, 120, .13);
+      animation: none;
+    }
+    .orb.speaking::after { animation: pulse 1.9s ease-out infinite; }
+    @keyframes pulse {
+      0%   { opacity: .5; transform: scale(1); }
+      100% { opacity: 0;  transform: scale(1.17); }
+    }
+    /* Motion is decoration here, and the words carry the same information. */
+    @media (prefers-reduced-motion: reduce) {
+      .orb, .orb.speaking::after { animation: none; }
+      .orb.speaking { transform: scale(1.03); }
+    }
+    .orb span { font-size: clamp(34px, 6.4vh, 74px); line-height: 1; }
+    #speaker { font-size: 19px; font-weight: 600; }
+    #hint { color: #9aa3b5; font-size: 15px; text-align: center; max-width: 460px; }
+    /* Captions. Deliberately a quiet panel under the orb rather than an overlay
+       across it: the candidate should still see an interview, not a meeting
+       app. Only the interviewer's speech appears here, never their own. */
+    /* Given half a screen, the constraint stops being width and becomes reading
+       comfort. Line length is capped in characters rather than pixels, because
+       62ch is a readable measure at any font size and 640px stops being one as
+       soon as the text grows. The panel keeps a floor so a one line question
+       does not make the layout jump, and a ceiling high enough that a long
+       question is read rather than scrolled: the point of captions here is
+       re-reading a question WHILE answering it, and a candidate who has to
+       scroll mid-answer has lost the thing this exists to give them. */
+    #captions {
+      width: 100%; max-width: 62ch;
+      min-height: 8.5em; max-height: min(42vh, 400px); overflow-y: auto;
+      background: #10131b; border: 1px solid #262b38; border-radius: 12px;
+      padding: 18px 20px; text-align: left;
+    }
+    #captions p {
+      margin: 0 0 12px; font-size: 18px; line-height: 1.65; color: #d7dce8;
+    }
+    /* Every line here belongs to the same turn. The most recent sentence is
+       brighter so it is clear where the interviewer has got to in a long
+       question; the earlier sentences of that question stay fully readable,
+       because the candidate is answering all of it, not just the last line. */
+    #captions p:last-child { margin-bottom: 0; color: #fff; }
+    #captions .placeholder { color: #6f7891; font-style: normal; }
+    .cc-row { display: flex; justify-content: flex-end; width: 100%; max-width: 62ch; }
+    button.cc {
+      background: none; border: 0; color: #9aa3b5; cursor: pointer;
+      font-size: 14px; padding: 4px 2px;
+    }
+    button.cc:hover { color: #fff; }
+
+    /* Two columns do not fit on a phone, and forcing them would take the
+       screen away from the captions, which is where they matter most: a
+       candidate on a phone is the one most likely to have rough audio.
+
+       So below 900px the split collapses and the self-view goes back to being
+       the small corner tile it has always been. That is not a downgrade, it is
+       the right order of importance on a small screen. The captions keep the
+       full width and the orb gives up height to them. */
+    @media (max-width: 900px) {
+      .centre {
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 18px; padding: 26px 18px;
+      }
+      /* `display: contents` rather than `none` on the frame. A fixed-position
+         element inside a `display: none` parent is not rendered at all, so
+         hiding the frame outright would take the self-view with it and the
+         candidate would lose their camera on exactly the device where they are
+         most likely to be holding it at the wrong angle. */
+      /* No panels on a phone. One column of content on the page itself reads
+         as a screen; a single panel with a surface and a gap around it reads as
+         a card floating on one, which is the thing being fixed on the desktop
+         and would be reintroduced here. */
+      .side {
+        background: none; border-radius: 0; overflow: visible;
+        display: contents;
+      }
+      .side.listen { padding: 0; }
+      /* One column, and the controls now fill the width they are given, so
+         there is no longer empty space at the end of the row to sit in. The
+         mark drops onto its own line underneath instead of overlapping a
+         button. object-fit keeps it centred while the box spans the width. */
+      .controls { flex-wrap: wrap; }
+      .controls .watermark {
+        position: static; transform: none; order: 9;
+        width: 100%; height: 30px; object-fit: contain;
+        margin: 6px 0 0;
+      }
+      .camframe { display: contents; }
+      .camnote { display: none; }
+      #self {
+        position: fixed; inset: auto 18px 92px auto;
+        width: 148px; aspect-ratio: 4 / 3;
+        border: 1px solid #2b3244; border-radius: 10px;
+      }
+      .orb { width: clamp(96px, 16vh, 150px); }
+      .orb span { font-size: clamp(26px, 4.4vh, 40px); }
+    }
+
+    @media (max-width: 560px) {
+      /* Smaller than the desktop panel but still bigger than it used to be:
+         this is the screen the feature exists for. */
+      #captions { max-height: min(38vh, 260px); }
+      #captions p { font-size: 16px; line-height: 1.6; }
+      #self { width: 116px; inset: auto 12px 84px auto; }
+    }
+
+    /* The candidate's own camera, filling its half.
+       **It used to be capped at 620px with a 4:3 box inside a much wider
+       column**, so it sat in the middle of its side with margin all round and
+       read as a floating rectangle rather than a half of the screen. It now
+       fills the panel, and the panel is the frame.
+       `object-fit: cover` crops rather than letterboxes. A half-screen panel is
+       usually taller and narrower than the stream, so what goes is the left and
+       right edges of the picture, not the top of somebody's head. The crop is
+       centred, which is where a person sitting at a laptop is, and a letterboxed
+       stream with black bars down both sides would look more like a broadcast
+       and less like a person than the crop does.
+       Nothing watches this video and nothing scores it. It carries no name
+       badge and no pin control, which is most of what makes a video tile look
+       like a meeting.
+       The note under it is always there, so a candidate who never granted the
+       camera sees a considered empty panel rather than half a screen of
+       nothing. */
+    .camframe {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .camnote { color: #6f7891; font-size: 15px; padding: 0 24px; text-align: center; }
+    #self {
+      position: absolute; inset: 0;
+      background: #171b26;
+      overflow: hidden;
+    }
+    #self video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    #self .off {
+      position: absolute; inset: 0; display: none;
+      align-items: center; justify-content: center;
+      color: #9aa3b5; font-size: 15px; text-align: center; padding: 10px;
+      /* The panel's own surface, not the page's. Painting the page colour here
+         put a dark rectangle inside a lighter panel, which reads as a hole
+         rather than as a camera that is off. */
+      background: #171b26;
+    }
+    #self.camera-off video { display: none; }
+    #self.camera-off .off { display: flex; }
+
+    .controls {
+      display: flex; gap: 12px; padding: 22px; justify-content: center;
+      border-top: 1px solid #232733; position: relative;
+    }
+    /* Said once, quietly, when the page comes back. It stops the record being
+       a silent trap, and somebody who knows it is noticed is less likely to do
+       it again, which is worth more than catching them.
+       Absolutely positioned so nothing reflows when it appears. A strip that
+       pushed the panels down mid interview would be an interruption, and this
+       must never be one. It sits in the panels own top padding, clear of the
+       orb below it and a long way from the captions. */
+    .noted {
+      position: absolute; top: 66px; left: 50%; transform: translateX(-50%);
+      z-index: 5; max-width: min(560px, 92vw);
+      padding: 9px 15px; border-radius: 999px;
+      background: #1b2030; border: 1px solid #2b3244; color: #c7cddb;
+      font-size: 13px; line-height: 1.45; text-align: center;
+      opacity: 1; transition: opacity 400ms ease;
+      pointer-events: none;
+    }
+    .noted.fading { opacity: 0; }
+    /* The watermark, and its position is the whole of the decision.
+
+       Three places on this screen were ruled out. The camera panel is the
+       candidate's own face and nothing belongs on top of it. The orb is how the
+       interviewer signals that it is speaking, and a second mark in that half
+       would compete with the one thing on screen that has to stay unambiguous.
+       The captions are what a candidate reads while answering, and they are an
+       accessibility feature before they are anything else.
+
+       What is left is the chrome. The controls strip is centred buttons with
+       real empty space at both ends, so the mark sits in space that was already
+       blank, on the page rather than over any content. It is also the far end
+       of the screen from the orb, so the two are never read together.
+
+       The artwork is near black on transparency, which would be invisible here,
+       so it is painted white. brightness(0) flattens it to a silhouette and
+       invert(1) turns that white, which costs the blue in the mark. That is the
+       trade written up in branding.py: one colour, or a second file. */
+    .controls .watermark {
+      position: absolute; left: 22px; top: 50%; transform: translateY(-50%);
+      /* 1200x630 of canvas holding 262px of ink, so roughly seven tenths of
+         this height is transparent padding baked into the file. At 40px the
+         wordmark itself reads at about 17px, which is the size of the text
+         beside it. Sizing it to what looks right rather than to the box. */
+      height: 40px; width: auto; opacity: 0.34;
+      filter: brightness(0) invert(1);
+      pointer-events: none; user-select: none;
+    }
+    .controls button {
+      padding: 12px 22px; font-size: 15px; font-weight: 600;
+      border-radius: 9px; border: 1px solid #2b3244;
+      background: #1b2030; color: #fff; cursor: pointer;
+    }
+    .controls button.muted { background: #40202a; border-color: #6b2f3c; }
+    .controls button.leave { background: #b3261e; border-color: #b3261e; }
+
+    /* Ending the interview cannot be undone: the bot exits, the transcript is
+       written, and there is no way back in. So the button asks first, and the
+       quiet option is the one that keeps the interview going. Someone reaching
+       for this may already be stressed, so it stays calm rather than alarming. */
+    .confirm {
+      display: flex; flex-direction: column; align-items: center; gap: 14px;
+      padding: 22px; border-top: 1px solid #232733; text-align: center;
+    }
+    .confirm p { margin: 0; font-size: 15px; }
+    .confirm .sub { color: #9aa3b5; font-size: 14px; }
+    .confirm .row { display: flex; gap: 12px; }
+    .confirm button {
+      padding: 12px 22px; font-size: 15px; font-weight: 600;
+      border-radius: 9px; border: 1px solid #2b3244;
+      background: #1b2030; color: #fff; cursor: pointer;
+    }
+    .confirm button.leave { background: #b3261e; border-color: #b3261e; }
+
+    /* The lockup carries the name and what it stands for, so the copy beside
+       it does not repeat them. A candidate about to be interviewed by a machine
+       should be able to see who is doing it. */
+    .brandmark {
+      display: block; width: 100%; max-width: 300px; height: auto;
+      margin: -18px auto 2px;
+    }
+    #done .brandmark { margin: 0 auto 22px; }
+
+    /* ---- Step 3: after ---- */
+    #done {
+      min-height: 100%; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 40px 20px; text-align: center;
+    }

@@ -1,0 +1,100 @@
+KARANDEEP SALUJA
+AI/ML Engineer
+Greater Noida, India
+
+SUMMARY
+Five years building production machine learning systems, the last two focused on
+real-time voice agents and applied LLM work. Comfortable owning a problem from
+data collection through to a deployed service, and used to being the person a
+client asks why a model behaves the way it does.
+
+EXPERIENCE
+
+AI/ML Engineer
+Appinventiv, Noida
+2023 to present
+
+Voice agents
+
+- Built six production voice agents on LiveKit Agents with OpenAI Realtime,
+  covering drive-thru ordering, home services booking, hotel concierge and
+  patient appointment booking. Deployed on a shared Ubuntu VM under systemd.
+- Established a pattern now used across all voice work: safety guardrails belong
+  in code, not prompts. Prompt-level rules failed five out of five live attempts
+  on emergency routing; the same rules enforced in Python held at 100 percent.
+- Moved four guardrails out of prompts and into code on a medical booking agent:
+  emergency state persistence, patient identity enforcement, exact-match alias
+  resolution, and child-to-paediatrics routing.
+- Diagnosed a stutter in the drive-thru agent as a prompt contradiction causing
+  hidden model deliberation, not a latency problem. Fixed by letting the order
+  tool accept item lists rather than one item per call.
+- Rebuilt a 163-row menu from a raw export to support per-service pricing and
+  availability across dine-in, pickup and delivery, with cart flushing on
+  service switch.
+
+Model fine-tuning and MLOps
+
+- Replaced GPT-4o with a fine-tuned Sarvam-M 24B for a health-tech tool call
+  classifier. bf16 LoRA on SageMaker ml.g7e.2xlarge, 914 training examples, and
+  a custom Mistral-format jinja template for tool calls.
+- Reached 97.08 percent decision accuracy against the GPT-4o reference ceiling.
+- Quantised to GPTQ 4-bit at 14.2 GB with statistically flat accuracy against
+  the bf16 baseline.
+- Replaced a YOLO pipeline with Qwen3-VL-4B for seven-segment display OCR on
+  medical devices, taking accuracy from 90 to 97 percent.
+
+Speech and audio
+
+- Built an audio language identification prototype: VoxLingua107 ECAPA ensembled
+  with Whisper-small, with IndicConformer as the downstream ASR.
+- Benchmarked on FLEURS across seven Indian languages. Bengali and English at
+  100 percent, Gujarati 90, Tamil and Marathi 70. Hindi and Urdu confused
+  bidirectionally, which is a real limitation of the acoustic signal rather than
+  a tuning problem.
+- Traced an apparent silence-detection failure to lead-in silence in the
+  benchmark clips rather than the model, and fixed it with RMS normalisation.
+
+Computer vision
+
+- Ran a defect detection proof of concept for a jewellery manufacturer.
+  PatchCore anomaly detection validated for solder cut defects.
+- Reported that the prong-open detector reached roughly 0.50 AUROC, which is
+  chance, because inspector markup had been drawn directly over the defect
+  pixels. Recommended the client fix the labelling process rather than tune the
+  number upward.
+
+Platform and observability
+
+- Built the observability stack for an internal AI governance platform: OTel
+  Collector into Tempo, Prometheus, Loki and Grafana, with Langfuse for LLM
+  traces and Metabase for reporting on a read-only role.
+- Made model registration durable with a Postgres catalog and boot hydration,
+  proving restart survival.
+- Established that model comparison must join on exact model reference, after
+  demonstrating that prefix matching made gpt-4o silently include gpt-4o-mini
+  traffic.
+
+Retrieval and chatbots
+
+- Added a lab-test booking agent stack to a live FastAPI health chatbot without
+  modifying a single line of the two existing versions.
+- Fixed an intent classifier that was routing five diagnostics queries to the
+  wrong handler. 76 of 76 test cases passing afterwards.
+
+ML Engineer
+Previous role, Delhi NCR
+2021 to 2023
+
+- Built and maintained an inherited FastAPI service on SQS, Bedrock and MongoDB,
+  taking sole ownership after handover.
+- Produced the runbook the team still uses, after finding that CI auto-deployed
+  only two of the four environments and the rest were handled elsewhere.
+
+EDUCATION
+M.Tech, in progress. BITS Pilani. Cloud computing and data science coursework.
+B.Tech, Computer Science.
+
+SKILLS
+Python, PyTorch, LiveKit Agents, OpenAI Realtime, Whisper, Deepgram, FastAPI,
+LoRA and QLoRA fine-tuning, GPTQ quantisation, SageMaker, PatchCore, vLLM,
+Postgres, Docker, OpenTelemetry, Langfuse, AWS, Azure

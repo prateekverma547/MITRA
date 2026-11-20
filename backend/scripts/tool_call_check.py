@@ -33,6 +33,14 @@ SHOULD_NOT_END = [
     "I don't want to talk about my last employer",
     "I'm done with that project now, it shipped last year",
     "Sorry, I should explain, we actually built two of them.",
+    # Asking to leave the QUESTION, not the interview. From `int_7e31aaff4ab2`
+    # at 234s: the first of these was answered with "Would you like to end the
+    # interview here or continue?".
+    "right now, I don't know the answer of this question. Can we skip it?",
+    "Can we skip this one?",
+    "I don't know this one, next question",
+    "Can we move on?",
+    "Can we come back to that one later?",
 ]
 
 SYSTEM = (

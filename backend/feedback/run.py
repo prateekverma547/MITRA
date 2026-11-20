@@ -17,7 +17,7 @@ from loguru import logger
 
 from shared.contracts import EvaluationSpec, FeedbackReport, Transcript
 
-from feedback.health import assess
+from feedback.health import assess, assess_judgment, assess_questioning
 from feedback.score import FeedbackError, FeedbackScorer
 
 
@@ -86,8 +86,14 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
             api_key=settings.openai_api_key, model=settings.feedback_model
         )
         # Derived here, not recorded live, so rebuilding an old report picks
-        # up whatever the heuristics have learned since.
+        # up whatever the heuristics have learned since. Both come off the same
+        # session metrics the bot already wrote; neither needs a new path.
         health = assess(transcript, metrics, repair_requests=_repairs(metrics))
+        judgment_health = assess_judgment(metrics, spec)
+        # The third of the same kind, and the only one that needs nothing but
+        # the transcript: how the interview questioned, so its own repetition
+        # cannot be written down about the candidate.
+        questioning = assess_questioning(transcript)
 
         report = await scorer.score(
             interview_id=interview_id,
@@ -97,6 +103,8 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
             section_outcomes=outcomes,
             contradictions=_contradictions(outcomes),
             health=health,
+            judgment_health=judgment_health,
+            questioning=questioning,
         )
     except (FeedbackError, Exception) as exc:  # noqa: BLE001
         logger.error(f"[{interview_id}] feedback generation failed: {exc}")
@@ -116,6 +124,14 @@ async def generate_feedback(interview_id: str) -> FeedbackReport | None:
         interview.feedback_status = FeedbackStatus.READY
         interview.feedback_error = None
         interview.feedback_generated_at = datetime.now(UTC)
+        # The scoring cost is part of this interview's usage record, so the cost of a
+        # report is readable beside the cost of the conversation it scored.
+        usage = dict((interview.session_metrics or {}).get("usage") or {})
+        usage["llm_feedback"] = scorer.usage().model_dump()
+        usage.setdefault("models", {})["feedback"] = scorer.model
+        metrics = dict(interview.session_metrics or {})
+        metrics["usage"] = usage
+        interview.session_metrics = metrics
         await session.commit()
 
     scored = sum(1 for s in report.competency_scores if s.score is not None)

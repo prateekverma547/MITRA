@@ -144,11 +144,19 @@ def test_red_flags_do_reach_the_competency_sections():
 # -- pacing ------------------------------------------------------------------
 
 
-def test_voice_rules_cap_sentence_length():
-    """TTS speed alone cannot fix a long sentence — it is still one breath."""
+def test_voice_rules_cap_how_long_a_turn_is():
+    """TTS speed alone cannot fix a long turn — it is still one breath.
+
+    This used to assert a per-*sentence* cap, which is what the prompt said:
+    fifteen words a sentence, two or three sentences a turn. That permits
+    forty-five words, so the twenty-seven-word turns measured on a real
+    interview were compliant. The cap is now on the turn, which is the thing a
+    candidate actually sits through.
+    """
     prompt = prompt_of(build())
 
-    assert "keep every sentence short" in prompt
+    assert "twenty words" in prompt
+    assert "count them before you answer" in prompt
     assert "one idea per sentence" in prompt
     assert "full stops, not commas" in prompt
 

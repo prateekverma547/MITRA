@@ -55,7 +55,7 @@ def load_blueprint(*, blueprint_id: str | None = None) -> InterviewBlueprint:
 
     # Validation is the point: a malformed blueprint must fail here, loudly, not
     # produce a bot that quietly interviews for nothing.
-    return InterviewBlueprint.model_validate(json.loads(path.read_text()))
+    return InterviewBlueprint.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
 
 async def load_blueprint_for_candidate(candidate_id: str) -> InterviewBlueprint:

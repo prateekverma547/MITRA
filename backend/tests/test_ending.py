@@ -214,7 +214,15 @@ def test_the_ender_is_registered_as_an_observer_not_a_pipeline_processor():
     from bot import run_bot
 
     source = inspect.getsource(run_bot)
-    assert "observers=[transcript_observer, latency_observer, silence, ender]" in source
+
+    # Matched against the observers list rather than the whole line, which used
+    # to be asserted verbatim and broke the moment another observer was added.
+    # What matters is where `ender` is registered, not who else is beside it.
+    observers = source[source.index("observers=["):]
+    observers = observers[: observers.index("]") + 1]
+    for name in ("transcript_observer", "latency_observer", "silence", "ender"):
+        assert name in observers, f"{name} is no longer registered as an observer"
+
     assert "ender.attach(worker)" in source
     # And it is not in the pipeline processor list.
     pipeline_block = source[source.index("pipeline = Pipeline("):source.index("worker = PipelineWorker(")]
@@ -389,3 +397,93 @@ async def test_the_whole_chain_through_a_real_pipeline():
 
     assert brain.is_finished is True
     assert worker.ended()[0].reason == "candidate_withdrew"
+
+
+# -- the closing, run against the real model ----------------------------------
+#
+# `scripts/ending_run.py` against gpt-4.1-mini: one run in two closed with "If you
+# have any brief questions about the Senior Product Manager role, please ask now."
+# No question mark, so it was taken for a goodbye and the call hung up on a
+# candidate who had just been invited to speak.
+
+
+def test_an_invitation_without_a_question_mark_still_waits():
+    brain = driven_to_closing()
+
+    brain.observe(
+        bot_text=(
+            "Thank you for your time today. If you have any brief questions about "
+            "the Senior Product Manager role, please ask now."
+        )
+    )
+
+    assert brain.is_finished is False
+
+
+def test_the_first_closing_turn_is_told_to_invite_and_not_to_leave():
+    brain = driven_to_closing()
+
+    instruction = brain.plan_turn().system_instruction
+
+    assert "RIGHT NOW: CLOSING\n" in instruction
+    assert "YOUR LAST TURN" not in instruction
+    assert "Do not say goodbye yet" in instruction
+
+
+def test_the_last_closing_turn_is_told_it_is_the_last():
+    """Otherwise it can invite questions again, hit the cap, and end with no goodbye."""
+    brain = driven_to_closing()
+    brain.observe(bot_text="Thank you for your time. Do you have any questions for me?")
+    brain.observe(candidate_text="What are the next steps?")
+
+    # Compared with the line wrapping flattened: the prompt is wrapped for reading.
+    instruction = " ".join(brain.plan_turn().system_instruction.split())
+
+    assert "YOUR LAST TURN" in instruction
+    assert "say goodbye" in instruction
+    assert "Do not end with a question" in instruction
+    assert "hiring team will follow up" in instruction
+
+
+def test_a_withdrawal_close_is_not_affected():
+    brain = driven_to_closing()
+    brain.candidate_asked_to_stop(said="I want to end the interview")
+
+    instruction = brain.plan_turn().system_instruction
+
+    assert "BECAUSE THEY ASKED TO STOP" in instruction
+    assert "YOUR LAST TURN" not in instruction
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Do you have any questions for me?",
+        "Thank you for your time today. If you have any brief questions about the role, please ask now.",
+        "Thanks again. Feel free to ask anything about the role or the process.",
+        "That's everything from my side. Any last questions before we wrap up.",
+        "Before we finish, I'm happy to answer any questions you have.",
+        "Ask away, if there's anything on your mind.",
+    ],
+)
+def test_these_closings_wait_for_the_candidate(said):
+    from bot.brain.brain import invites_a_reply
+
+    assert invites_a_reply(said) is True
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Thank you for your time today. Take care.",
+        "Thanks again for your time. I wish you all the best. Goodbye.",
+        "If you have any questions later, the hiring team will be happy to help. Goodbye.",
+        "That's a fair question; the hiring team will follow up on next steps. Have a great day.",
+        "Thank you for your time today.",
+        "",
+    ],
+)
+def test_these_closings_are_the_goodbye(said):
+    from bot.brain.brain import invites_a_reply
+
+    assert invites_a_reply(said) is False

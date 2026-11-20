@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import os
 import sys
+import time
 import uuid
 
 from loguru import logger
@@ -24,25 +25,45 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.frameworks.rtvi import (
+    RTVIObserver,
+    RTVIObserverParams,
+    RTVIProcessor,
+)
+from pipecat.utils.text.base_text_aggregator import AggregationType
 from pipecat.workers.runner import WorkerRunner
 
 from bot.blueprint_source import BlueprintUnavailable, resolve_blueprint
 from bot.brain.brain import InterviewBrain
 from bot.brain.drivers import OpenAIJudge
 from bot.brain_director import BrainDirector
-from bot.config import SESSIONS_DIR, MissingConfig, Settings
+from bot.config import (
+    SESSIONS_DIR,
+    MissingConfig,
+    Settings,
+    camera_hearing_enabled,
+)
+from bot.camera_hearing import CameraMouthObserver, mediapipe_available, mediapipe_landmarks
 from bot.observers import (
     TranscriptObserver,
     TurnLatencyObserver,
+    UsageObserver,
     write_session_artifacts,
 )
-from bot.persistence import build_transcript, save_interview_result
+from bot.persistence import (
+    build_transcript,
+    record_recording_failed,
+    record_recording_started,
+    save_interview_result,
+)
 from bot.persona import build_system_instruction
-from bot.services.daily import build_transport
+from bot.services.daily import build_transport, start_recording, stop_recording
 from bot.ending import SessionEnder
+from bot.time_limit import TimeLimit
 from bot.tools import TOOLS, register as register_tools
-from bot.presence import RoomPresence, attach as attach_presence
+from bot.presence import DISCONNECT_GRACE_SECONDS, RoomPresence, attach as attach_presence
 from bot.silence import SilenceEscalation
+from bot.hearing import HearingMonitor
 from bot.services.llm import build_llm
 from bot.services.stt import build_stt, stt_provider
 from bot.services.tts import VoiceUnavailable, build_tts, verify_voice
@@ -52,6 +73,7 @@ from bot.turn_taking import build_turn_strategies, build_vad_analyzer
 # introduction — see shared/branding.py.
 from bot.greeting import time_of_day  # noqa: E402
 from shared.branding import BOT_NAME  # noqa: E402
+from shared.logging_setup import configure_logging  # noqa: E402
 
 
 
@@ -80,6 +102,55 @@ GREETING_SETTLE_SECONDS = 1.0
 IDLE_TIMEOUT_SECS = 300.0
 
 
+async def begin_recording(
+    transport,
+    *,
+    interview_id: str | None,
+    session_id: str,
+    clock_zero: float,
+    recording: bool,
+) -> bool:
+    """Turn the recording on and note that it is running. Returns whether it is.
+
+    **A recording that will not start must not take the interview down.** The
+    interview is the product and the recording is evidence about it: a candidate
+    who gave forty minutes and got no report because a video service was
+    unavailable has lost far more than a reviewer who has to read rather than
+    watch. So every failure ends up as a logged line and a reason on the record,
+    and this returns False.
+
+    It is a function rather than the body of the event handler so that the
+    failure path can actually be tested. An interview surviving a broken
+    recording is a claim, and this codebase has a history of claims of that shape
+    turning out to be untrue.
+
+    **The switch is per interview, passed in by the backend as `--recording` when
+    the interview was scheduled, and the check is first.** Off means Daily is never
+    asked, so nothing is billed for the minute or for storing it afterwards. Nothing
+    else changes: the interview runs exactly as it would have, and the interview
+    record keeps its default `not_recorded`, which the panel already has a sentence for.
+    """
+    if not recording:
+        logger.info(f"[{session_id}] this interview is not set up for recording")
+        return False
+
+    failure = await start_recording(transport)
+    if failure:
+        logger.error(f"[{session_id}] NOT RECORDING: {failure}")
+        if interview_id:
+            await record_recording_failed(interview_id=interview_id, reason=failure)
+        return False
+
+    offset = time.time() - clock_zero
+    logger.info(f"[{session_id}] recording started ({offset:.1f}s into the session)")
+    if interview_id:
+        # Written now, mid-session, not at the end. A bot that is killed never
+        # reaches its `finally` block, and a recording nobody knows to collect is
+        # also one nobody deletes.
+        await record_recording_started(interview_id=interview_id, offset_seconds=offset)
+    return True
+
+
 async def run_bot(
     *,
     room_url: str,
@@ -89,6 +160,7 @@ async def run_bot(
     interview_id: str | None = None,
     use_brain: bool = True,
     timezone: str | None = None,
+    recording: bool = False,
 ) -> None:
     """Run one interview session to completion.
 
@@ -117,12 +189,24 @@ async def run_bot(
     )
     logger.info(f"[{session_id}] voice verified: {voice_name}")
 
-    transport = build_transport(room_url=room_url, token=token, bot_name=BOT_NAME)
+    # The candidate's camera feeds the hearing check only when the flag is on AND the
+    # vision library is installed. A flag without the library is logged, not silently
+    # ignored, and the call proceeds audio-only.
+    camera_wanted = camera_hearing_enabled()
+    camera_hearing_on = camera_wanted and mediapipe_available()
+    if camera_wanted and not camera_hearing_on:
+        logger.error(
+            f"[{session_id}] CAMERA_HEARING_CHECK is set but mediapipe is not installed; "
+            "continuing audio-only"
+        )
+    transport = build_transport(
+        room_url=room_url, token=token, bot_name=BOT_NAME, camera_hearing=camera_hearing_on
+    )
     stt = build_stt(api_key=settings.openai_api_key)
     # The brain owns the interview: which section we are in, what the model sees,
     # when to move on. The system instruction below is only a starting value —
     # BrainDirector retargets it at the current section on every turn.
-    brain = InterviewBrain(blueprint, time_of_day=time_of_day(timezone))
+    brain = InterviewBrain(blueprint, time_of_day=time_of_day(timezone), live_speech=True)
 
     llm = build_llm(
         api_key=settings.openai_api_key,
@@ -144,7 +228,18 @@ async def run_bot(
 
     # Daily reports who is in the room; without listening, the ladder was
     # nudging empty rooms and then blaming the candidate's silence for it.
-    presence = attach_presence(transport, RoomPresence())
+    #
+    # It is told when the interview is over for the same reason the ladder is:
+    # an interview ends with the candidate leaving, so counting that departure
+    # recorded a dropped call on every interview that ever ran.
+    presence = attach_presence(
+        transport,
+        RoomPresence(
+            interview_over=(lambda: brain.is_finished or brain.withdrew)
+            if use_brain
+            else None
+        ),
+    )
     silence = SilenceEscalation(
         session_id=session_id,
         presence=presence,
@@ -154,6 +249,8 @@ async def run_bot(
         # Backstop. If the interview is over and the room has gone quiet,
         # end it rather than asking whether they are still there.
         interview_over=(lambda: brain.is_finished or brain.withdrew) if use_brain else None,
+        # A nudge in the closing is not a closing turn. The brain must know it is coming.
+        on_prompt=brain.silence_prompt_expected if use_brain else None,
     )
 
     # The interviewer can end the interview itself. A phrase list only ever
@@ -181,26 +278,97 @@ async def run_bot(
         ),
     )
 
+    # Named so its token counts can be read when the session is saved.
+    judge = (
+        OpenAIJudge(
+            api_key=settings.openai_api_key,
+            # Off the critical path, so it gets the reasoning tier.
+            model=settings.blueprint_model,
+        )
+        if use_brain
+        else None
+    )
     director = (
         BrainDirector(
             brain=brain,
             llm=llm,
-            judge=OpenAIJudge(
-                api_key=settings.openai_api_key,
-                # Off the critical path, so it gets the reasoning tier.
-                model=settings.blueprint_model,
-            ),
+            judge=judge,
             session_id=session_id,
         )
         if use_brain
         else None
     )
 
+    # Captions for the candidate, and ONLY of what the interviewer says.
+    #
+    # A candidate who is deaf or hard of hearing cannot otherwise take this
+    # interview at all, and when the audio is rough, reading the question is the
+    # difference between answering it and asking for it again.
+    #
+    # **Their own words are deliberately never sent**, and this is a product
+    # decision rather than an unfinished half. Nobody needs to read what they
+    # just said, watching your own speech appear while you are still thinking is
+    # a distraction in the one place this product works hardest not to create
+    # one, and our transcripts still fragment under some conditions: showing a
+    # candidate their own answer breaking up mid-sentence would be unkind and
+    # would tell them nothing they can act on.
+    #
+    # So every user-side signal is off. `bot_speaking_enabled` has to stay on
+    # even though the page does not use it: the observer queues each finished
+    # sentence until BotStartedSpeaking flushes it, so switching it off means no
+    # captions at all rather than fewer messages.
+    rtvi = RTVIProcessor()
+    rtvi_observer = RTVIObserver(
+        rtvi,
+        params=RTVIObserverParams(
+            # What the interviewer says, aggregated into whole sentences and
+            # timed to when it is actually spoken.
+            bot_output_enabled=True,
+            bot_speaking_enabled=True,
+            # Everything else, and above all anything about the candidate.
+            bot_llm_enabled=False,
+            bot_tts_enabled=False,
+            bot_audio_level_enabled=False,
+            user_llm_enabled=False,
+            user_speaking_enabled=False,
+            user_transcription_enabled=False,
+            user_audio_level_enabled=False,
+            user_mute_enabled=False,
+            metrics_enabled=False,
+            system_logs_enabled=False,
+            # Sentences only, decided here rather than filtered in the browser.
+            # The page never sends a client-ready handshake, so the observer
+            # treats it as an old client and stops suppressing word and token
+            # aggregations on its own: captions would arrive a word at a time
+            # and stutter. One source for the rule, in the place that has the
+            # reason written next to it.
+            skip_aggregator_types=[AggregationType.WORD, AggregationType.TOKEN],
+        ),
+    )
+
     # Ends the call once the interview is over. An observer, not a pipeline
     # processor: it has to see BotStoppedSpeakingFrame, which comes from the
     # output transport, and a processor upstream of that never does.
     ender = SessionEnder(brain=brain if use_brain else None, session_id=session_id)
-    transcript_observer = TranscriptObserver()
+    # The clock. Starts the close at the scheduled end and ends the call at the
+    # hard stop, whether or not anyone is talking. The brain's clock only moved
+    # on candidate turns, so a quiet candidate used to keep the call open.
+    time_limit = (
+        TimeLimit(brain=brain, clock=director.clock_seconds, session_id=session_id)
+        if use_brain and director is not None
+        else None
+    )
+    # The brain is the only thing that knows which section a turn belongs to.
+    transcript_observer = TranscriptObserver(section_id_now=lambda: brain.current_section.id)
+    # Transcript turns are stamped from the moment the observer above was built,
+    # and the recording starts a little later, once the bot is in the room. The
+    # difference between the two is what lets a click on a transcript line seek
+    # the video, so it is measured here rather than guessed at afterwards.
+    #
+    # Read from the clock instead of from the observer's own start, which is
+    # private to a module this change may not touch. The two are set microseconds
+    # apart, which is far below the accuracy a video seek needs.
+    transcript_clock_zero = time.time()
     latency_observer = TurnLatencyObserver()
 
     pipeline = Pipeline(
@@ -208,6 +376,10 @@ async def run_bot(
             processor
             for processor in [
                 transport.input(),
+                # Carries the caption messages out to the browser. It only ever
+                # pushes frames downstream, so it sits at the top and they
+                # travel to transport.output() like anything else.
+                rtvi,
                 stt,
                 user_aggregator,
                 # Sits between aggregation and inference: rewrites the context,
@@ -223,6 +395,25 @@ async def run_bot(
         ]
     )
 
+    usage_observer = UsageObserver()
+    # Notices when the candidate is audibly speaking but no words are coming back, and
+    # ends the call as a technical failure rather than letting the ladder read a dead
+    # STT as a silent candidate (int_3e4f8bb5b499). `end_reason` is assigned further
+    # down; the lambda reads it when hearing is lost, long after wiring.
+    hearing = HearingMonitor(
+        session_id=session_id,
+        on_lost=lambda reason: end_reason.__setitem__("text", reason),
+    )
+    # The candidate's lips, when the camera check is on. It can only stop a hearing
+    # failure being counted; see HearingMonitor.note_mouth.
+    camera_mouth = None
+    if camera_hearing_on:
+        try:
+            camera_mouth = CameraMouthObserver(
+                hearing=hearing, landmarks=mediapipe_landmarks(), session_id=session_id
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"[{session_id}] camera hearing check could not start: {exc!r}")
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(
@@ -231,20 +422,80 @@ async def run_bot(
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
-        observers=[transcript_observer, latency_observer, silence, ender],
+        observers=[
+            transcript_observer,
+            latency_observer,
+            silence,
+            ender,
+            rtvi_observer,
+            usage_observer,
+            hearing,
+            *([camera_mouth] if camera_mouth is not None else []),
+            *([time_limit] if time_limit is not None else []),
+        ],
         idle_timeout_secs=IDLE_TIMEOUT_SECS,
         conversation_id=session_id,
     )
     silence.attach(worker)
     ender.attach(worker)
+    hearing.attach(worker)
+    if time_limit is not None:
+        time_limit.attach(worker)
 
     @user_aggregator.event_handler("on_user_turn_idle")
     async def on_user_turn_idle(aggregator):
         await silence.handle_idle(aggregator)
 
+    @assistant_aggregator.event_handler("on_assistant_turn_stopped")
+    async def on_assistant_turn_stopped(aggregator, message):
+        """Tell the brain when the candidate spoke over a question.
+
+        Pipecat stops the audio and keeps only the words actually spoken, so the
+        context already holds the truth. What was missing was anyone noticing:
+        the half-question was treated as asked, the interjection as its answer,
+        and the interviewer moved on. `content` is what reached the candidate.
+        """
+        if use_brain and getattr(message, "interrupted", False):
+            brain.bot_was_interrupted(getattr(message, "content", "") or "")
+            logger.info(f"[{session_id}] interviewer was spoken over mid-turn")
+
+    # Whether this session is being recorded, for the `finally` block below. Set
+    # once, from the one place that knows.
+    recording = {"on": False}
+
+    @transport.event_handler("on_joined")
+    async def on_joined(transport, data):
+        """Start the recording as soon as the bot is in the room.
+
+        **Here rather than when the candidate connects**, and that is the whole
+        point: `on_client_connected` is immediately followed by the opening
+        greeting, and putting a network round trip in front of it would make
+        every candidate wait in silence a little longer for the sake of the first
+        few seconds of video. The bot is only spawned once someone is joining, so
+        this captures their arrival and costs the interview nothing.
+        """
+        recording["on"] = await begin_recording(
+            transport,
+            interview_id=interview_id,
+            session_id=session_id,
+            clock_zero=transcript_clock_zero,
+            recording=recording,
+        )
+
+    #: The pending "candidate did not come back" end, if one is waiting.
+    grace: dict = {"task": None}
+    #: Why the session ended early, if it did. Saved with the transcript, and a
+    #: session with a reason is recorded as failed and is never scored.
+    end_reason: dict = {"text": None}
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info(f"[{session_id}] candidate connected")
+        # A rejoin inside the grace period cancels the pending end. The interview
+        # carries on exactly where it was.
+        if grace["task"] is not None and not grace["task"].done():
+            grace["task"].cancel()
+            logger.info(f"[{session_id}] candidate came back within the grace period")
 
         if use_brain:
             # Spoken straight to TTS, with no inference in between. The greeting
@@ -275,29 +526,76 @@ async def run_bot(
         )
         await worker.queue_frames([LLMRunFrame()])
 
+    async def _end_unless_rejoined():
+        try:
+            await asyncio.sleep(DISCONNECT_GRACE_SECONDS)
+        except asyncio.CancelledError:
+            return
+        if presence.candidate_present:
+            return
+        end_reason["text"] = (
+            "The candidate's connection dropped and they did not rejoin within "
+            f"{DISCONNECT_GRACE_SECONDS} seconds, so the interview ended early. "
+            "The transcript is partial."
+        )
+        logger.warning(f"[{session_id}] {end_reason['text']}")
+        await worker.cancel()
+
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        logger.info(f"[{session_id}] candidate disconnected — ending session")
-        await worker.cancel()
+        # Not an immediate end. Ending on the first drop turned every network
+        # blip into a finished, scored interview the candidate could not rejoin.
+        logger.info(
+            f"[{session_id}] candidate disconnected — waiting "
+            f"{DISCONNECT_GRACE_SECONDS}s for them to rejoin"
+        )
+        if grace["task"] is None or grace["task"].done():
+            grace["task"] = asyncio.create_task(_end_unless_rejoined())
 
     @worker.event_handler("on_pipeline_error")
     async def on_pipeline_error(worker, frame):
         logger.error(f"[{session_id}] pipeline error: {frame}")
 
     runner = WorkerRunner(handle_sigint=True)
+    session_started = time.monotonic()
+    time_limit_task = asyncio.create_task(time_limit.run()) if time_limit is not None else None
     try:
         await runner.add_workers(worker)
         await runner.run()
+    except Exception as exc:
+        # Recorded as a failure, not left to read as a completed interview. A crash
+        # at minute twelve used to save as finished and then get scored.
+        end_reason["text"] = f"The session stopped unexpectedly: {exc!r}"
+        logger.error(f"[{session_id}] {end_reason['text']}")
+        raise
     finally:
         # Runs on clean exit, Ctrl-C, and crash alike: the transcript is the
         # auditable record and must survive whatever ended the session.
         logger.info(f"[{session_id}] session ended")
+        if grace["task"] is not None and not grace["task"].done():
+            grace["task"].cancel()
+        if time_limit_task is not None and not time_limit_task.done():
+            time_limit_task.cancel()
+
+        # The tidy way to close the recording. It is not the only one, and this
+        # block is exactly why: a process that is killed never gets here. Daily
+        # finalises a recording by itself when the room empties, which is what
+        # actually covers a crash, a redeploy or capacity teardown. Verified
+        # against the live API rather than assumed.
+        if recording["on"]:
+            problem = await stop_recording(transport)
+            if problem:
+                logger.warning(
+                    f"[{session_id}] {problem} Daily closes it when the room "
+                    f"empties, so the file should still arrive."
+                )
 
         # The database is the record of truth; the session file stays as a
         # local fallback copy in case the write below fails.
         if interview_id:
             await save_interview_result(
                 interview_id=interview_id,
+                failure_reason=end_reason["text"],
                 transcript=build_transcript(
                     interview_id=interview_id,
                     turns=transcript_observer.turns,
@@ -310,17 +608,43 @@ async def run_bot(
                     "latency_summary": latency_observer.summary(),
                     "turns": [t.to_dict() for t in latency_observer.turns],
                     "silence_events": silence.events,
+                    # Whether the STT failed under the candidate. Kept beside the
+                    # silence events so a dead channel is never read as a quiet person.
+                    **hearing.summary(),
                     **presence.summary(),
                     "brain_events": director.events if director else [],
+                    # How much of the off-path judgement actually landed. Equal
+                    # attempts and failures means no claims were extracted and
+                    # nothing was carried between sections, which a report
+                    # cannot distinguish from a candidate who said nothing
+                    # specific — so it has to be visible here.
+                    **(director.judgment_summary() if director else {}),
                     # Counted by the brain, not inferred from the transcript:
                     # guessing at our own behaviour from our own words is the
                     # least reliable source available.
                     "repairs_requested": brain.repairs_requested if director else 0,
+                    # Questions the candidate spoke over and that were asked again
+                    # in full, rather than abandoned for a new one.
+                    "interruptions_recovered": brain.interruptions_recovered if director else 0,
                     "llm_model": settings.llm_model,
+                    # The judge runs on the blueprint model, not the live one.
+                    # Recorded because a bad value here degrades the interview
+                    # while looking like an offline-only setting.
+                    "judge_model": settings.blueprint_model,
                     # Which vendor produced these latency numbers. Without
                     # it a comparison across sessions depends on somebody
                     # remembering when the key was added.
                     "stt_provider": stt_provider(),
+                    # What was consumed, counted rather than estimated. Priced later by
+                    # scripts/interview_cost.py, so the record never goes stale.
+                    "usage": build_usage(
+                        usage_observer=usage_observer,
+                        judge=judge,
+                        live_model=settings.llm_model,
+                        judge_model=settings.blueprint_model,
+                        stt=stt_provider(),
+                        call_seconds=time.monotonic() - session_started,
+                    ),
                 },
             )
 
@@ -339,17 +663,35 @@ async def run_bot(
         )
 
 
-def configure_logging(level: str) -> None:
-    """Quieten Pipecat's frame-level DEBUG chatter.
 
-    At DEBUG the join URL and the turn metrics we actually care about scroll
-    past in a wall of pipeline-linking noise. INFO keeps session events, voice
-    verification, and the per-turn latency lines visible.
 
-    Set LOG_LEVEL=DEBUG when diagnosing the pipeline itself.
-    """
-    logger.remove()
-    logger.add(sys.stderr, level=level.upper())
+def build_usage(*, usage_observer, judge, live_model, judge_model, stt, call_seconds) -> dict:
+    """The per-interview usage record. Reads counters, never estimates them."""
+    from shared.usage import InterviewUsage, ModelUsage
+
+    call_seconds = round(call_seconds, 2)
+    return InterviewUsage(
+        llm_live=ModelUsage(
+            calls=usage_observer.llm_calls,
+            prompt_tokens=usage_observer.llm_prompt_tokens,
+            completion_tokens=usage_observer.llm_completion_tokens,
+        ),
+        # Counted per attempt, including attempts that failed, because a failed call
+        # was still billed.
+        llm_judgment=ModelUsage(
+            calls=judge.calls if judge else 0,
+            prompt_tokens=judge.prompt_tokens if judge else 0,
+            completion_tokens=judge.completion_tokens if judge else 0,
+            cached_tokens=judge.cached_tokens if judge else 0,
+        ),
+        tts_characters=usage_observer.tts_characters,
+        # The streaming STT bill covers the whole connected call, not candidate speech.
+        stt_stream_seconds=call_seconds,
+        candidate_speech_seconds=round(usage_observer.candidate_speech_seconds, 2),
+        call_seconds=call_seconds,
+        models={"live": live_model, "judgment": judge_model},
+        providers={"stt": stt, "tts": "elevenlabs", "llm": "openai"},
+    ).model_dump(mode="json")
 
 
 def main() -> None:
@@ -379,6 +721,14 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--recording",
+        action="store_true",
+        help=(
+            "Record this interview to local storage. Set by the backend from the "
+            "interview's own recording switch; never read from the environment."
+        ),
+    )
+    parser.add_argument(
         "--timezone",
         default=None,
         help=(
@@ -402,7 +752,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    configure_logging(args.log_level)
+    # At DEBUG the pipeline's frame-level chatter drowns the session events and the
+    # per-turn latency lines, so INFO is the default. Use DEBUG to diagnose the pipeline.
+    os.environ["LOG_LEVEL"] = args.log_level
+    configure_logging("bot", interview_id=args.interview_id)
 
     session_id = args.session_id or f"session-{uuid.uuid4().hex[:8]}"
 
@@ -416,13 +769,29 @@ def main() -> None:
                 interview_id=args.interview_id,
                 use_brain=not args.no_brain,
                 timezone=args.timezone,
+                recording=args.recording,
             )
         )
     except (MissingConfig, VoiceUnavailable, BlueprintUnavailable, FileNotFoundError) as exc:
         logger.error(str(exc))
+        _close_failed_before_start(args.interview_id, str(exc))
         sys.exit(1)
     except KeyboardInterrupt:
         logger.info(f"[{session_id}] interrupted by user")
+    except Exception as exc:
+        # Anything else that escapes setup. Recorded, then the crash is re-raised so it
+        # is still visible in the logs.
+        _close_failed_before_start(args.interview_id, f"The interviewer failed to start: {exc!r}")
+        raise
+
+
+def _close_failed_before_start(interview_id: str | None, reason: str) -> None:
+    """Record a setup failure against its interview. A no-op for local runs."""
+    if not interview_id:
+        return
+    from bot.persistence import mark_failed_if_running
+
+    asyncio.run(mark_failed_if_running(interview_id=interview_id, reason=reason))
 
 
 if __name__ == "__main__":

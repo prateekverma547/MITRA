@@ -17,6 +17,7 @@
 # directory relative to its own file, so a flattened image would find the UIs
 # locally and 500 in production.
 
+# The frontend is plain HTML and JavaScript, served as files, so there is no build stage.
 FROM python:3.12-slim AS base
 
 # Python 3.12 specifically, not 3.13: pipecat 1.6.0 still imports the stdlib
@@ -44,7 +45,7 @@ COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 COPY backend/ ./
-# The candidate and admin UIs, served by FastAPI.
+# The candidate and admin pages and their scripts, served by FastAPI.
 COPY frontend/ /app/frontend/
 RUN uv sync --frozen --no-dev
 
@@ -55,4 +56,8 @@ STOPSIGNAL SIGINT
 EXPOSE 8000
 
 # $PORT is supplied by Railway; 8000 is the local default.
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Migrate, then serve. `alembic upgrade head` is a no-op when the database is already
+# at head, and the app refuses to start on a database that is behind, so the two cannot
+# disagree. `exec` makes uvicorn PID 1, so the stop signal reaches it rather than the
+# shell that launched it.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-access-log"]

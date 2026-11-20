@@ -37,6 +37,32 @@ LOGO_URL = f"/assets/{LOGO_FILE}"
 #: browser tab shrinks to an unreadable sliver.
 FAVICON_URL = "/assets/favicon.png"
 
+#: Who built the product, as distinct from what the interviewer is called.
+#:
+#: **Kept apart from `BOT_NAME` on purpose.** Mitra is the thing the candidate
+#: talks to and is introduced by name in the greeting; Appinventiv is the company
+#: behind it and is never spoken aloud, never part of the interviewer's persona,
+#: and never reaches a prompt. A candidate being interviewed by "Appinventiv"
+#: would be a different product from one being interviewed by Mitra.
+COMPANY_NAME = "Appinventiv"
+
+#: How the company is credited on screen. One phrase, here, so the panel and the
+#: candidate pages cannot end up wording it differently.
+COMPANY_CREDIT = f"by {COMPANY_NAME}"
+
+#: The company lockup, served from `frontend/assets/` like the product logo.
+#:
+#: **Dark ink on transparency, which decides how it is used.** The artwork is a
+#: near-black wordmark with one blue element, cut out cleanly: 91 percent of the
+#: file is fully transparent and the corners carry no matte, so it sits on a
+#: light surface as it is. On the dark call screen it would be almost invisible,
+#: so the page paints it white with a CSS filter rather than shipping a second
+#: file. That costs the blue, which is the honest trade: a two colour mark
+#: rendered in one. A supplied light-on-dark cut would be better and is the only
+#: thing that would bring the blue back.
+COMPANY_LOGO_FILE = "appinventiv-logo.png"
+COMPANY_LOGO_URL = f"/assets/{COMPANY_LOGO_FILE}"
+
 #: Appended to every prompt whose output a person reads: the clarification chat,
 #: the interview questions, the spoken turns, the feedback report.
 #:

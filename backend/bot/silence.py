@@ -62,7 +62,7 @@ class SilenceLadder:
     closing_text: str = (
         "I haven't been able to hear anything for a couple of minutes, so I'll "
         "close the session here. If this was a technical problem, please rejoin "
-        "and we can start again. Thanks for your time."
+        "and we can start again. Thank you for your time. Goodbye."
     )
 
     #: Said instead of closing when the room is empty. Nobody hears it, and that
@@ -152,9 +152,13 @@ class SilenceEscalation(BaseObserver):
         presence=None,
         patience=None,
         interview_over=None,
+        on_prompt=None,
     ):
         super().__init__()
         self._ladder = ladder or SilenceLadder()
+        #: Called just before the ladder speaks to a silent candidate (a nudge or
+        #: a rephrase). The brain uses it to tell a prompt from a closing turn.
+        self._on_prompt = on_prompt
         self._session_id = session_id
         #: Optional. Without it the ladder behaves exactly as it did before,
         #: which keeps the text-mode tests honest and means a transport that
@@ -267,11 +271,13 @@ class SilenceEscalation(BaseObserver):
 
         if stage == 0:
             self._record(1, "nudge", self._ladder.nudge_text)
+            self._announce_prompt()
             await self._inject(TTSSpeakFrame(self._ladder.nudge_text))
             await self._inject(UserIdleTimeoutUpdateFrame(timeout=gaps[1]))
 
         elif stage == 1:
             self._record(2, "rephrase_and_audio_check")
+            self._announce_prompt()
             await self._inject(
                 LLMMessagesAppendFrame(
                     [{"role": "developer", "content": self._ladder.audio_check_instruction}],
@@ -289,6 +295,11 @@ class SilenceEscalation(BaseObserver):
             # EndWorkerFrame flushes queued frames before shutting down, so the
             # goodbye is actually heard rather than cut off by the disconnect.
             await self._inject(EndWorkerFrame(reason="abandoned_by_candidate"))
+
+    def _announce_prompt(self) -> None:
+        """Tell the brain a prompt is about to be spoken, if anyone is listening."""
+        if self._on_prompt is not None:
+            self._on_prompt()
 
     async def _inject(self, frame: Frame) -> None:
         if self._worker is None:

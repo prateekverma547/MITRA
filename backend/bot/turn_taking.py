@@ -67,8 +67,11 @@ SMART_TURN_STOP_SECS = 4.0
 VAD_STOP_SECS = 0.2
 
 # Speech must persist this long before we believe it started. Guards against
-# coughs, chair creaks and keyboard noise opening a turn.
-VAD_START_SECS = 0.2
+# coughs, chair creaks and keyboard noise opening a turn. Raised from 0.2s: at
+# that value any short sound, including the bot's own voice coming back through
+# the microphone, cut the interviewer off mid-sentence and left it silent when no
+# usable utterance followed.
+VAD_START_SECS = 0.6
 
 # Audio window the smart-turn model considers, in seconds. Pipecat's default.
 SMART_TURN_MAX_DURATION_SECS = 8.0

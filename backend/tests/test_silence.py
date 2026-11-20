@@ -175,3 +175,22 @@ async def test_unattached_ladder_warns_instead_of_crashing(caplog):
     await escalation.handle_idle(aggregator=None)  # must not raise
 
     assert escalation.events[0]["action"] == "nudge"
+
+
+async def test_the_brain_is_told_before_a_nudge_is_spoken():
+    """The brain must know a prompt is coming, or it counts the nudge as a turn."""
+    announced = []
+    escalation = SilenceEscalation(session_id="test", on_prompt=lambda: announced.append(1))
+    worker = FakeWorker()
+    escalation.attach(worker)
+
+    await escalation.handle_idle(aggregator=None)
+
+    assert announced == [1]
+    assert len(worker.of_type(TTSSpeakFrame)) == 1
+
+
+def test_the_silence_close_says_thank_you_and_goodbye():
+    """The candidate was let go with "Thanks for your time" and no goodbye."""
+    closing = SilenceLadder().closing_text
+    assert "Thank you for your time. Goodbye." in closing

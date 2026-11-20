@@ -19,20 +19,25 @@ signal" rather than published on the strength of something invented.
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from loguru import logger
 from openai import AsyncOpenAI
 
 from shared.branding import PROSE_STYLE
+from shared.usage import ModelUsage
 from shared.contracts import (
+    QuestioningHealth,
     CompetencyScore,
     ConversationHealth,
     Contradiction,
     CoverageLevel,
+    DealbreakerFinding,
+    DealbreakerState,
     EvaluationSpec,
     EvidenceQuote,
     FeedbackReport,
+    JudgmentHealth,
     ObservedRedFlag,
     RecommendationSignal,
     Speaker,
@@ -77,6 +82,20 @@ rationale and mark the competency insufficient_signal rather than scoring it
 low. Someone with a cheap headset must not read as someone who could not
 answer.
 
+WHERE THE INTERVIEWER REPEATED ITSELF.
+You may be told the interviewer asked the same question more than once. If so:
+- Do NOT describe the candidate as repetitive, circular, or as giving the same
+  answer twice. Somebody asked the same question twice and got the same answer,
+  which is what a person does. Say the interviewer repeated itself, or say
+  nothing about it.
+- A thin topic there is the interview's failing. Mark it insufficient_signal and
+  list it in `coverage_gaps`.
+- **Do not raise a red flag that turns on something being absent.** "No real
+  examples", "cannot explain why", "avoids the question" — none of those can be
+  concluded from a topic that spent its questions asking one thing repeatedly.
+  Not being asked is not the same as failing to answer. A red flag still stands
+  if you can quote the candidate evidencing it directly.
+
 WHERE THE INTERVIEW RAN SHORT.
 If a section was squeezed or never properly reached, that is the interview's
 failing, not the candidate's. Mark it insufficient_signal and list it in
@@ -85,6 +104,29 @@ failing, not the candidate's. Mark it insufficient_signal and list it in
 RED FLAGS.
 Only report a red flag from the spec if you can quote the candidate evidencing
 it. A red flag with no quote does not go in.
+
+DEALBREAKERS THE CANDIDATE PUT TO REST.
+Separately from the above, list any dealbreaker the transcript shows the
+candidate doing the OPPOSITE of, in `dealbreakers_cleared`. Same evidence
+standard as a red flag, in the other direction: quote them, or leave it out.
+
+The bar is what they did, not what they avoided:
+- "Avoids negative results" is cleared by them VOLUNTEERING a bad result and
+  what they did about it. It is not cleared by an interview that never asked.
+- "Cannot explain why a metric was chosen" is cleared by them giving the reason
+  for a choice. It is not cleared by them naming the metric.
+- "Cannot describe a time they did X" is cleared by an actual occasion with
+  specifics. It is not cleared by them describing how X is done in general.
+
+Silence never clears anything. If the topic was never raised, if they were
+asked and said little, or if you would have to reason from an absence to get
+there, LEAVE IT OUT. Something you leave out is reported as never having been
+put to them, which is the honest outcome and costs the candidate nothing. A
+dealbreaker wrongly called cleared is a false statement about a person in a
+hiring record, and it is the worse error by a wide margin.
+
+A dealbreaker cannot be in both lists. If they did the thing and also the
+opposite of it at different moments, that is the red flag, not a clearance.
 
 TONE.
 Describe what they said and what it shows. Do not speculate about personality,
@@ -108,6 +150,10 @@ Return JSON exactly in this shape:
   ],
   "red_flags_observed": [
     {"description": "...", "evidence": [{"turn_index": 8, "text": "..."}]}
+  ],
+  "dealbreakers_cleared": [
+    {"description": "the dealbreaker, copied from the spec",
+     "evidence": [{"turn_index": 8, "text": "..."}]}
   ],
   "coverage_gaps": ["competency name: why the interview could not tell"],
   "summary": "A short written assessment for the reader. What the transcript
@@ -190,6 +236,96 @@ def verify_quote(
     return None
 
 
+def _match_dealbreaker(description: str, spec: EvaluationSpec) -> str | None:
+    """Which spec dealbreaker the model meant, or None.
+
+    The model is asked to copy the text and mostly does, but it paraphrases and
+    reflows often enough that equality alone loses real findings. Matched on
+    lowercase alphanumeric containment either way, then on a distinctive-word
+    majority, which is the same shape as quote verification: loose enough to
+    survive tidying, strict enough that it cannot land on the wrong one.
+
+    **This is not a similarity rule over free text.** Both sides are a closed,
+    employer-authored list of four, and an unmatched description is dropped
+    rather than guessed at, so the failure mode is a dealbreaker reading
+    `not_reached` when it was cleared. That is the safe direction.
+    """
+    said = _normalise(description)
+    if not said:
+        return None
+    for flag in spec.red_flags:
+        target = _normalise(flag)
+        if target and (target in said or said in target):
+            return flag
+    said_words = {w for w in said.split() if len(w) > 3}
+    if not said_words:
+        return None
+    for flag in spec.red_flags:
+        words = {w for w in _normalise(flag).split() if len(w) > 3}
+        if words and len(words & said_words) >= max(2, (len(words) + 1) // 2):
+            return flag
+    return None
+
+
+def _dealbreaker_findings(
+    payload: dict,
+    spec: EvaluationSpec,
+    red_flags: list[ObservedRedFlag],
+    transcript: Transcript,
+    audit: QuoteAudit,
+) -> list[DealbreakerFinding]:
+    """Every dealbreaker in the spec, in spec order, with what could be said.
+
+    **`not_reached` is the residue and is never the model's to assert.** It is
+    whatever is left once the fired list and the cleared list have been matched
+    back to the spec, so the only way to report coverage of a dealbreaker is to
+    produce a verified quote for it. A model that says nothing produces
+    `not_reached`, which is the truthful reading of having said nothing.
+
+    A clearance whose quotes do not survive verification falls back to
+    `not_reached` rather than being dropped the way an unevidenced red flag is.
+    Dropping is right for a flag because the entry itself is the accusation;
+    here the entry is the report's account of what it could establish, and the
+    honest account of an unverifiable clearance is that nothing was established.
+
+    Firing wins ties. The prompt already says a dealbreaker cannot be in both
+    lists, and if the model does it anyway the flag is the finding.
+    """
+    fired: dict[str, list[EvidenceQuote]] = {}
+    for flag in red_flags:
+        matched = _match_dealbreaker(flag.description, spec)
+        if matched is not None:
+            fired.setdefault(matched, []).extend(flag.evidence)
+
+    cleared: dict[str, list[EvidenceQuote]] = {}
+    for raw in payload.get("dealbreakers_cleared") or []:
+        if not isinstance(raw, dict):
+            continue
+        matched = _match_dealbreaker(str(raw.get("description", "")), spec)
+        if matched is None or matched in fired:
+            continue
+        evidence = _verify_evidence(raw.get("evidence"), transcript, audit)
+        if not evidence:
+            logger.warning(
+                f"dropped an unevidenced clearance: {str(raw.get('description'))[:80]!r}"
+            )
+            continue
+        cleared.setdefault(matched, []).extend(evidence)
+
+    findings = []
+    for flag in spec.red_flags:
+        if flag in fired:
+            state, evidence = DealbreakerState.OBSERVED, fired[flag]
+        elif flag in cleared:
+            state, evidence = DealbreakerState.CLEARED, cleared[flag]
+        else:
+            state, evidence = DealbreakerState.NOT_REACHED, []
+        findings.append(
+            DealbreakerFinding(dealbreaker=flag, state=state, evidence=evidence)
+        )
+    return findings
+
+
 def _verify_evidence(
     raw: list[dict], transcript: Transcript, audit: QuoteAudit
 ) -> list[EvidenceQuote]:
@@ -238,7 +374,20 @@ def _render_sections(outcomes: list[dict]) -> str:
         if o.get("declined_turns"):
             parts.append(f"DECLINED {o['declined_turns']} turns")
         if o.get("shortfall_reason"):
-            parts.append(f"SQUEEZED: {o['shortfall_reason']}")
+            # **Was "SQUEEZED:", which was true of one writer and false of the
+            # four that actually fire.** `_rebalance_remaining` is the only
+            # thing that squeezes anything, and it has never run in any
+            # interview on record. What does set this is a section the candidate
+            # declined, one that ran out of time, or one the interview never
+            # reached — and the model was being told each of those was a squeeze.
+            #
+            # One neutral label carries all of them because the reason is
+            # already a whole sentence naming which it was: "Candidate declined
+            # to answer on this topic", "Section ended on budget_exhausted
+            # after 6 candidate turn(s)", "Candidate chose to end the interview
+            # before this competency was covered". The label only has to stop
+            # contradicting them.
+            parts.append(f"SHORTFALL: {o['shortfall_reason']}")
         lines.append(" · ".join(str(p) for p in parts))
     return "\n".join(lines)
 
@@ -247,9 +396,32 @@ def _render_sections(outcomes: list[dict]) -> str:
 class FeedbackScorer:
     api_key: str
     model: str
+    #: Counted per call, so the cost of a report is recorded with the report.
+    calls: int = field(default=0, init=False)
+    prompt_tokens: int = field(default=0, init=False)
+    completion_tokens: int = field(default=0, init=False)
+    cached_tokens: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
         self._client = AsyncOpenAI(api_key=self.api_key)
+
+    def usage(self) -> ModelUsage:
+        return ModelUsage(
+            calls=self.calls,
+            prompt_tokens=self.prompt_tokens,
+            completion_tokens=self.completion_tokens,
+            cached_tokens=self.cached_tokens,
+        )
+
+    def _record(self, response) -> None:
+        self.calls += 1
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        self.prompt_tokens += usage.prompt_tokens or 0
+        self.completion_tokens += usage.completion_tokens or 0
+        details = getattr(usage, "prompt_tokens_details", None)
+        self.cached_tokens += getattr(details, "cached_tokens", 0) or 0
 
     async def score(
         self,
@@ -261,6 +433,8 @@ class FeedbackScorer:
         section_outcomes: list[dict] | None = None,
         contradictions: list[dict] | None = None,
         health: ConversationHealth | None = None,
+        judgment_health: JudgmentHealth | None = None,
+        questioning: QuestioningHealth | None = None,
     ) -> FeedbackReport:
         outcomes = section_outcomes or []
 
@@ -274,6 +448,8 @@ class FeedbackScorer:
                 spec=spec,
                 transcript=transcript,
                 health=health,
+                judgment_health=judgment_health,
+                questioning=questioning,
                 reason=(
                     "The candidate did not say anything that was recorded, so "
                     "there is nothing to assess. This says nothing about them."
@@ -282,11 +458,16 @@ class FeedbackScorer:
 
         channel = ""
         if health is not None and health.degraded:
-            channel = f"RECORDING QUALITY:\n{health.as_sentence()}\n\n"
+            channel = f"RECORDING QUALITY:\n{health.as_sentence}\n\n"
+
+        conduct = ""
+        if questioning is not None and questioning.degraded:
+            conduct = f"HOW THE INTERVIEW WAS CONDUCTED:\n{questioning.as_sentence}\n\n"
 
         user = (
             f"EVALUATION SPEC:\n{spec.model_dump_json(indent=2)}\n\n"
             f"{channel}"
+            f"{conduct}"
             f"WHAT THE INTERVIEWER RECORDED PER SECTION:\n{_render_sections(outcomes)}\n\n"
             f"TRANSCRIPT:\n{_render_transcript(transcript)}"
         )
@@ -301,6 +482,7 @@ class FeedbackScorer:
                 response_format={"type": "json_object"},
                 temperature=0.2,
             )
+            self._record(response)
             payload = json.loads(response.choices[0].message.content or "{}")
         except Exception as exc:  # noqa: BLE001
             raise FeedbackError(f"Feedback model call failed: {exc}") from exc
@@ -313,6 +495,8 @@ class FeedbackScorer:
             payload=payload,
             contradictions=contradictions or [],
             health=health,
+            judgment_health=judgment_health,
+            questioning=questioning,
         )
 
 
@@ -325,6 +509,8 @@ def build_report(
     payload: dict,
     contradictions: list[dict] | None = None,
     health: ConversationHealth | None = None,
+    judgment_health: JudgmentHealth | None = None,
+    questioning: QuestioningHealth | None = None,
 ) -> FeedbackReport:
     """Validate and anchor the model's report. Pure — no network, so it is testable.
 
@@ -406,6 +592,8 @@ def build_report(
             ObservedRedFlag(description=str(raw.get("description", "")), evidence=evidence)
         )
 
+    dealbreakers = _dealbreaker_findings(payload, spec, red_flags, transcript, audit)
+
     gaps = [str(g) for g in (payload.get("coverage_gaps") or [])]
     for score in scored.values():
         if score.insufficient_signal and score.name not in " ".join(gaps):
@@ -419,11 +607,17 @@ def build_report(
         role_title=spec.role_title,
         competency_scores=ordered,
         red_flags_observed=red_flags,
+        dealbreakers=dealbreakers,
         contradictions=[Contradiction.model_validate(c) for c in (contradictions or [])],
         summary=str(payload.get("summary", "")).strip() or "No summary was produced.",
-        recommendation=_recommendation(payload.get("recommendation"), ordered, spec, health),
+        recommendation=_recommendation(
+            payload.get("recommendation"), ordered, spec, health, judgment_health,
+            questioning,
+        ),
         coverage_gaps=gaps,
         conversation_health=health,
+        judgment_health=judgment_health,
+        questioning_health=questioning,
         interview_duration_seconds=transcript.duration_seconds,
     )
 
@@ -459,6 +653,8 @@ def _recommendation(
     scores: list[CompetencyScore],
     spec: EvaluationSpec,
     health: "ConversationHealth | None" = None,
+    judgment_health: "JudgmentHealth | None" = None,
+    questioning: "QuestioningHealth | None" = None,
 ) -> RecommendationSignal:
     """Trust the model's signal, but never let it overstate thin evidence.
 
@@ -479,6 +675,27 @@ def _recommendation(
     # not be heard through. Capped rather than discarded: what was captured is
     # still worth reading, it just cannot carry a strong claim.
     if health is not None and health.degraded and signal in (
+        RecommendationSignal.STRONG_EVIDENCE_FOR,
+        RecommendationSignal.SOME_EVIDENCE_FOR,
+    ):
+        return RecommendationSignal.LIMITED_EVIDENCE
+
+    # Nor from an interview most of whose analysis never ran. Same cap, same
+    # reasoning, one layer up: the evidence is thin for a reason that has
+    # nothing to do with the candidate, and the signal has to say so rather
+    # than let a quiet report read as a quiet person. Checked separately from
+    # the channel above so neither degradation can hide the other.
+    if judgment_health is not None and judgment_health.degraded and signal in (
+        RecommendationSignal.STRONG_EVIDENCE_FOR,
+        RecommendationSignal.SOME_EVIDENCE_FOR,
+    ):
+        return RecommendationSignal.LIMITED_EVIDENCE
+
+    # Nor from an interview that spent its questions asking one thing several
+    # times. Same cap, same reasoning, and checked separately from the two above
+    # so no degradation can hide another: an interview can be well recorded,
+    # fully analysed, and still have gathered less than its length suggests.
+    if questioning is not None and questioning.degraded and signal in (
         RecommendationSignal.STRONG_EVIDENCE_FOR,
         RecommendationSignal.SOME_EVIDENCE_FOR,
     ):
@@ -506,6 +723,8 @@ def _empty_report(
     transcript: Transcript,
     reason: str,
     health: ConversationHealth | None = None,
+    judgment_health: JudgmentHealth | None = None,
+    questioning: QuestioningHealth | None = None,
 ) -> FeedbackReport:
     return FeedbackReport(
         interview_id=interview_id,
@@ -523,9 +742,18 @@ def _empty_report(
             )
             for c in spec.competencies
         ],
+        # Nothing was assessed, so nothing was put to them. Stated rather
+        # than left empty: an empty list reads as "no dealbreakers", which is
+        # the opposite of what an empty report means.
+        dealbreakers=[
+            DealbreakerFinding(dealbreaker=f, state=DealbreakerState.NOT_REACHED)
+            for f in spec.red_flags
+        ],
         summary=reason,
         recommendation=RecommendationSignal.INSUFFICIENT_SIGNAL,
         coverage_gaps=[c.name for c in spec.competencies],
         conversation_health=health,
+        judgment_health=judgment_health,
+        questioning_health=questioning,
         interview_duration_seconds=transcript.duration_seconds,
     )

@@ -71,30 +71,58 @@ class BotRegistry:
     A bot that segfaults never gets to write `completed` to the database, so a
     status-based count drifts upward and eventually refuses every interview
     forever — the cap would become the outage it exists to prevent.
+
+    **A seat is reserved, not checked for.** `reserve()` writes the placeholder
+    in the same synchronous step that decides there is room, so two requests
+    cannot both see the last free seat. The reservation is taken before any
+    `await`; checking first and registering after the awaits let simultaneous
+    joins each pass the check and start more bots than the cap allows.
+
+    Asyncio runs one request at a time between awaits, so the synchronous section
+    is atomic within this process. CLAUDE.md pins replicas at 1, which is what
+    makes that enough.
     """
 
     def __init__(self) -> None:
-        self._bots: dict[str, asyncio.subprocess.Process] = {}
+        #: interview_id -> the live process, or None while its spawn is pending.
+        self._bots: dict[str, asyncio.subprocess.Process | None] = {}
 
     def _reap(self) -> None:
-        finished = [i for i, p in self._bots.items() if p.returncode is not None]
+        finished = [
+            i for i, p in self._bots.items() if p is not None and p.returncode is not None
+        ]
         for interview_id in finished:
             del self._bots[interview_id]
 
     def live_count(self) -> int:
+        """Live bots plus spawns in progress: both hold a seat."""
         self._reap()
         return len(self._bots)
 
-    def has_capacity(self) -> bool:
-        return self.live_count() < max_concurrent()
+    def is_running(self, interview_id: str) -> bool:
+        """True when a bot is live or being started for this interview."""
+        self._reap()
+        return interview_id in self._bots
 
-    def claim(self) -> None:
-        """Raise unless another bot fits. Call before doing paid setup work."""
-        if not self.has_capacity():
+    def reserve(self, interview_id: str) -> bool:
+        """Take a seat for one interview. Synchronous: call before any await.
+
+        Returns True when this caller now owns the seat and must either register a
+        process or release it. Returns False when the interview already has one,
+        which is a reconnect or a second request, not an error.
+
+        Raises AtCapacity when no seat is free.
+        """
+        self._reap()
+        if interview_id in self._bots:
+            return False
+        if len(self._bots) >= max_concurrent():
             raise AtCapacity(
-                f"{self.live_count()} interviews already running, "
+                f"{len(self._bots)} interviews already running, "
                 f"limit is {max_concurrent()}."
             )
+        self._bots[interview_id] = None
+        return True
 
     def register(self, interview_id: str, process: asyncio.subprocess.Process) -> None:
         self._reap()
@@ -104,8 +132,18 @@ class BotRegistry:
             f"({len(self._bots)}/{max_concurrent()} interviews running)"
         )
 
+    def clear(self) -> None:
+        """Forget every seat. For tests, which share one module-level registry."""
+        self._bots.clear()
+
     def release(self, interview_id: str) -> None:
-        self._bots.pop(interview_id, None)
+        """Give back a seat that was reserved but never got a process.
+
+        Only ever drops a pending placeholder. A live bot is never removed here,
+        because removing it would free a seat that is still in use.
+        """
+        if interview_id in self._bots and self._bots[interview_id] is None:
+            del self._bots[interview_id]
 
 
 #: One registry per container, matching the one-replica deployment.

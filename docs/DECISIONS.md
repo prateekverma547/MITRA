@@ -153,6 +153,63 @@ ends and is resumed within 2.0s did not end because the candidate had finished.
 `SMART_TURN_STOP_SECS` or `VAD_STOP_SECS`**, because rule one of the tuning
 order still applies and the audible behaviour was never the complaint here.
 
+### The turn ceiling follows the time the section was given
+
+A flat six turns for every competency, whatever it had been allocated. An eleven
+minute section and a four minute one got the same six questions.
+
+Across **20 competency sections in 15 stored interviews**, what ended a section:
+
+| ended by | sections |
+|---|---|
+| turn ceiling | **14** |
+| time budget | **0** |
+| judge said `sufficient` | **0** |
+
+Of the three ways a competency can end on its own terms, one fired always and
+two had never fired at all. Sections used 2% to 58% of their allocated time,
+median 17%. Interviews ran at **18 to 26% of their configured length**: the
+employer sets twenty minutes, the bot says "about twenty minutes" out loud, and
+the interview ends after five. Candidates assumed the clock had run out.
+
+`ceiling_turns = 6` had no entry here. Its only justification was a field comment
+saying an over-running section "is eating another competency's time" — a scarcity
+that has never existed, because the budget has never fired. The case it does
+protect against, a section that will not converge, is now held by the two-probe
+term allowance and the let-go.
+
+**The divisor is measured.** Seconds per competency turn, from
+`section_outcomes`:
+
+| sample | n | median | mean | p10 | p90 |
+|---|---|---|---|---|---|
+| under current code | 12 | **21.6s** | 23.4s | 18.0 | 32.9 |
+| before the turn-counting fix | 8 | 7.0s | 7.5s | 1.9 | 16.4 |
+
+The second sample is excluded: that is the bug above, where fifty-two utterances
+counted as twelve turns. So `SECONDS_PER_COMPETENCY_TURN = 22`, and a section
+allocated N seconds can hold about N/22 exchanges.
+
+**The floor is the old flat six**, so the change can only add questions to a
+section, never remove them.
+
+**The cap is the material the blueprint actually planned**, not a round number
+and not a guess at the candidate's patience. `blueprint/generate.py` asks the
+model for "3 or 4 questions" per competency. Each one carries the three stages of
+the depth ramp, and the section's term allowance adds two more, so the cap is
+`3 × seed_questions + MAX_TERM_PROBES_PER_SECTION`. Past that the interviewer has
+run out of planned material and is improvising, which is not what a competency
+budget was allocated for. It bounds a wrong allocation, not a long conversation:
+a ninety minute interview with one competency would otherwise hand a single topic
+more than two hundred turns.
+
+**What would change the answer.** Re-measure the divisor if turn-taking,
+endpointing or the twenty-word turn rule move, because all three change how long
+an exchange takes. Raise the cap only by generating more seed questions: with
+four planned questions a twelve minute section still cannot be filled without
+improvising, and that gap between `allocate_minutes` and what generation plans is
+the next constraint, not this one.
+
 ### Neither STT vendor does its own endpointing
 
 `turn_detection=False` on OpenAI, `endpointing=False` on Deepgram. Both offer
@@ -363,13 +420,17 @@ A bot is a child process of one specific container. More replicas means a
 redeploy or rebalance can orphan a live interview in ways that are hard to
 observe.
 
-### Additive migrations only
+### Migrations through Alembic, not at startup
 
-`create_all` creates missing tables and silently ignores tables that already
-exist, so adding a field works on a fresh local database and does nothing to
-production. `_add_missing_columns` closes that gap for new nullable columns and
-**refuses loudly** for a new NOT NULL column without a server default, rather
-than inventing a value for existing rows.
+The app used to add missing columns to live tables at startup. That could not express
+a rename, a backfill, a dropped index, or a data-dependent change, and it altered
+production silently every time the app started.
+
+Schema changes now go through Alembic revisions (`backend/alembic/versions/`). The
+startup check refuses a database that is not exactly at the head revision, and refuses
+one that has tables but no migration record. A test fails when a model changes without
+a revision (`alembic check`). Deploys run `alembic upgrade head` before the app starts.
+See [OPERATIONS.md](OPERATIONS.md), "Database migrations".
 
 ---
 
@@ -380,7 +441,7 @@ Not oversights. Ask before building any of these.
 | | why |
 |---|---|
 | Google Meet / Zoom / Teams | own branded join page instead; never browser-bot hacks |
-| Proctoring, video analysis | out of scope for a POC, and ethically loaded |
+| Proctoring, video analysis | out of scope for a POC, and ethically loaded. One narrow exception is recorded below: the camera hearing check. Everything else in this row stays out |
 | Detecting scripted or AI-assisted answers | same |
 | Automatic hiring decisions | reports inform humans; nothing auto-rejects |
 | Multi-tenant auth | single admin password. Do not half-build accounts |
@@ -399,4 +460,81 @@ Not oversights. Ask before building any of these.
 | Deepgram trial | won on one session; needs a full-length interview, then delete the OpenAI path |
 | Bot evaluating out loud | observed saying "that's a good approach", which leaks judgement and biases the next answer |
 | Echo detection in the live loop | currently counted only after the fact |
-| React + Vite panel | CLAUDE.md specifies it; the panel is plain JS because the shape was still moving |
+| Plain HTML + JS frontend | Replaced React + Vite + TypeScript. Both pages are plain JS modules served from `frontend/static` with no build step. The Daily SDK is vendored at 0.94.0 so the CSP stays `'self'` plus Daily. CLAUDE.md still says React and needs updating |
+
+### Time the interview is scheduled for is time it is given
+
+**What was wrong.** The turn cap (`3 × seeds + 2`) ended most competency sections
+long before their time budget. Turns per section were fixed by the seed count the
+blueprint asked for, and a section that finished early gave its unused minutes to
+nobody: the rebalance only ever squeezed sections, it never granted time back. A
+40-minute interview could finish at about half its length.
+
+**What changed.**
+
+- **Session clock.** `InterviewBrain.session_remaining_seconds` counts down from
+  the scheduled `duration_minutes`. It is stated to the interviewer on every turn,
+  in the shared header of the system instruction, so repairs and stop offers carry
+  it too. Grace is excluded: the clock reads zero at the scheduled end.
+- **Time handed forward.** When a section ends early, its unused minutes are shared
+  among the remaining competencies by weight. The grant is measured against the
+  scheduled length, not the hard stop, because grace is margin for overrun, not
+  time to plan for. The closing keeps its own budget.
+- **Seed questions sized to the time.** `seed_questions_needed(budget)` is the
+  inverse of the turn cap: `ceil((budget/22 - 2) / 3)`, clamped to 3–8. The
+  blueprint generator asks for exactly that many per competency, and
+  `build_blueprint` logs a warning when a model returns fewer than its final budget
+  needs. The brain and the generator share this one function.
+
+**What is not yet measured.** The 22-second divisor and the `3 × seeds` cap were
+measured against the old 3–4 seed counts. Neither has been measured with 8 seeds.
+Re-measure `section_outcomes` on a real 40-minute interview before trusting the
+count.
+
+**Open issue, recorded not fixed.** `_render_seed_question` shows seed `k` at turn
+`k`, one seed per turn. The cap assumes each seed carries three turns (the depth
+ramp). So with 8 seeds, turns 9 onward get no seed block, and the measurement above
+found that turns without a seed produced far fewer mechanism probes. Either the
+seed index should advance every three turns, or the cap should follow the seeds
+actually shown. Choosing between them needs a measured comparison.
+
+---
+
+## Camera hearing check (narrow exception to "video analysis")
+
+**Decision, owner-approved:** the candidate's camera may be read for one purpose
+only: to decide whether speech that no words came back for was real. Lip movement
+is judged still or moving; if the lips stay still through an utterance, that
+utterance is not counted as an unheard answer.
+
+**What it may do.** Remove an "unheard" count from the hearing monitor. Nothing else.
+It cannot end a call, add a count, score the candidate, measure attention or
+composure, or feed the brain. A moving mouth, a missing face or a moving head leaves
+the audio-only behaviour unchanged.
+
+**Why this and not the rest of the row above.** The audio is what the assessment
+rests on. The camera is used only to stop a noise from being mistaken for an unanswered
+question, which the audio alone cannot tell apart. The failure it prevents is a
+call ending for no reason, which costs the candidate their slot.
+
+**Evidence.** Lip movement separated speaking from silence on a still face (AUC 0.99
+on one recording, 0.98 to 0.99 with a steady-head gate). Head movement alone raises
+the same measure, which is why the reading is trusted only while the head is steady.
+Tested on two or three recordings, not on a labelled set of interviews.
+
+**Off by default.** `CAMERA_HEARING_CHECK` (see `backend/bot/config.py`) must be set
+for any candidate video to reach the bot. It also needs the `mediapipe` library. If
+the flag is set without the library, the call proceeds audio-only and logs an error.
+
+**Before it is switched on for real candidates:**
+- the candidate consent notice must say that the camera is analysed to check hearing,
+  and must be reviewed by the owner;
+- the `mediapipe` dependency must be added to the deployment image and lock file
+  (not done here, so the build is not changed by accident);
+- a labelled test where the candidate moves their head while silent must pass, since
+  that is the case head-movement gating exists for.
+
+**Where it lives.** `backend/bot/lip_activity.py` (the measure, no vision import),
+`backend/bot/camera_hearing.py` (the observer), `backend/bot/hearing.py`
+(`note_mouth`), `backend/bot/services/daily.py` (video received only when the flag
+is on).

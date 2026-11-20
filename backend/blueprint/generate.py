@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from loguru import logger
 from openai import AsyncOpenAI
 
+from bot.brain.brain import seed_questions_needed
 from shared.branding import PROSE_STYLE
 
 from shared.contracts import (
@@ -99,7 +100,7 @@ Return JSON only:
       "name": "...",
       "target_depth": "what a sufficient answer looks like AT THIS SENIORITY",
       "emphasis": 1.0,
-      "seed_questions": ["3 or 4 questions written against this CV"]
+      "seed_questions": ["exactly the number requested for this competency, each written against this CV"]
     }
   ]
 }
@@ -110,6 +111,9 @@ Rules:
   this competency needs FOR THIS CANDIDATE. Use it: raise it where the CV is
   thin or the claims are big and unverified, lower it where the CV already
   evidences the competency heavily. Do not return 1.0 for everything.
+- Write exactly the number of `seed_questions` requested for each competency in
+  the request. The count is sized to the time that competency will be given, so
+  fewer leaves the interview short of the time the employer scheduled.
 - `seed_questions` must reference this candidate's actual experience wherever
   possible. Name their products, employers, numbers. A question that would work
   unchanged for any candidate is a wasted question.
@@ -156,6 +160,7 @@ class BlueprintGenerator:
     ) -> InterviewBlueprint:
         user = (
             f"EVALUATION SPEC:\n{spec.model_dump_json(indent=2)}\n\n"
+            f"{seed_count_guidance(spec)}\n\n"
             f"CANDIDATE CV:\n{cv_text}"
         )
 
@@ -268,6 +273,13 @@ def build_blueprint(
             raise BlueprintGenerationError(
                 f"Competency '{competency.id}' has no seed questions."
             )
+        needed = seed_questions_needed(budgets[competency.id] * 60)
+        if len(questions) < needed:
+            logger.warning(
+                f"Blueprint {blueprint_id}: competency '{competency.id}' has "
+                f"{len(questions)} seed questions for {budgets[competency.id]:.1f} minutes; "
+                f"{needed} are needed to fill its time."
+            )
         plans.append(
             CompetencyPlan(
                 competency_id=competency.id,
@@ -306,6 +318,25 @@ def build_blueprint(
         )
     except Exception as exc:  # noqa: BLE001
         raise BlueprintGenerationError(f"Assembled blueprint failed validation: {exc}") from exc
+
+
+def seed_count_guidance(spec: EvaluationSpec) -> str:
+    """The number of seed questions each competency needs, stated to the model.
+
+    Sized from the weight-only share of the interview. The model's `emphasis` can
+    move a competency's real budget either way, so `build_blueprint` checks the
+    count against the budget actually allocated and logs any shortfall.
+    """
+    available = spec.duration_minutes - OPENING_MINUTES - CLOSING_MINUTES
+    lines = []
+    for competency in spec.competencies:
+        minutes = available * competency.weight
+        count = seed_questions_needed(minutes * 60)
+        lines.append(
+            f"- {competency.id}: {count} seed_questions "
+            f"(about {minutes:.0f} minutes of interview time)"
+        )
+    return "SEED QUESTIONS REQUESTED PER COMPETENCY:\n" + "\n".join(lines)
 
 
 def allocate_minutes(

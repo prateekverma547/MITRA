@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "MITRA (local)",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "mitra",
+      "Username": "mitra",
+      "SSLMode": "prefer"
+    }
+  }
+}
